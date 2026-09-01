@@ -115,14 +115,45 @@ for Cloudflare facts is in `docs/research/` (same date).
     → added once the installer exists; go-to-market tactics → not repo material; the missing
     LICENSE text in the published `@dropthis/*` packages → fixed in their own repo.
 
+35. **Listing without an N+1.** `slugs/<slug>` pointer objects carry `customMetadata`
+    (`id, updated, expires, label`); `list` is one R2 `list()` call with metadata included and
+    never a `get()` per drop. Sorting is done in the Worker over that page. No search, no
+    filter by tag: non-goals. Reason: every files-only project in the study either paid a
+    read per document or built a database for this one query.
+36. **No stored counters.** `system/usage.json` dropped; `usage` computes from `list()` on
+    demand. Reason: R2 has no atomic increment; read-modify-write counters corrupt under
+    concurrency (seen racy or approximated in three studied projects).
+37. **Installer design adopted from the provisioning study** (`docs/research/
+    2026-09-01-provisioning-study.md` §7): token-only auth pinned into wrangler's env; REST-API
+    reconcile-by-name for bucket and KV; credential minted before deploy and shipped with
+    `--secrets-file`; NDJSON step stream + one result object under `--json`; `doctor`
+    publishes a real hello drop and checks MCP; URL taken from the API, never stdout; re-run
+    never re-prints the key; `--rotate-admin-key`, `--dry-run`, `--account-id` explicit.
+38. **Button path boots unclaimed and fail-closed; `npx @dropthis/cf claim` proves ownership
+    with the operator's Cloudflare token.** Rejected: "first caller becomes admin" (seen in
+    one studied project), inventing a secret the operator omitted (seen in another), and
+    deploying with no credential. Honest step count: CLI path 4 human steps (2 browser),
+    button path 5 (4 browser) — the CLI path is documented first.
+39. **Per-instance agent skill served from the Worker at `/_skill.md`**, base URL and limits
+    substituted live. Reason: one URL onboards any agent for that deployment without a
+    config step (pattern from pastebin-worker).
+40. **Email stays out.** Enabling Email Routing / Email Service on a zone is dashboard-only
+    (zone onboarding, DNS, click-to-verify a destination); none of three email-on-Cloudflare
+    projects automated it. It would add a human step to every install for a feature the
+    caller's automation can do with the returned URL. Facts in the study §4.
+41. **Human steps for a working instance are exactly: Cloudflare account, enable R2 (card),
+    API token with the four named permissions, `npx @dropthis/cf init`.** The token
+    permission names are the ones the dashboard shows; the installer echoes them verbatim on
+    a 403.
+
 ## MVP scope (frozen)
 
 In: publish, update_content, update_settings, get, list, delete, resolve; slug/vanity slug;
 expiry + prune; password; noindex; files as drops; keys with two scopes; `user_*`, `host_*`,
 `config_*`, `usage`, `prune`, `doctor`; `auto_index`; REST + CLI + MCP from one registry;
 OAuth on `/_api/mcp`; installer `init | upgrade | destroy | doctor`; Deploy button; two
-skills (user, admin); `llms.txt`; generated reference and connect recipes; contract tests
-against a deployed instance.
+skills (user, admin) plus `/_skill.md` served per instance; `llms.txt`; generated reference
+and connect recipes; `claim` for the button path; contract tests against a deployed instance.
 
 Out: everything in AGENTS.md "Non-goals", plus `webhook_url` (#32).
 

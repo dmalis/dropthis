@@ -45,6 +45,7 @@ Nothing else from that codebase is carried over.
 /_api/v1/*           REST; bearer key auth
 /_api/mcp            MCP over Streamable HTTP; bearer key or OAuth (workers-oauth-provider)
 /_connect            static page: how to connect this instance (URL pre-filled)
+/_skill.md           this instance's agent skill, base URL and limits substituted live
 cron (daily)         expire + prune
 ```
 
@@ -58,14 +59,19 @@ and the Deploy button auto-provision them (JSONC only — TOML does not get IDs 
 drops/<id>/meta.json                 schema, slug, current_gen, expires_at, password_hash,
                                      noindex, hostname, key_id, created, updated
 drops/<id>/<gen>/<path>              files of one generation
-slugs/<slug>                         pointer → id   (created with If-None-Match: * → atomic claim)
+slugs/<slug>                         pointer → id   (created with If-None-Match: * → atomic claim);
+                                     customMetadata carries {id, updated, expires, label} so
+                                     `list` is ONE list() call — never a get() per drop
 hosts/<hostname>                     pointer → id   (root drop for a hostname)
 keys/<sha256(key)>.json              label, scope (admin|user), created
 expiring/<yyyy-mm-dd>/<id>           marker for the daily cron; one list per day, never a scan
 staging/<id>/<gen>/<path>            uploads before commit; R2 lifecycle rule deletes after 1 day
 system/config.json                   instance policy (defaults + rules)
-system/usage.json                    coarse counters for `usage`
+system/claim-code                    one-time code for the unclaimed-install flow; deleted on claim
 ```
+
+No counters are stored anywhere: R2 has no atomic increment, and a read-modify-write counter
+corrupts itself the first time two requests race. `usage` computes from `list()` on demand.
 
 - **Updates are a generation flip.** Stage files under a new `<gen>`, then compare-and-swap
   `meta.json` (`If-Match: <etag>`) to point `current_gen` at it. Half-uploaded state is never
@@ -145,6 +151,33 @@ policy, usage, prune, doctor). `user_add` and `user_rotate` return the key toget
 structured `connect` object (per-client MCP snippets) so onboarding a person is one call.
 Instance lifecycle (`init`, `upgrade`, `destroy`, `doctor`) lives in the installer CLI only —
 it needs the Cloudflare token, not an instance key.
+
+### Installer principles (learned from 15 Cloudflare-hosted projects, `docs/research/`)
+
+- **Token-only, never ambient `wrangler login`.** The installer pins `CLOUDFLARE_API_TOKEN`
+  and `CLOUDFLARE_ACCOUNT_ID` into wrangler's environment so it cannot deploy to the wrong
+  account, and prints which source the token came from.
+- **Reconcile by name, self-heal.** Bucket and KV: saved id → match by name → create. A
+  re-run after a dashboard deletion repairs instead of failing. Provisioning goes through the
+  Cloudflare REST API (ids come back as JSON); never parse wrangler's stdout for ids or URLs.
+- **Credential before deploy, secrets in the same deploy.** Refuse to deploy if there is no
+  admin key and none can be minted; ship the hashed key via `wrangler deploy --secrets-file`
+  so there is no live-but-unusable window.
+- **Preflight names the dashboard permission, not the HTTP code.** Token verify, account
+  pin (refuse to guess between several), R2-subscription check (`code: 10042` → "enable R2 at
+  …"), one cheap read per permission.
+- **`doctor` proves the deploy with a real drop**: publish → fetch → delete a hello drop, and
+  MCP `initialize` must answer — a version-correct deploy with a dead MCP endpoint is a broken
+  deploy. Poll for propagation first.
+- **Unclaimed, fail-closed bootstrap for the button path.** With no admin secret set, every
+  route but health and `/claim` returns 503; the Worker writes a one-time claim code to
+  `system/claim-code` (never to a response or a log); `npx @dropthis/cf claim` reads it with
+  the operator's own Cloudflare token and exchanges it for the admin key. Ownership is proved
+  by holding an account token, never by being the first HTTP caller.
+- **Serve the agent skill from the instance** at `/_skill.md` with base URL and limits
+  substituted from that deployment's own config — one URL onboards any agent correctly.
+- **Zone matching:** longest zone name that is a suffix of the hostname, within the pinned
+  account; refuse if a CNAME already exists there.
 
 ### Bootstrap invariants
 

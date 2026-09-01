@@ -53,20 +53,43 @@ No Postgres, no D1, no queue, no build step. Details in `AGENTS.md`.
 
 ## Install
 
-Two doors, same result. Both end with a live drop URL.
+Honest human count: **4 steps, 2 of them browser-only** (3 if you already have a Cloudflare
+account with R2 enabled). Everything after the token is the agent's job.
 
-**Human** — click the *Deploy to Cloudflare* button (coming with the first release). It
-creates the bucket, asks for one admin secret, deploys, and wires git-push deploys.
-
-**Agent** — after a human has a Cloudflare account and an API token:
+1. *[browser]* Create a Cloudflare account — https://dash.cloudflare.com/sign-up
+2. *[browser]* Enable R2 and add a payment method at `https://dash.cloudflare.com/<account>/r2`.
+   Free tier, nothing is charged at personal volumes, but Cloudflare wants a card on file.
+3. *[browser]* Create an API token at https://dash.cloudflare.com/profile/api-tokens →
+   Create Custom Token, name it `dropthis`: **Workers Scripts — Edit · Workers KV Storage — Edit ·
+   Workers R2 Storage — Edit · Account Settings — Read** (add Zone DNS — Edit and Zone Workers
+   Routes — Edit if you will pass `--domain`).
+4. *[terminal, agent]*
 
 ```sh
-CLOUDFLARE_API_TOKEN=… npx @dropthis/cf init --name drops --domain drops.example.com --json
-# → { "url": "…", "mcp_url": "…/_api/mcp", "admin_key": "…", "first_drop": "…/hello/" }
+npx @dropthis/cf init --cf-token <paste> --name drops --domain drops.example.com --json
 ```
 
-The installer provisions the bucket, mints the admin key, sets secrets, deploys, publishes a
-hello drop, and writes `.mcp.json`. Re-running is safe; it never re-prints the key.
+The installer verifies the token, pins the account (refuses to guess between several),
+reconciles the bucket and KV namespace by name (re-runs repair instead of failing), mints the
+admin key, deploys with the secrets in the same call, adds the staging lifecycle rule, attaches
+the domain if the zone is in the account, runs `doctor` (publishes, fetches and deletes a hello
+drop; checks MCP answers), writes `.mcp.json` and prints Claude Code / Cursor / Codex snippets.
+Result:
+
+```json
+{ "ok": true, "url": "https://drops.example.com", "mcp_url": "https://drops.example.com/_api/mcp",
+  "admin_key": "…",  "first_drop": "https://drops.example.com/hello/", "steps": [ … ] }
+```
+
+`admin_key` appears only on the run that minted it. Re-running reports `"admin_key_status":
+"existing"`; `--rotate-admin-key` is explicit. `--dry-run` stops after the preflight.
+
+**Deploy to Cloudflare button** (coming with the first release) is the no-CLI path: it clones
+the repo into your GitHub, provisions the bucket and KV, builds and deploys. The instance
+comes up *unclaimed* — every route returns 503 except health — until you run
+`npx @dropthis/cf claim`, which proves ownership with your Cloudflare token (never "first
+caller becomes admin"). Five steps, four in a browser; it looks shorter than the CLI path and
+is not.
 
 ## Use
 
