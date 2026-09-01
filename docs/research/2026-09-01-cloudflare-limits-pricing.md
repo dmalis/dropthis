@@ -12,7 +12,7 @@ UNVERIFIED. Re-check before relying on a number for a decision.
 | Request body | 100 MB | 100 MB (Ent 500 MB) | limits |
 | CPU time / request | 10 ms | 30 s default, 5 min max | limits |
 | CPU / cron invocation | 10 ms | 30 s (<1h interval), 15 min (≥1h) | limits |
-| Subrequests / request | 50 | 1,000 | limits |
+| Subrequests / request | 50 external / 1,000 internal (review-reported 2026-09-01, UNVERIFIED) | 10,000 default (review-reported, UNVERIFIED; was 1,000) | limits |
 | Script size | 3 MB gz | 10 MB gz | limits |
 | Workers / account | 100 | 500 | limits |
 | Cron triggers / account | 5 | 250 | limits |

@@ -60,8 +60,9 @@ claims not confirmed on a Cloudflare-owned source.
   needs an active zone in the account —
   https://developers.cloudflare.com/workers/configuration/routing/custom-domains/
 - **Auto-provisioning from `wrangler.jsonc`**: declare KV/R2/D1 bindings with no IDs;
-  `wrangler deploy` creates them and writes IDs back. wrangler ≥ 4.45.0. **JSON/JSONC only —
-  TOML does not get IDs written back.** —
+  `wrangler deploy` creates them and writes IDs back. wrangler ≥ 4.45.0. **The "JSON/JSONC
+  only" claim is UNVERIFIED (2026-09-01 review: current docs show write-back examples for both
+  formats; only the Deploy-button/dashboard path skips it).** —
   https://developers.cloudflare.com/changelog/post/2025-10-24-automatic-resource-provisioning/
 - Trap: `wrangler d1 migrations apply` cannot resolve an auto-provisioned DB before the first
   deploy (https://github.com/cloudflare/workers-sdk/issues/13632). Not relevant to the

@@ -7,7 +7,8 @@ Every drop can be password-locked, set to expire, and kept out of search engines
 entirely inside one Cloudflare account — one Worker, one R2 bucket — and costs nothing at
 personal scale. There is no dashboard: agents are the only callers, through MCP, CLI or REST.
 
-> Pre-release. The commands below are the target contract; nothing is published to npm yet.
+> Pre-release. The commands below are the target contract; nothing is published to npm yet
+> (v1 runs from the repo build; `dropthis@1.0.0` on npm is the first public release).
 > `docs/decisions.md` records every choice and why; `docs/research/` holds the dated evidence.
 
 **Security note:** a drop is arbitrary HTML served as active content. dropthis does not make
@@ -44,7 +45,8 @@ Every drop has:
 
 Drops are **updated in place** at the same URL; multi-file updates are atomic. An expired
 drop answers 410 immediately and can be revived for 7 days (`update … --expires 30d`);
-after that it is deleted. There is no revision history by design.
+after that it is deleted. Browsers and the edge never serve a stale version: every request
+re-reads the drop's metadata. There is no revision history by design.
 
 ## How it runs
 
@@ -52,7 +54,7 @@ after that it is deleted. There is no revision history by design.
 Worker  ── serves /<slug>/*  and  /_api/v1/*  and  /_api/mcp
 R2      ── every file, every metadata object; the bucket *is* the database
 KV      ── OAuth session storage only (for claude.ai / Claude desktop connectors)
-cron    ── daily expiry + prune
+cron    ── hourly, resumable expiry + prune
 ```
 
 No Postgres, no D1, no queue, no build step. Details in `AGENTS.md`.
@@ -77,14 +79,15 @@ CLOUDFLARE_API_TOKEN=<paste> npx dropthis@latest init --name drops --domain drop
 
 The installer verifies the token, pins the account (refuses to guess between several),
 reconciles the bucket and KV namespace by name (re-runs repair instead of failing), mints the
-admin key, deploys with the secrets in the same call, adds the staging lifecycle rule, attaches
+admin key and writes its record into the bucket, deploys with `HMAC_SECRET` in the same call,
+adds the lifecycle rules, attaches
 the domain if the zone is in the account, runs `doctor` (publishes, fetches and deletes a hello
-drop; checks MCP answers), saves the instance to `~/.config/dropthis/instances.json` and
+drop and reports every check; the hello drop is gone afterwards), saves the instance to `~/.config/dropthis/instances.json` and
 prints the Claude Code / Cursor / Codex / claude.ai connect snippets. Result:
 
 ```json
 { "ok": true, "url": "https://drops.example.com", "mcp_url": "https://drops.example.com/_api/mcp",
-  "admin_key": "…",  "first_drop": "https://drops.example.com/hello/", "steps": [ … ] }
+  "admin_key": "…", "doctor": { "ok": true, "checks": [ … ] }, "steps": [ … ] }
 ```
 
 `admin_key` appears only on the run that minted it. Re-running reports `"admin_key_status":
@@ -116,19 +119,22 @@ dropthis connect --client claude-code
 Same five drop operations as MCP tools (`dropthis_publish`, `dropthis_update`,
 `dropthis_get`, `dropthis_list`, `dropthis_delete`; admin: `dropthis_user_*`,
 `dropthis_config_*`, `dropthis_usage`, `dropthis_prune`, `dropthis_doctor`) and as REST
-under `/_api/v1`. In MCP, files travel inline in the tool call (`{path, content}`) or by
-`{path, url}`; the CLI streams large folders itself.
+under `/_api/v1`. In MCP, files travel inline in the tool call (`{path, text}` or
+`{path, base64}`) or by `{path, url}`; the CLI streams large folders itself.
 
-Credentials: `CLOUDFLARE_API_TOKEN` for `init`/`doctor`; `DROPTHIS_URL` + `DROPTHIS_KEY` for
-everything else (or `--instance <name>` from `instances.json`). `--json` gives one JSON
-document; on `publish`, stdout is the URL. Exit codes: `0` ok, `1` failure, `2` cancelled,
-`4` auth required. Never a prompt when stdin is not a terminal.
+Credentials: `CLOUDFLARE_API_TOKEN` for `init`; `DROPTHIS_URL` + `DROPTHIS_KEY` for
+everything else, `doctor` included (or `--instance <name>` from `instances.json`). `--json`
+gives exactly one JSON document; `--jsonl` streams `init`'s steps live; on `publish`,
+stdout is the URL. Exit codes: `0` ok, `1` failure, `2` cancelled, `4` auth required. Never
+a prompt when stdin is not a terminal. Send `idempotency_key` on `publish`/`update` and a
+retry can never make a second drop.
 
 ### Teams and clients
 
 An instance is a team: every user key sees and edits every drop; `created_by` says who made
 it; leaving = revoking the key. claude.ai and the Claude desktop app connect to `/_api/mcp`
-and log in by pasting a key. A client gets its own instance (`npx dropthis init --name
+and log in by pasting a key (on claude.ai Team/Enterprise an Owner adds the connector once;
+each member then logs in with their own key). A client gets its own instance (`npx dropthis init --name
 client-x`) — separate Worker, bucket and keys; nothing is shared across instances.
 
 ## Cost

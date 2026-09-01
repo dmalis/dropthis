@@ -16,7 +16,8 @@ for Cloudflare facts is in `docs/research/` (same date).
    Postgres + Cloud Run with ~35k source lines and features with no users (workspaces, OAuth
    server, admin SPA, blog). Only the viewer's pure policy (~1,700 lines) and the client
    contract are worth carrying.
-3. **Name stays `dropthis`; repo `dmalis/dropthis`; npm scope `@dropthis` (already owned).**
+3. **Name stays `dropthis`; repo `dmalis/dropthis`; npm: bare `dropthis` (already owned; the
+   `@dropthis` scope is not used — superseded in part by #43).**
    A personal-account repo transfers to an org later with permanent redirects.
 4. **Agent-first, no dashboard.** Every operation exists as REST, CLI and MCP from one
    registry. Even a human uses it through an agent. The only HTML pages are the OAuth
@@ -71,9 +72,9 @@ for Cloudflare facts is in `docs/research/` (same date).
     on `staging/`; weekly orphan reconcile; `prune --dry-run` and `usage` for visibility.
 21. **Expiry enforced on read (410) independent of cleanup lag.**
 22. **`noindex` via `X-Robots-Tag` header, not HTML rewriting.** Works for files too.
-23. **Password = HMAC unlock cookie (reused from the hosted viewer).** Protected responses
-    bypass the edge cache. Generated passwords are returned once in the publish response;
-    delivery (SMS/email) is the caller's job — optional `webhook_url` in policy for that.
+23. **Password = HMAC unlock cookie (reused from the hosted viewer).** ~~Protected responses
+    bypass the edge cache.~~ (Amended by #60: the body cache sits behind the password check.) Generated passwords are returned once in the publish response;
+    delivery (SMS/email) is the caller's job (the `webhook_url` idea is post-v1, #32).
 24. **Instance policy = defaults + enforced rules in `system/config.json`**, set via
     `config_set`. Per instance, not per user.
 25. **Files are first-class drops.** A single PDF/xlsx/image is served at its URL with the
@@ -96,7 +97,7 @@ for Cloudflare facts is in `docs/research/` (same date).
     than it understands; every release names data-affecting changes and its rollback floor.
     Reason: unattended upgrades must fail closed rather than guess across versions.
 31. **Folder drops auto-index by policy.** `auto_index: list | gallery | off`, default
-    `list`. Without `index.html`, `list` links filenames, `gallery` adds image thumbnails,
+    `list` (v1 ships `list` only — #44/#60). Without `index.html`, `list` links filenames, `gallery` adds image thumbnails,
     `off` returns 404. The publish skill ships a gallery template for agents that want a
     stored, customisable `index.html`. Reason: a valid folder publish must produce a useful
     URL without a repair call. (Amends the MVP scope below.)
@@ -125,14 +126,17 @@ for Cloudflare facts is in `docs/research/` (same date).
 37. **Installer design adopted from the provisioning study** (`docs/research/
     2026-09-01-provisioning-study.md` §7): token-only auth pinned into wrangler's env; REST-API
     reconcile-by-name for bucket and KV; credential minted before deploy and shipped with
-    `--secrets-file`; NDJSON step stream + one result object under `--json`; `doctor`
+    `--secrets-file` (amended by #58: the admin key is a key record written into the bucket,
+    `HMAC_SECRET` the only secret); `--json` one document with `steps[]`, `--jsonl` for the
+    live stream (#58); the study's 7-day staging TTL is 1 day here; `doctor`
     publishes a real hello drop and checks MCP; URL taken from the API, never stdout; re-run
     never re-prints the key; `--rotate-admin-key`, `--dry-run`, `--account-id` explicit.
 38. **Button path boots unclaimed and fail-closed; `npx dropthis claim` proves ownership
     with the operator's Cloudflare token.** Rejected: "first caller becomes admin" (seen in
     one studied project), inventing a secret the operator omitted (seen in another), and
-    deploying with no credential. Honest step count: CLI path 4 human steps (2 browser),
-    button path 5 (4 browser) — the CLI path is documented first.
+    deploying with no credential. Honest step count: CLI path 4 human steps (3 browser —
+    corrected by #58), button path 5 (4 browser) — the CLI path is documented first. Button
+    and `claim` come after v1 (#44).
 39. **Per-instance agent skill served from the Worker at `/_skill.md`**, base URL and limits
     substituted live. Reason: one URL onboards any agent for that deployment without a
     config step (pattern from pastebin-worker).
@@ -184,7 +188,7 @@ finish its task.
     colleague's URL must never hit a permission wall inside its own team. Clients are isolated
     by instance; only the operator holds several admin keys.
 46. **Five drop operations: `publish`, `update`, `get`, `list`, `delete`.** `publish` is
-    create-only (`409 SLUG_TAKEN → "call update"`) so re-publishing can never make a
+    create-only (always a new slug; `SLUG_TAKEN` was replaced by `idempotency_key` in #58) so re-publishing can never make a
     duplicate. `update` changes only what is given — files, settings, or both — and is
     honestly idempotent because uploads are content-addressed and there are no revision
     counters (the two reasons the old product needed two update verbs). `resolve` and
@@ -192,7 +196,7 @@ finish its task.
     password or not, so pull → edit → `update` needs no local state (GitHub Contents API
     pattern). Industry standard is two update verbs (Vercel, Netlify); we deviate for the
     stated reason.
-47. **One call uploads a drop.** `files: [{path, content}]` or `{path, url}` in one request —
+47. **One call uploads a drop.** `files: [{path, text} | {path, base64} | {path, url}]` (exclusive union, #58) in one request —
     the shape claude.ai, n8n and a script can all produce (Cloudinary/Uploadcare "multipart or
     fetch from URL"; Vercel inline files). The single-call ceiling is set by isolate memory
     and measured in slice 2 (expected ~50 MB); above it the CLI/SDK use the staged
@@ -252,6 +256,115 @@ finish its task.
     documented, no mode added; MCP tool names prefixed `dropthis_`; the "TOML gets no ids
     written back" claim is unverified and softened in AGENTS.md; single-call upload ceiling
     is measured in slice 2 before being written into the skill.
+
+## Independent review, 2026-09-01
+
+58. **Codex review of the v1 spec (round 1: 1 blocker, 19 majors, 3 minors) — all applied.**
+    Changes to grilled decisions, with the reason: **(a)** milestone 2 names a claude.ai
+    **Owner** who adds the connector once — on Team/Enterprise plans members cannot add
+    custom connectors; each member then logs in with their own key. **(b)** `SLUG_TAKEN` is
+    gone: with generated slugs a caller cannot collide; the duplicate-on-retry risk is solved
+    the industry way with an optional `idempotency_key` on `publish`/`update` (Stripe) and a
+    `requests/` record. **(c)** No `ADMIN_KEY_HASH` secret: the admin key is an ordinary key
+    record the installer writes into the bucket before the first deploy, so every credential
+    has one listing, rotation and revocation path; `HMAC_SECRET` is the only secret.
+    **(d)** Newest-first `list` cannot come from `slugs/` (R2 lists in key order), so a
+    `list/<inverted-created>-<slug>` pointer prefix is the listing index — still one `list()`
+    per page, still files. **(e)** v1 is private, run from the repo build; `dropthis@1.0.0`
+    on npm is a separate first-public-release milestone that carries the release-trust gate.
+    Engineering clarifications, no decision changed: `meta.json` is the only truth and
+    projections are repaired lazily; gen id = manifest hash so identical content is a no-op;
+    `UPDATE_CONFLICT` vs `R2_RATE_LIMIT` distinguished; upload entries are an exclusive
+    `text | base64 | url` union with path rules and URL-fetch limits inside the Free
+    subrequest budget; one `canonical_url` + `alias_origins`, `WRONG_INSTANCE` for foreign
+    URLs; unique user labels via `users/<label>` pointers and `created_by {id, label}`;
+    password record and cookie fully specified with a rotating nonce; four-state expiry
+    table; viewer re-reads pointer + `meta.json` before every response and browsers get
+    `no-cache`; resumable cron with `system/prune-state.json`; `doctor` is instance-only,
+    account preflight lives in `init`; `--json` always one document, `--jsonl` for streams;
+    serving matrix and `/_api/v1/drops/<slug>/files/<path>` download route; policy changes
+    are prospective; frozen error catalogue; `usage`/`prune` share one shape; a fourth test
+    seam (local fake Cloudflare management API for `init` failure paths; manual recorded
+    acceptance for claude.ai). Milestone 1 checklist gains `dropthis connect --client
+    claude-code`. Stale clauses in #3, #23, #37, #38 marked.
+59. **Two research rows flagged stale by the review, marked UNVERIFIED in place:** Workers
+    subrequest limits (Free 50 external / 1,000 internal; Paid default now 10,000) and
+    wrangler id write-back for TOML. Re-verify against current docs before sizing anything.
+
+60. **Codex review round 2 (0 blockers, 5 partials, 5 majors, 7 minors) — all applied.**
+    Precision only, no decision changed: per-instance resource names derived from
+    `--name` (`dropthis-<name>`, `-drops`, `-oauth`, `NAME_TAKEN` on clash); idempotency
+    record claimed before side effects and its response encrypted at rest (a generated
+    password may be inside), "returned once" defined; the claude.ai spike is phase zero;
+    the staged upload path fully specified (`/_api/v1/uploads`, signed PUTs, `commit`,
+    CLI-only in v1) and single-call uploads no longer stage; frozen Free-safe initial policy
+    (`max_request_bytes` 25 MB, `pbkdf2_iterations` 5,000, `cron_ops_budget` 40) with a
+    `doctor` benchmark instead of measuring during `init`; upload limits derived from the
+    subrequest budget (≤ 500 files, ≤ 20 URL files, ≤ 45 fetches); hourly resumable cron with
+    a numeric budget; frozen MIME table and text-typed definition; string-only R2
+    `customMetadata` (state derived at list time); `expires_at` everywhere, bare dates are
+    UTC midnight; `q` = NFC + case-folded substring; `doctor` check registry (#29) with
+    result shape; protected bodies cacheable behind the check (#23 amended); crash-safe
+    admin rotation; `auto_index: list` only in v1 (#31 amended).
+
+61. **Codex review round 3 (run A: 13 resolved / 4 partial; run B: 0 blockers, 7 majors,
+    3 minors) — all applied.** One real change: **content-addressed blobs.** The Workers R2
+    binding has no server-side copy, so "unchanged files are R2-copied into the new
+    generation" could not work. Files now live at `drops/<id>/blobs/<sha256>` and a
+    generation is the manifest inside `meta.json`; unchanged files cost nothing on update,
+    unreferenced blobs are deleted after the flip. Precision: the slug is claimed before
+    `meta.json` exists (collision found first, claim removed if the CAS fails);
+    idempotency uses two write-once keys (`claim`, `result`) because R2 allows one write per
+    second per key, with a 60 s abandoned-claim rule; the cron checkpoints once per
+    invocation with harmless replay; `init` renders a per-instance wrangler config with the
+    reconciled KV id (KV cannot be bound by name); `uploads/` gets its own lifecycle rule;
+    the staged `commit` carries the same settings as `publish`/`update` and is bound to the
+    creating key; admin rotation records `previous` in `users/admin` so a rerun can finish;
+    exact MIME table; `init` reports `doctor` results instead of a `first_drop` URL that the
+    hello-drop cleanup would already have deleted. Codex's sandbox is read-only here, so
+    reviews keep alive with `echo` tool calls, not progress files.
+
+62. **Codex review round 4 (run A: 12 resolved / 1 partial / 1 open; run B: 0 blockers,
+    8 majors, 2 minors) — all applied.** Staged PUTs now write blobs straight to their final
+    key, so commit copies nothing and the subrequest budget holds; the idempotency claim
+    carries the identity (drop id, slug, gen, generated password) so retries converge
+    instead of racing, `IDEMPOTENCY_IN_PROGRESS` is gone, and fault-injection tests abort
+    after every write step; the staged commit is fenced by the session's payload hash and
+    replays its stored result; `user add`/`user remove` have a crash-safe order and one
+    shared label-normalization function; a past `expires` is rejected everywhere; `connect`
+    never puts the key in argv or a config file (Claude Code `headersHelper`, env-var
+    references elsewhere); `config set` enforces hard ceilings (64 MB encoded request,
+    100 MB file); account-level checks (`lifecycle_rules`, `kv_bound`, `domain_attached`)
+    move from `doctor` to `init --check`; `title` ≤ 200 bytes, labels ≤ 64 bytes; the
+    reference-docs generator is after v1 (the registry generates REST/CLI/MCP in v1).
+
+63. **Codex review round 5 (run A: 11 resolved / 1 partial; run B, triaged: 9 must-fix majors,
+    1 TDD item) — all applied.** The one that changes a number users see: **inline uploads
+    default to 2 MB** (`max_request_bytes`) — the Worker must JSON-parse, base64-decode and
+    handle inline bytes inside Free's 10 ms CPU, so "25 MB in one call" was never true
+    there; `url` and staged entries stream to R2 with R2 verifying the hash, so large files
+    go that way and `/_skill.md` says so. Precision: content is resolved and blobs written
+    before the idempotency claim, and the claim carries the manifest and a `state_hash` of
+    the whole desired `meta.json` (a `current_gen` match alone could pass a CAS loser);
+    staged sessions use three write-once keys; admin rotation writes `users/admin` once per
+    run; the cron never checkpoints past a UTC day still in progress; policy defaults apply
+    on `publish` only, rules on provided fields, omitted non-compliant fields are
+    grandfathered; a frozen REST route table; the shared-origin cookie boundary (#28)
+    restated as accepted and pinned by a test; canonical JSON = RFC 8785.
+
+64. **Codex review round 6 (run A: 7 resolved / 3 partial / 1 open — the open one is the
+    shared-origin boundary, accepted by #28; run B, triaged: 8 must-fix majors, 2 TDD items)
+    — all applied, and the review loop stopped here.** Applied: `url` entries carry an
+    optional `sha256`+`size` (R2 verifies, no Worker CPU) and undigested URLs are capped by
+    `max_unhashed_bytes`; staged sessions record the target's base ETag and commit CASes
+    against it; a slug pointer owned by a live staged session is not reaped; expiry changes
+    delete the old marker and the cron deletes stale markers; canonical path encoding;
+    one error wire shape per surface; continuation cursors on `usage`/`prune`; re-sending
+    the current password is a no-op; JCS does no normalisation. **Why stop:** six rounds,
+    ~90 findings applied; rounds 4–6 each returned a fresh set of 8–9 "must-fix" items one
+    level finer than the last, which is the class of decision test-first implementation
+    settles against the deployed `dev` Worker. Codex reviews resume per implementation slice,
+    on code and tests, not prose.
 
 ## v1 scope (frozen by #44)
 

@@ -60,46 +60,125 @@ designed fresh for agents.
 /_oauth/*            OAuth endpoints + the one authorize page (paste your key)
 /_connect            static page: how to connect this instance (URL pre-filled)
 /_skill.md           this instance's agent skill, base URL and limits substituted live
-cron (daily)         expire + prune
+cron (hourly)        expire + prune, resumable
 ```
 
-Bindings: `BUCKET` (R2), `OAUTH_KV` (KV), secrets `ADMIN_KEY_HASH`, `HMAC_SECRET`.
-Everything is declared in `wrangler.jsonc` with binding names and no IDs so `wrangler deploy`
-auto-provisions them (JSONC is the documented format for id write-back; whether TOML also
-gets ids written back is unverified — see `docs/research/2026-09-01-cli-conventions.md`).
+Bindings: `BUCKET` (R2), `OAUTH_KV` (KV), one secret `HMAC_SECRET`. The admin key is an
+ordinary key record written into the bucket by the installer before the first deploy — there
+is no admin secret and no live-but-unusable window.
+The repo's `wrangler.jsonc` declares bindings by name with no IDs (for the Deploy-button
+path after v1, where Wrangler auto-provisions; whether TOML also gets ids written back is
+unverified — see `docs/research/2026-09-01-cli-conventions.md`). `init` does not deploy
+from it: it reconciles the bucket and the KV namespace by name through the Cloudflare API,
+renders a per-instance config with the bucket name and the KV **id** filled in (an existing
+KV namespace cannot be bound by name, and id-less provisioning would create a second one),
+and deploys from that.
 
 ### Key layout (the real schema — never renamed)
 
 ```
-drops/<id>/meta.json                 schema, slug, title, meta, access, current_gen,
-                                     expires_at, noindex, created_by, hostname, created, updated
-drops/<id>/<gen>/<path>              files of one generation
-slugs/<slug>                         pointer → id   (created with If-None-Match: * → atomic claim);
-                                     customMetadata carries {id, updated, expires, title, created_by}
-                                     so `list` is ONE list() call — never a get() per drop
-hosts/<hostname>                     pointer → id   (root drop for a hostname; after v1)
-keys/<sha256(key)>.json              label, scope (admin|user), created
+drops/<id>/meta.json                 the ONLY truth: schema, id, slug, title, meta, access,
+                                     current_gen, manifest, expires_at, noindex, created_by
+                                     {id,label}, created, updated
+drops/<id>/blobs/<sha256>            file bodies, content-addressed per drop. A generation is the
+                                     manifest inside meta.json (path → {sha256, size, content_type});
+                                     <gen> = sha256 of that manifest. Unchanged files are never
+                                     re-uploaded or copied (the R2 binding has no copy); an update
+                                     writes new blobs + one meta.json CAS; unreferenced blobs are
+                                     deleted after the flip and by the reconcile
+slugs/<slug>                         pointer → id, claimed with If-None-Match: * BEFORE meta.json
+                                     exists; every lookup is a direct GET of this key. A staged
+                                     publish marks it {pending_upload, expires}; the reconcile
+                                     removes a meta-less pointer only when no live session owns it
+list/<inv-created-ms>-<slug>         listing pointer; customMetadata (strings only) {id, updated,
+                                     expires_at, title, created_by_id, created_by_label}; state is
+                                     derived at list time. R2 lists keys in order, so ONE list()
+                                     over this prefix is newest-first with a cursor
+keys/<id>.json                       {id, label, scope, hash, created}; the admin key is one of these
+keyhash/<sha256(key)>                pointer → key id (the auth lookup)
+users/<normalized-label>             pointer → key id, claimed with If-None-Match: * → labels unique
 expiring/<yyyy-mm-dd>/<id>           marker for the daily cron, dated expires_at + grace;
                                      one list per day, never a scan; a HINT — cron re-reads meta.json
-staging/<id>/<gen>/<path>            uploads before commit; R2 lifecycle rule deletes after 1 day
-system/config.json                   instance policy (defaults + rules)
+requests/<hash>/claim, …/result     idempotency: two keys, each written ONCE (1 write/s per key).
+                                     The claim fixes the identity {drop_id, slug, gen, generated
+                                     password (encrypted)} BEFORE side effects, so retries converge;
+                                     result put at the end, AES-GCM-encrypted (key via HKDF from
+                                     HMAC_SECRET); lifecycle 7 days
+uploads/<id>/session.json, commit,   staged-upload session (CLI path only): three write-once keys
+  result                             (session at creation; commit = fenced claim with payload +
+                                     state hash; result = encrypted Drop); lifecycle 1 day. Staged
+                                     PUTs write blobs straight to drops/<id>/blobs/ — nothing is ever
+                                     copied; abandoned blobs are unreferenced, the reconcile removes them
+system/config.json                   policy (defaults + rules) + canonical_url + alias_origins + instance_name
+system/prune-state.json              cron cursors: oldest pending expiry date, reconcile cursor
+hosts/<hostname>                     pointer → id   (root drop for a hostname; after v1)
 system/claim-code                    one-time code for the unclaimed-install flow (after v1)
 ```
 
 No counters are stored anywhere: R2 has no atomic increment, and a read-modify-write counter
 corrupts itself the first time two requests race. `usage` computes from `list()` on demand.
 
-- **Updates are a generation flip.** Stage files under a new `<gen>`, then compare-and-swap
-  `meta.json` (`If-Match: <etag>`) to point `current_gen` at it. Half-uploaded state is never
-  served. Cache keys include the gen, so an update is visible instantly with no purge. The
-  old gen is deleted after the flip; a weekly reconcile removes orphans.
-- **One call uploads a drop.** `publish` and `update` take `files: [{path, content}]` (text,
-  or base64 for binary) or `{path, url}` (the Worker fetches it). The whole request is one
-  HTTP call; the Worker writes each file to R2 and commits. The single-call ceiling is set
-  by isolate memory (128 MB) and is measured, not guessed — expected around 50 MB. Above it
-  the CLI/SDK silently switch to the staged path: `{path, sha256, size}` manifest → server
-  names the missing hashes → one streamed PUT per file → commit; unchanged files are
-  R2-copied from the previous gen. MCP and REST callers never see the staged path.
+- **Updates are a generation flip; `meta.json` is the only truth.** Write order: (0) resolve
+  content first — decode inline entries, fetch `url` entries, write new blobs under
+  `drops/<id>/blobs/<sha256>` (unreachable until referenced; one R2 op per new file, none
+  for unchanged; R2 verifies the hash via its `sha256` put option, the Worker never hashes
+  streamed bodies) and compute the manifest; (1) put the idempotency claim (identity: drop
+  id, slug, gen, manifest, `state_hash` of the whole desired `meta.json`, generated
+  password) if a key was given — a retry that finds the claim resumes with that identity,
+  re-fetching a missing `url` blob only if its hash still matches; (2) on publish, claim
+  `slugs/<slug>` (a pointer already holding this id counts); (4) compare-and-swap
+  `meta.json` (`If-Match: <etag>`; `If-None-Match: *` on create; a CAS failure where the
+  stored `meta.json` hashes to the claim's `state_hash` is success — `current_gen` alone
+  proves nothing about settings; on failure during a fresh publish, delete the slug claim); (5) write `list/` and `expiring/` (a changed expiry
+  writes the new marker and deletes the old one); (6) put the idempotency result; (7) delete unreferenced blobs with one batched `delete()`.
+  Fault-injection tests abort after each step and assert the retry converges. Half-uploaded state is never served. Equality for the no-op rule
+  is canonical `meta.json` minus `updated`. `slugs/` is never repaired lazily — it exists
+  before `meta.json` by construction; a pointer with no `meta.json` is 404 and the reconcile
+  removes it. `list/` and `expiring/` are repaired both ways: an entry without `meta.json`
+  is deleted by whoever reads it; a missing or stale entry (compared on `updated`) is
+  repaired by the next `get`/`update` and by the reconcile. A CAS failure is `409
+  UPDATE_CONFLICT` (retryable).
+- **Idempotency is explicit.** `publish`, `update` and `user add` accept `idempotency_key`
+  (Stripe pattern). The claim is put with `If-None-Match: *` before any side effect and
+  carries the identity, so concurrent or later retries converge on one outcome; an
+  identical retry returns the stored, encrypted-at-rest result; a different payload under
+  the same key is `409 IDEMPOTENCY_MISMATCH`. "A generated password is returned once" means: to the
+  original call and to identical retries under the same key within 7 days, never from `get`
+  or `list`. `password: "generate"` without a key is documented as non-idempotent. Generated
+  slugs cannot collide with a caller's intent, so there is no `SLUG_TAKEN`; the skill tells
+  agents to `update`, not re-publish.
+- **The viewer never trusts a cache for truth.** Every viewer response first reads the slug
+  pointer and `meta.json` (R2 is strongly consistent), checks expiry, then the unlock cookie
+  when a password is set — and only then may it resolve `path → sha256` through the manifest
+  and look up the body in the Cache API under a synthetic `{id, sha256}` key that no request
+  URL can address. Protected bodies
+  may therefore be cached (amends #23): the cache sits behind the check, never in front of
+  it. Browsers get `Cache-Control: no-cache, must-revalidate`, so an update or an expiry is
+  visible on the next request.
+- **One call uploads a drop.** `publish` and `update` take `files: [{path, text} | {path,
+  base64} | {path, url, sha256?, size?}]` — exactly one of the three per entry, never
+  guessed from the bytes. A `url` entry with a digest streams to R2 (R2 verifies, no Worker
+  CPU, up to `max_file_bytes`); without one the Worker must hash in-stream, so it is capped
+  by `max_unhashed_bytes` (2 MB default) — the CLI always sends digests. Limits come from the Free subrequest budget (50 external, 1,000 internal; R2
+  binding calls are internal): ≤ 500 files per call; `url` entries ≤ 20 per call and
+  fetches including redirects ≤ 45, ≤ 3 redirects followed manually and re-validated,
+  `http`/`https` on 80/443 only, no loopback/link-local/private/metadata targets,
+  `global_fetch_strictly_public` on, size ≤ `max_file_bytes`, 20 s each. Paths: relative,
+  `/`-separated, NFC, no `.`/`..` segments, no backslash or control characters, unique after
+  normalisation. Content type from a frozen extension table (`application/octet-stream`
+  fallback); text-typed = `text/*`, JSON, JavaScript, XML, SVG and `+json`/`+xml` types. The
+  single-call ceiling is policy `max_request_bytes` — **2 MB by default**: inline entries
+  are JSON-parsed and base64-decoded by the Worker inside the CPU budget (10 ms on Free —
+  25 MB is impossible there); slice 2 measures the true Free-safe value; `url` and staged
+  entries stream to R2 with R2 verifying the hash and cost almost no CPU. `/_skill.md`
+  prints the current value and says: text inline, files by `url`. Above it **the CLI — the only staged-path client in v1** — uses
+  `POST /_api/v1/uploads` (manifest → `upload_id`, drop id and slug allocated, missing
+  hashes, HMAC-signed 1-hour PUT URLs) → streamed `PUT` per missing blob **straight to
+  `drops/<id>/blobs/<sha256>`** with size + sha256 verified → `POST
+  /_api/v1/uploads/<id>/commit` (carries the settings like `publish`/`update`; fenced by the
+  session's payload hash; verifies the blobs exist, then the write order above; replays the
+  stored result on repeat). Nothing is ever copied. MCP and REST publish callers never see
+  it.
 - **R2 write rate.** R2 allows about one write per second to the same key. `meta.json` and
   `slugs/<slug>` are single keys; a second write inside that window returns `429` with
   `Retry-After` and a stable error code. Serialising through a Durable Object was considered
@@ -113,53 +192,81 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
 ### The drop model
 
 - **Slug = identity = URL.** Generated, 10 characters from `a-z0-9`, never starts with `_`,
-  immutable. `get`, `update` and `delete` accept the slug or the full URL and nothing else.
-  Vanity slugs are one optional field away (the atomic claim already handles them) and wait
-  for a user asking. Rename is a non-goal: a URL is permanent.
-- **`title`** — short, optional, human-readable. In `list`, on the auto-index page, on the
-  password page. The skill tells agents to always set it.
+  immutable. `get`, `update` and `delete` accept the slug or a URL whose origin is this
+  instance's `canonical_url` or one of its `alias_origins`; any other origin is
+  `WRONG_INSTANCE`. Vanity slugs are one optional field away (the atomic claim already
+  handles them) and wait for a user asking. Rename is a non-goal: a URL is permanent.
+- **One canonical origin.** `init` stores `canonical_url` (the custom domain, else the
+  `*.workers.dev` URL) and `alias_origins`. Drop URLs, OAuth issuer/resource/discovery and
+  `/_skill.md` use the canonical origin; viewer requests on an alias redirect (301) to it.
+- **`title`** — short (≤ 200 bytes UTF-8), optional, human-readable. In `list`, on the
+  auto-index page, on the password page. The skill tells agents to always set it.
 - **`meta`** — a JSON object the agent owns (≤ 16 KB): what the drop is, where the source
   data came from, which workflow made it, who it was sent to. Stored verbatim in
   `meta.json`, returned by `get`, never in `list`. `update({meta})` merges at the top level;
   a key set to `null` is removed. Values are any JSON — the old product advertised JSON and
   rejected non-strings, and agents got 422s.
-- **`access`** — the unlock rule. Today `{password_hash, …}`. It is an object, not a bare
-  field, so a paid unlock (`{price, currency, …}`) can be added later without touching the
-  layout; that door is deliberately open and deliberately empty (#54).
-- **Expiry.** `expires: "7d" | "2026-12-31" | "never"`; default from policy (30 days);
-  policy `max` and `allow_never` enforced. When `expires_at` passes the viewer answers 410
-  at once. The files stay for a **7-day grace** in which `get` and `update({expires})` still
-  work — "the link died, bring it back" is one call, not "the files are gone". After grace
-  the daily cron deletes. Markers are hints: cron re-reads `meta.json` and deletes only if
-  `expires_at + grace <= now`.
+- **`access`** — the unlock rule. Today `access.password = {algorithm: "pbkdf2-sha256",
+  iterations, salt, hash, version, nonce}`. It is an object, not a bare field, so a paid
+  unlock (`{price, currency, …}`) can be added later without touching the layout; that door
+  is deliberately open and deliberately empty (#54).
+- **Expiry.** `expires: "7d" | "2026-12-31" (= `T00:00:00Z`) | RFC 3339 | "never"`; default
+  from policy (30 days); policy `max` and `allow_never` enforced; a past value is
+  `POLICY_VIOLATION` (so no marker ever lands behind the cron cursor); stored as RFC 3339
+  `expires_at` (`null` = never).
+  Four states, one table (tests cover every row):
+
+  | state | condition | viewer | `get` | `update` | `list` | cron |
+  |---|---|---|---|---|---|---|
+  | `live` | before `expires_at` | serves | 200 | ok | shown | — |
+  | `expired_grace` | `expires_at ≤ now < expires_at + 7d` | 410 | 200 + `state` | only with a future `expires`, else `409 EXPIRED_NEEDS_EXPIRES` | shown + `state` | — |
+  | `expired_final` | `now ≥ expires_at + 7d`, not pruned | 410 | `410 EXPIRED_FINAL` | `410 EXPIRED_FINAL` | hidden | deletes |
+  | deleted | pruned or `delete` | 404 | `404 NOT_FOUND` | `404 NOT_FOUND` | hidden | — |
+
+  "The link died, bring it back" is one call inside grace. Markers are hints: cron re-reads
+  `meta.json` and deletes only if `expires_at + grace ≤ now`.
 - **Password.** `password: "generate"` returns a 16-character random password once in the
   response — the agent's default, the skill says so. A chosen password needs ≥ 8 characters.
-  Stored as PBKDF2-SHA256 at the highest iteration count the plan's CPU budget allows
-  (measured), unlocked by an HMAC cookie. No attempt rate limiting in v1; `SECURITY.md`
+  Stored as PBKDF2-SHA256 at policy `pbkdf2_iterations` (5,000 by default, safe on Free;
+  `doctor`'s `pbkdf2_benchmark` reports the highest count that fits 8 ms in the deployed
+  Worker and the operator raises it with `config set`). Unlock = an HMAC
+  cookie signed over `{slug, nonce, expires_at}`: host-only, `Secure`, `HttpOnly`,
+  `SameSite=Lax`, `Path=/<slug>/`. `nonce` rotates only when effective access changes (new, generated or removed password;
+  re-sending the current password is a no-op), so a real change invalidates every cookie. No attempt rate limiting in v1; `SECURITY.md`
   says so plainly. `password: null` removes it.
 - **`noindex`** on by default: `X-Robots-Tag: noindex, nofollow` on every response.
-- **`created_by`** — the label of the key that made the drop. Attribution, not a wall.
-- **Folder drops** without `index.html` get a generated file list (`auto_index: list`);
-  single files (PDF, xlsx, image, one HTML page) are served directly at the URL with the
-  right content type.
+- **`created_by`** — `{id, label}` of the key that made the drop, a snapshot. Attribution,
+  not a wall.
+- **Serving matrix.** Single-file drop: the file at `/<slug>/` and at `/<slug>/<path>`.
+  Folder drop: `/<slug>/` from `index.html` when present, else the generated list
+  (`auto_index: list`); `/<slug>/<dir>/` from `<dir>/index.html` when present, else 404;
+  missing paths 404. `Content-Disposition: inline` by default, `?download=1` for attachment.
 
 ### Responses and errors
 
 - One `Drop` shape from `publish`, `update`, `get` and each `list` item: `url, slug, title,
-  created_by, created, updated, expires, noindex, has_password`; `files[]` (`path, size,
-  sha256`) on `get`/`publish`/`update`; `meta` everywhere except `list`. `password` appears
-  once, only in the response that set or generated it. Same shape in REST, CLI `--json` and
-  MCP.
-- `get(target, files: true)` returns text file content inline (≤ 1 MB total), password or
-  not, and lists binaries with a bearer-authenticated download path. Pull → edit → `update`
-  needs no local state.
-- Errors: `{code, message, remediation}` with stable codes. The remediation is the only
-  hint dropthis ever sends, and only when the agent is off-path (`SLUG_TAKEN → "call
-  update"`, `EXPIRED_GRACE → "call update with expires"`). No `next` hints on success: the
-  URL is the id, there is nothing to re-teach, and every sentence costs context on every call.
-- `list`: one R2 `list()` per page, ≤ 1,000 entries, cursor, newest-first, optional `q`
-  substring over `title` applied in memory within the page. No index, no search. An instance
-  with more than 1,000 live drops is a second instance.
+  created_by, created, updated, expires_at, noindex, has_password, state`; `files[]`
+  (`path, size, sha256, content_type`) on `get`/`publish`/`update`; `meta` everywhere except
+  `list`. `password` appears once, only in the response that set or generated it. Same
+  shape in REST, CLI `--json` and MCP.
+- `get(target, files: true)` adds `content` to text-typed files up to 1 MB total in manifest
+  order, password or not; binaries and anything past the budget carry `download_url`
+  (`GET /_api/v1/drops/<slug>/files/<encoded-path>`, bearer auth, Range). Pull → edit →
+  `update` needs no local state.
+- Errors: one object `{code, message, remediation, retryable}` from a frozen catalogue, on the
+  wire as REST `{error: {…}}`, MCP `isError: true` with that object, CLI `--json` the same
+  object on stderr — (`INVALID_INPUT`,
+  `INVALID_PATH`, `POLICY_VIOLATION`, `UNAUTHENTICATED`, `FORBIDDEN_SCOPE`, `NOT_FOUND`,
+  `WRONG_INSTANCE`, `EXPIRED_NEEDS_EXPIRES`, `UPDATE_CONFLICT`, `IDEMPOTENCY_MISMATCH`,
+  `LABEL_TAKEN`, `NAME_TAKEN`, `EXPIRED_FINAL`, `UPLOAD_EXPIRED`,
+  `PAYLOAD_TOO_LARGE`, `HASH_MISMATCH`, `FETCH_FAILED`, `R2_RATE_LIMIT` with `Retry-After`,
+  `INTERNAL`), each with HTTP status and retryability. The remediation is the
+  only hint dropthis ever sends, and only off-path. No `next` hints on success: the URL is
+  the id, there is nothing to re-teach, and every sentence costs context on every call.
+- `list`: one R2 `list()` over `list/` per page (≤ 1,000, key order = newest-first), cursor,
+  `has_more`, optional `q` = substring over `title` after NFC normalisation and Unicode case
+  folding, applied within the page — a page can be empty while `has_more` is true, and the
+  skill says so. No search index.
 
 ### Auth
 
@@ -178,26 +285,43 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
 - OAuth on `/_api/mcp` exists only because claude.ai and the Claude desktop app add MCP
   servers as connectors that speak OAuth and cannot send static headers. The authorize page
   is one form — *paste your dropthis key* — so identity stays "the key". Revoking the key
-  ends every session behind it. `@cloudflare/workers-oauth-provider` does the protocol; a
-  spike against a real claude.ai connector runs before any OAuth code lands here.
+  ends every session behind it: every OAuth token resolves to a key id and is checked
+  against `keys/<id>.json` on each request. `@cloudflare/workers-oauth-provider` does the
+  protocol; a recorded spike against a real claude.ai connector is **phase zero** — it runs
+  before any code in this repo, and if it fails the auth contract is revised first. On
+  claude.ai Team/Enterprise only an Owner can add a custom connector; members then
+  log in with their own key — onboarding messages say so.
 - Cloudflare Access was evaluated and rejected as the auth layer (50 service-token cap,
   two-header scheme browser clients cannot send, no per-user identity on tokens).
 
 ### Team model
 
 **Instance = team.** Every `user` key sees and edits every drop in the instance; `created_by`
-records who made it. Someone leaves: revoke their key, one call. An agent handed a
-colleague's URL never hits a permission wall inside its own team; a wall is a second
-instance. There is no per-key ownership, no roles beyond `admin`/`user`, no workspaces.
+records who made it. Labels are unique per instance on their normalized form (NFKC → case
+fold → trim → whitespace to `-`, must match `^[a-z0-9][a-z0-9._-]{0,62}$`; one function in
+the registry, every surface uses it); `LABEL_TAKEN` otherwise; a removed label can be
+reused and gets a new key id. `user add`: key record → `keyhash/` → label claim (undo on
+clash). `user remove <label>`: delete `keyhash/` first (access ends), then the record, then
+the label; every step tolerates 404 so a rerun finishes it. An agent handed a colleague's URL never hits a permission wall
+inside its own team; a wall is a second instance. The admin key is a key record with label
+`admin` — one listing, rotation and revocation path for every credential. There is no
+per-key ownership, no roles beyond `admin`/`user`, no workspaces.
 
 ### Instance policy (`system/config.json`)
 
 Two layers: *defaults* applied when the caller says nothing, *rules* enforced regardless.
 Example: `expiry: {default: "30d", max: "90d", allow_never: false}`,
 `password: {default: "generate", required: true}`, `noindex: {default: true, forced: true}`,
-`max_file_bytes`, `auto_index`. dropthis itself never sends messages; password delivery is
-the caller's job — the agent hands the human a ready-to-send message. Policy is per
-instance; two groups with different rules get two instances.
+`max_file_bytes` (≤ 100 MB, the request-body cap), `max_request_bytes` (≤ 64 MB encoded so
+the decoded body fits the isolate; in practice far lower on Free, per the measured CPU
+budget), `auto_index` (`list` only in v1),
+`pbkdf2_iterations`, `cron_ops_budget`; `config set` rejects values above the hard
+ceilings. `init` writes frozen Free-safe initial values; nothing is measured during `init`. **Prospective only:** `config set`
+changes what future calls resolve to: defaults fill omitted fields on `publish` only, rules
+are enforced on the fields a call provides, and an existing drop's omitted, now
+non-compliant field is grandfathered until the caller next sets it. The response says so. dropthis itself never sends messages; password
+delivery is the caller's job — the agent hands the human a ready-to-send message. Policy is
+per instance; two groups with different rules get two instances.
 
 ### Multi-client hosting
 
@@ -206,7 +330,10 @@ boundary: a key from instance A does not exist in instance B's `keys/`. An opera
 many clients on one Cloudflare account (`npx dropthis init --name client-x` per client) and
 holds every instance's admin key in their own `~/.config/dropthis/instances.json`; or a
 client runs it on their own account with their own token. Same command, different token.
-Five cron triggers per account on the Free plan means the sixth instance needs Workers Paid.
+`init --name <name>` derives every resource from the normalised name (`[a-z0-9-]`, 3–30):
+Worker `dropthis-<name>`, bucket `dropthis-<name>-drops`, KV `dropthis-<name>-oauth`;
+reruns reconcile by these names, a clash with another instance is `NAME_TAKEN`. Five cron
+triggers per account on the Free plan means the sixth instance needs Workers Paid.
 If cross-client reporting is ever needed, `tenant` is one more field in `meta.json`;
 tolerant readers already handle it.
 
@@ -223,37 +350,55 @@ tolerant readers already handle it.
 
 ### Pruning
 
-Three kinds of garbage, three mechanisms: expired drops (after grace) → daily cron over
-`expiring/<today>/`; abandoned uploads → R2 lifecycle rule on `staging/` (set once by the
-installer) plus abort-incomplete-multipart; orphaned generations → weekly reconcile in the
-same cron. `prune --dry-run` and `usage` read the same layout. Free-plan cron has a small
-CPU and subrequest budget per invocation — batch and chain; measure, do not guess.
+Three kinds of garbage, three mechanisms: expired drops (after grace) → daily cron;
+abandoned uploads → R2 lifecycle rules on `uploads/` (1 day) and `requests/` (7 days), set
+once by the installer, plus abort-incomplete-multipart, and unreferenced blobs older than a
+day removed by the reconcile; orphaned generations and stale
+projections → weekly reconcile in the same cron. **The cron is hourly and resumable.**
+`system/prune-state.json` holds `oldest_pending_date`, a per-day cursor and a reconcile
+cursor and is written once per invocation, at the end (one key, one write); every run works
+from the oldest pending date up to today (UTC), re-reads each `meta.json`, leaves
+not-yet-due entries in place, deletes markers that disagree with `meta.json`, never
+checkpoints past a day that is not yet over, stops at policy `cron_ops_budget` (40 R2 ops by default — derived from Free's 10 ms CPU and 50 subrequests
+with headroom, ≈ 8 drops per run, ≈ 190 per day). A crash before the checkpoint replays
+harmlessly next hour (every step re-reads `meta.json`; a deleted drop reads as 404) — a
+missed run is caught up, never stranded. Every 7th day the budget goes to the reconcile:
+unreferenced blobs, orphan pointers and entries, missing entries. `prune --dry-run` and `usage` share one result shape: counts and bytes per
+`live | expired_grace | expired_final | staging | orphan`, plus `incomplete` + cursor when
+the budget ran out.
 
 ## Operation registry
 
 Every operation is defined once (name, input schema, scope, description) and generates the
-REST route, the CLI subcommand, the MCP tool and the reference docs. Adding an operation
+REST route, the CLI subcommand and the MCP tool (the reference-docs generator comes after
+v1). Adding an operation
 means adding one entry.
 
 **Drop operations (user scope), exactly five:**
 
 | op        | does                                                                                   |
 |-----------|----------------------------------------------------------------------------------------|
-| `publish` | create: `files`, `title?`, `meta?`, `password?`, `expires?`, `noindex?` → `Drop` + URL. Create-only: an existing slug is `409 SLUG_TAKEN → "call update"`. |
-| `update`  | change only what is given: `files?` (replaces the whole set, one new generation), `title?`, `meta?` (merge), `password?` (`"…"`, `"generate"`, `null`), `expires?`, `noindex?`. Honestly idempotent. |
+| `publish` | create: `files`, `title?`, `meta?`, `password?`, `expires?`, `noindex?`, `idempotency_key?` → `Drop` + URL. Always a new slug; a retry with the same `idempotency_key` returns the same drop. |
+| `update`  | change only what is given: `files?` (replaces the whole set, one new generation), `title?`, `meta?` (merge), `password?` (`"…"`, `"generate"`, `null`), `expires?`, `noindex?`, `idempotency_key?`. Same resulting state = no-op. |
 | `get`     | by slug or URL; `files: true` adds content. Replaces the old `resolve` and `get_content`. |
-| `list`    | one page of `Drop`s, newest-first, `cursor`, `limit`, `q`.                              |
+| `list`    | one page of `Drop`s, newest-first, `cursor`, `limit`, `q` → `{drops, cursor, has_more}`. |
 | `delete`  | immediate, files and pointers.                                                          |
 
-**Admin operations (admin scope):** `user add|list|remove`, `config get|set`, `usage`,
-`prune [--dry-run]`, `doctor`. `user add` returns the key once together with a structured
-`connect` object (per-client MCP snippets and a ready-to-send message) so onboarding a
-person is one call. `host_*` comes after v1.
+**Admin operations (admin scope, instance key):** `user add|list|remove`, `config get|set`,
+`usage`, `prune [--dry-run]`, `doctor`. `user add` returns the key once together with a
+structured `connect` object (per-client MCP snippets and a ready-to-send message) so
+onboarding a person is one call. `doctor` is a named check registry (#29), instance key only:
+`hello_drop`, `mcp_initialize`, `policy_readable`, `cron_state`, `canonical_origin`,
+`pbkdf2_benchmark`, `admin_rotation_clean`; `doctor --list --json` lists ids, `doctor
+--json` returns `{ok, checks: [{id, status, evidence, remediation}]}`. Account-level checks
+(`lifecycle_rules`, `kv_bound`, `domain_attached`) belong to `init --check`, which needs the
+Cloudflare token. `host_*` comes after v1.
 
 **Instance lifecycle** lives in the CLI only — it needs the Cloudflare token, not an instance
-key: `init`, `doctor` in v1; `upgrade` with the first release after v1; `destroy`, `claim`
-later. MCP tool names carry the `dropthis_` prefix so they stay distinct when an agent has
-several servers connected.
+key: `init` (account preflight, provisioning, deploy; `--dry-run` = preflight only) and
+`connect` in v1; `upgrade` with the first release after v1; `destroy`, `claim` later. MCP
+tool names carry the `dropthis_` prefix so they stay distinct when an agent has several
+servers connected.
 
 ### CLI conventions (industry standard; evidence in `docs/research/2026-09-01-cli-conventions.md`)
 
@@ -264,20 +409,23 @@ several servers connected.
   `delete`, `doctor`, `connect` — and `noun verb` for administration — `user add`,
   `config set`, `usage`, `prune`.
 - **Two credentials, two env names, env beats file:** `CLOUDFLARE_API_TOKEN` (+
-  `CLOUDFLARE_ACCOUNT_ID`) for `init`/`doctor`; `DROPTHIS_URL` + `DROPTHIS_KEY` for
-  everything else. `init` writes `~/.config/dropthis/instances.json` (`name → {url, key}`);
+  `CLOUDFLARE_ACCOUNT_ID`) for `init` only; `DROPTHIS_URL` + `DROPTHIS_KEY` for everything
+  else, `doctor` included. `init` writes `~/.config/dropthis/instances.json` (`name → {url, key}`);
   one instance is the default, `--instance <name>` / `DROPTHIS_INSTANCE` selects, the env
   pair overrides all of it (CI, n8n). An unknown instance name errors with the known names.
-- **`connect [--instance x] --client claude-code|cursor|codex|claude-ai --json`** prints or
-  applies the per-client registration; for Claude Code it runs `claude mcp add` itself so
-  the key never lands in a repo file.
+- **`connect [--instance x] --client claude-code|cursor|codex|claude-ai --json`** applies
+  the per-client registration with the key in neither argv nor any config file: Claude Code
+  gets a `headersHelper` (`dropthis auth-header --instance x` reads `instances.json`);
+  Cursor and Codex get a reference to `DROPTHIS_KEY_<NAME>` plus the one-line export to add
+  to the shell profile; claude.ai gets the connector URL and the paste-key message.
 - **Non-interactive by default** when stdin is not a TTY or an agent is detected (Vercel's
   `@vercel/detect-agent` pattern); `--yes` is the explicit form; never a prompt an agent can
   hang on. Secrets via env or stdin, never flags.
-- **Output contract:** `--json` = one deterministic JSON document (NDJSON only for streams
-  such as `init`'s step log); stdout carries the result (on `publish`, only the URL), stderr
-  everything else; exit codes documented: `0` ok, `1` failure, `2` cancelled, `4` auth
-  required (as `gh`). `dropthis commands --json` lists the surface.
+- **Output contract:** `--json` = exactly one deterministic JSON document, always (for
+  `init`, a result object with a `steps[]` array); `--jsonl` streams live step events where
+  a command has them (`init`, `prune`); stdout carries the result (on `publish`, only the
+  URL), stderr everything else; exit codes documented: `0` ok, `1` failure, `2` cancelled,
+  `4` auth required (as `gh`). `dropthis commands --json` lists the surface.
 - **`npx dropthis@latest` only on the one-shot `init` line**; pinned afterwards.
 
 ### Installer principles (learned from 15 Cloudflare-hosted projects, `docs/research/`)
@@ -288,15 +436,21 @@ several servers connected.
 - **Reconcile by name, self-heal.** Bucket and KV: saved id → match by name → create. A
   re-run after a dashboard deletion repairs instead of failing. Provisioning goes through the
   Cloudflare REST API (ids come back as JSON); never parse wrangler's stdout for ids or URLs.
-- **Credential before deploy, secrets in the same deploy.** Refuse to deploy if there is no
-  admin key and none can be minted; ship the hashed key via `wrangler deploy --secrets-file`
-  so there is no live-but-unusable window.
+- **Credential before deploy.** `init` mints the admin key and writes its records
+  (`keys/`, `keyhash/`, `users/admin`) into the bucket through the Cloudflare R2 API before
+  the first deploy; `HMAC_SECRET` ships via `wrangler deploy --secrets-file`. Refuse to
+  deploy if no admin record exists and none can be written. `--rotate-admin-key` is
+  crash-safe: new record + `keyhash/` → CAS `users/admin` to `{id: new, previous: old}`
+  (its one write this run) → delete old `keyhash/` (revocation) → delete old record;
+  `previous` is cleared by a later writer (`init` rerun, `doctor`, next rotation), never in
+  the same second; a rerun finishes the deletes first. `canonical_url` and `alias_origins` are written to
+  `system/config.json` in the same run.
 - **Preflight names the dashboard permission, not the HTTP code.** Token verify, account
   pin (refuse to guess between several), R2-subscription check (`code: 10042` → "enable R2 at
   …"), one cheap read per permission.
 - **`doctor` proves the deploy with a real drop**: publish → fetch → delete a hello drop, and
   MCP `initialize` must answer — a version-correct deploy with a dead MCP endpoint is a broken
-  deploy. Poll for propagation first.
+  deploy. `init` polls for propagation, then runs it with the instance key.
 - **Unclaimed, fail-closed bootstrap for the button path (after v1).** With no admin secret
   set, every route but health and `/claim` returns 503; the Worker writes a one-time claim
   code to `system/claim-code` (never to a response or a log); `npx dropthis claim` reads it
@@ -315,6 +469,13 @@ atomically before reporting success. Diagnostic output and Worker logs never con
 missing credential fails with a recovery instruction; rotation requires an explicit command.
 Tests cover concurrent bootstrap, interruption, rerun, missing credentials and secret redaction.
 
+### Shared-origin boundary (accepted, #28)
+
+All drops of an instance share one origin, so active HTML in one drop can request another
+drop's path and the browser attaches that path's unlock cookie if the visitor unlocked it.
+`SECURITY.md` says so: a convenience boundary, not a security one. Per-drop origin
+isolation is a door kept open, not v1. A contract test pins the documented behaviour.
+
 ### Reserved paths
 
 `RESERVED_PREFIXES` is a list of literal path strings (`/_api`, `/_oauth`, `/_connect`, …)
@@ -322,12 +483,13 @@ checked with `startsWith`. Generated slugs never start with `_`. Validation rege
 separate values and never enter routing. Every new control-plane prefix adds a
 viewer-collision test (a slug must never shadow it).
 
-### Release trust (from the first public release)
+### Release phases and trust
 
-Published npm packages and release archives carry an SPDX or CycloneDX SBOM and a provenance
-attestation. GitHub Actions dependencies are pinned to commit SHAs. The release gate verifies
-both. Deployments carry a versioned release manifest; `upgrade` refuses an instance whose
-schema is newer than it understands.
+v1 is used privately from the repo build (`npx ./packages/dropthis`); nothing is on npm.
+The **first public release** is its own milestone: `dropthis@1.0.0` on npm with an SPDX or
+CycloneDX SBOM and a provenance attestation, GitHub Actions pinned to commit SHAs, a release
+gate that verifies both, CI running the contract corpus, and a versioned release manifest.
+`upgrade` (after that) refuses an instance whose schema is newer than it understands.
 
 ## Kept open, deliberately empty
 
@@ -361,17 +523,20 @@ noindex. **Prune** — deleting expired drops, abandoned uploads and orphaned ge
 
 ## Working rules for this repo
 
-- Test-first for every behaviour. Contract tests run against a real deployed Worker — a
-  throwaway `dev` instance on the developer's own account, wiped at the start of every run
-  (`npm test`, Cloudflare token from the environment). No CI before the first public
-  release. Unit tests cover policy resolution, key layout, conditional-write handling and
-  schema tolerance.
+- Test-first for every behaviour. Four seams: (1) a golden HTTP corpus against a real
+  deployed `dev` Worker on the developer's own account, bucket reset through the R2 API
+  before every run, expiry driven by a clock override that exists only in the `dev` build;
+  (2) the `dropthis` binary as a subprocess — instance commands against `dev`, `init`
+  against a local fake of the Cloudflare management API for every failure path; (3) a few
+  pure unit modules (policy, expiry parsing, slug, path validation, manifest hashing, schema
+  tolerance, `meta` merge, error catalogue completeness); (4) manual, recorded acceptance:
+  the claude.ai spike and the two milestone runs. No CI before the first public release.
 - One monorepo: `packages/worker` (the deployed Worker), `packages/dropthis` (the one npm
   package: installer, CLI, stdio MCP, bundles the built Worker for `init`), `skills/`,
-  `contract-tests/`. Commits go straight to `main`; no branches, PRs or worktrees unless
-  asked.
-- `wrangler.jsonc`, never TOML. Bindings top-level, no IDs, so `wrangler deploy` provisions
-  them.
+  `contract-tests/`, `test/fake-cloudflare/`. Commits go straight to `main`; no branches,
+  PRs or worktrees unless asked.
+- `wrangler.jsonc`, never TOML. The repo file has bindings by name and no IDs (button path);
+  `init` renders the per-instance config with the reconciled ids and deploys from that.
 - Secrets are never printed to logs and never re-revealed by a rerun. A missing key file
   fails loudly; rotation is explicit.
 - Docs are generated from the operation registry wherever possible. Hand-written prose is
