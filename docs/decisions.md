@@ -1,0 +1,112 @@
+# Decisions
+
+Dated log of product and architecture decisions with the reason for each. Append; when a
+decision is reversed, mark the old entry `superseded by #n` rather than deleting it.
+
+All entries below: **2026-09-01**, from the design session that founded this repo. Evidence
+for Cloudflare facts is in `docs/research/` (same date).
+
+## Product
+
+1. **Cloudflare-only, in the user's own account, instead of self-hosting on a NAS/server.**
+   Removes the entire operations bar (images, Docker EOL, reverse proxies, TLS, backups,
+   migration locks) that makes self-hosted OSS decay. Accepts vendor lock in exchange;
+   mitigated by plain-file storage that is S3-compatible (see #11).
+2. **Fresh repo, not a fork of the hosted codebase.** The hosted product is FastAPI +
+   Postgres + Cloud Run with ~35k source lines and features with no users (workspaces, OAuth
+   server, admin SPA, blog). Only the viewer's pure policy (~1,700 lines) and the client
+   contract are worth carrying.
+3. **Name stays `dropthis`; repo `dmalis/dropthis`; npm scope `@dropthis` (already owned).**
+   A personal-account repo transfers to an org later with permanent redirects.
+4. **Agent-first, no dashboard.** Every operation exists as REST, CLI and MCP from one
+   registry. Even a human uses it through an agent. The only HTML pages are the OAuth
+   login form and a static `/_connect` help page.
+5. **Two front doors: Deploy-to-Cloudflare button (human) and `npx @dropthis/cf init --json`
+   (agent).** Both end by publishing a hello drop and returning its URL.
+6. **The human loop is exactly Cloudflare's three steps** — account, card for R2, first API
+   token — and nothing of ours. Automating account creation with a browser agent was
+   rejected: fragile behind Turnstile, likely against Cloudflare terms, and it puts card
+   data and a root login in an agent's hands.
+7. **Client contract kept compatible with the hosted product** so `@dropthis/sdk`, `cli`
+   and `mcp` keep working with a base-URL change. Unimplemented endpoints return 404.
+8. **Managed hosting is architected for, not built.** Anyone running the code can host
+   clients: instance per client on one account, invoiced. A $5/month anonymous plan by the
+   author is possible later (same Worker + Stripe Checkout → key) but is not in scope.
+9. **Licence Apache-2.0.** For a deploy-to-your-own-account tool, adoption matters more than
+   clone defence. (The hosted product's AGPL reasoning does not apply here.)
+
+## Architecture
+
+10. **One Worker serves API and content on one host.** API under the reserved prefix
+    `/_api`; content at `/<slug>/`. Works on the free `*.workers.dev` hostname with no
+    domain. A second `api.` hostname was rejected as an extra moving part.
+11. **R2 is the only store — files are the database.** One object per entity; direct GET on
+    the hot path; `slugs/<slug>` claimed with `If-None-Match: *`; `meta.json` updated with
+    `If-Match` CAS. R2 is strongly consistent globally. D1 and KV as an index were rejected:
+    an extra resource to create, an extra migration step, and KV's 1,000 free writes/day.
+    A single Durable Object was considered as a serializer and not needed.
+12. **One KV namespace is the only extra binding, for OAuth session storage** required by
+    `@cloudflare/workers-oauth-provider` (see #17). Auto-provisioned; costs the installer
+    nothing.
+13. **Updates are atomic generation flips; no revision history.** Users update the same
+    drop repeatedly; they do not need rollback. Old generation deleted after the flip.
+14. **Manifest-first, per-file upload.** Client sends hashes, server names the missing
+    ones, client PUTs those, commits. One file per request because Workers cap request
+    bodies at 100 MB on every plan. Unzipping happens client-side (10 ms CPU on Free).
+15. **Instance = client. No tenant field.** Isolation by Worker + bucket boundary; multiple
+    instances per account are free (500 Workers on Paid). `tenant` can be added as one
+    `meta.json` field if cross-client reporting is ever requested.
+16. **Own API keys, not Cloudflare Access.** Keys: 32 random bytes, `sha256` stored,
+    timing-safe compare, two scopes (`admin`, `user`). Access rejected: 50 service tokens
+    per account, two headers browser MCP clients cannot send, no per-user identity.
+17. **OAuth on `/_api/mcp`, via `@cloudflare/workers-oauth-provider`, in the MVP.** Forced
+    by the primary users (a client team on claude.ai and the Claude desktop app) — their
+    connectors speak OAuth only. Identity remains the key: the authorize page asks the
+    user to paste their key. Hand-rolled OAuth rejected (the hosted product's 6,200-line
+    hand-written server was a lesson).
+18. **MCP transport: Streamable HTTP via `createMcpHandler`.** SSE is deprecated;
+    `McpAgent` is marked for deprecation. stdio `@dropthis/mcp` stays as an alternative.
+19. **Default expiry 30 days; `never` allowed unless policy forbids.** Agents forget to
+    clean up; a self-hoster's bucket should not fill with dead previews.
+20. **Pruning is a feature.** Daily cron over `expiring/<date>/` markers; R2 lifecycle rule
+    on `staging/`; weekly orphan reconcile; `prune --dry-run` and `usage` for visibility.
+21. **Expiry enforced on read (410) independent of cleanup lag.**
+22. **`noindex` via `X-Robots-Tag` header, not HTML rewriting.** Works for files too.
+23. **Password = HMAC unlock cookie (reused from the hosted viewer).** Protected responses
+    bypass the edge cache. Generated passwords are returned once in the publish response;
+    delivery (SMS/email) is the caller's job — optional `webhook_url` in policy for that.
+24. **Instance policy = defaults + enforced rules in `system/config.json`**, set via
+    `config_set`. Per instance, not per user.
+25. **Files are first-class drops.** A single PDF/xlsx/image is served at its URL with the
+    right content type, `Content-Disposition: inline` by default, download on request.
+26. **Schema tolerance is mandatory.** `schema` field in `meta.json`; unknown fields
+    ignored, missing defaulted; lazy read-repair; one contract fixture per historical schema
+    version, kept forever. Key layout is never renamed.
+27. **Hostnames per drop via `hosts/<hostname>` + Workers routes/custom domains**; for
+    domains outside the account, Cloudflare for SaaS (100 hostnames free, then $0.10/mo).
+28. **Never put drops on a subdomain of a site whose cookies matter** (cookie scope leaks
+    to parent domains). Documented for operators; a shared hostname's path-scoped unlock
+    cookies are convenience, not a security boundary.
+
+## MVP scope (frozen)
+
+In: publish, update_content, update_settings, get, list, delete, resolve; slug/vanity slug;
+expiry + prune; password; noindex; files as drops; keys with two scopes; `user_*`, `host_*`,
+`config_*`, `usage`, `prune`, `doctor`; REST + CLI + MCP from one registry; OAuth on
+`/_api/mcp`; installer `init | upgrade | destroy | doctor`; Deploy button; skills; contract
+tests against a deployed instance.
+
+Out: everything in AGENTS.md "Non-goals", plus `webhook_url` unless a first client needs it.
+
+## Kill criterion
+
+Measure at 90 days after first public release: installs, stars, hosted requests. If usage is
+below the hosted product it replaces, it stays a personal tool and no paid plan launches.
+
+## Competitive context (summary; full table in `docs/research/2026-09-01-competitors.md`)
+
+No OSS project combines own-Cloudflare + MCP-first + multi-user + drop policies. Nearest:
+`coda0HQ/open-artifacts` (50★, no MCP, single-tenant) — a weekend from closing the gap, so
+speed matters more than feature count. The convenience segment belongs to Anthropic's
+built-in Artifacts; our users are the ones it excludes. Cloudflare holds every primitive and
+could ship a first-party version at any time.
