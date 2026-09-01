@@ -366,6 +366,11 @@ finish its task.
     settles against the deployed `dev` Worker. Codex reviews resume per implementation slice,
     on code and tests, not prose.
 
+65. **The v1 spec is committed at `docs/spec-v1.md`, by owner instruction.** An explicit
+    exception to the no-plan-files rule so the spec survives session context loss. Rules
+    that keep it from rotting: current code beats it on conflict; superseded sections are
+    marked, not edited away; it is retired (marked historical) when v1's milestones pass.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry

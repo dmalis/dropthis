@@ -540,6 +540,7 @@ noindex. **Prune** — deleting expired drops, abandoned uploads and orphaned ge
 - Secrets are never printed to logs and never re-revealed by a rerun. A missing key file
   fails loudly; rotation is explicit.
 - Docs are generated from the operation registry wherever possible. Hand-written prose is
-  limited to README, this file, `SECURITY.md` and `docs/decisions.md`.
+  limited to README, this file, `SECURITY.md`, `docs/decisions.md` and `docs/spec-v1.md`
+  (the v1 spec, committed by owner decision #65; code beats it on conflict).
 - No plan files or status notes in the repo. Decisions go in `docs/decisions.md` with a date
   and a reason; superseded entries are marked, not deleted.
