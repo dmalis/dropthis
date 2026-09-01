@@ -1,7 +1,5 @@
 # Trademark policy
 
-> Draft — wording not yet reviewed by counsel.
-
 Apache-2.0 grants rights to the code, not to the dropthis name or logo.
 
 - You may truthfully state that a product or service is built on or compatible with dropthis.
