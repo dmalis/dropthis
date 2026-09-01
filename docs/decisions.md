@@ -88,25 +88,49 @@ for Cloudflare facts is in `docs/research/` (same date).
     to parent domains). Documented for operators; a shared hostname's path-scoped unlock
     cookies are convenience, not a security boundary.
 
+29. **`doctor` is a named check registry.** Installer and instance checks have stable IDs;
+    `doctor --list --json` lists them; `doctor --json` returns ID, status, evidence and
+    remediation. CLI, MCP, REST and generated reference share the registry. Reason: support
+    can name one check and agents can act without parsing prose.
+30. **Deployments carry a versioned release manifest.** The Deploy button points at an
+    immutable release; `upgrade` refuses an instance whose deployment or data schema is newer
+    than it understands; every release names data-affecting changes and its rollback floor.
+    Reason: unattended upgrades must fail closed rather than guess across versions.
+31. **Folder drops auto-index by policy.** `auto_index: list | gallery | off`, default
+    `list`. Without `index.html`, `list` links filenames, `gallery` adds image thumbnails,
+    `off` returns 404. The publish skill ships a gallery template for agents that want a
+    stored, customisable `index.html`. Reason: a valid folder publish must produce a useful
+    URL without a repair call. (Amends the MVP scope below.)
+32. **Publish webhook is post-MVP.** Optional `webhook_url` in policy, POSTing
+    `{url, slug, password, expires_at, label}` on publish so external automation can deliver
+    passwords by SMS/email. Not built until a first client needs it.
+33. **Standard policy files ship with v0.1:** `SECURITY.md` (active-content boundary,
+    operator abuse controls, reporting), `TRADEMARKS.md` (name and logo permissions,
+    separate from Apache-2.0; wording needs counsel). Legal notes for operators hosting
+    third parties (DSA, DMCA, CRA) are not repo material until counsel has reviewed them.
+34. **Carried over from the hosted-edition study** and placed by an independent Codex
+    consult (2026-09-01): bootstrap invariants, reserved-path handling and release trust →
+    `AGENTS.md`; doctor registry and release manifest → this log; a CI-tested lifecycle
+    script (`examples/agent-lifecycle.sh`: init → publish → host → user → revoke → destroy)
+    → added once the installer exists; go-to-market tactics → not repo material; the missing
+    LICENSE text in the published `@dropthis/*` packages → fixed in their own repo.
+
 ## MVP scope (frozen)
 
 In: publish, update_content, update_settings, get, list, delete, resolve; slug/vanity slug;
 expiry + prune; password; noindex; files as drops; keys with two scopes; `user_*`, `host_*`,
-`config_*`, `usage`, `prune`, `doctor`; REST + CLI + MCP from one registry; OAuth on
-`/_api/mcp`; installer `init | upgrade | destroy | doctor`; Deploy button; skills; contract
-tests against a deployed instance.
+`config_*`, `usage`, `prune`, `doctor`; `auto_index`; REST + CLI + MCP from one registry;
+OAuth on `/_api/mcp`; installer `init | upgrade | destroy | doctor`; Deploy button; two
+skills (user, admin); `llms.txt`; generated reference and connect recipes; contract tests
+against a deployed instance.
 
-Out: everything in AGENTS.md "Non-goals", plus `webhook_url` unless a first client needs it.
+Out: everything in AGENTS.md "Non-goals", plus `webhook_url` (#32).
 
 ## Kill criterion
 
 Measure at 90 days after first public release: installs, stars, hosted requests. If usage is
 below the hosted product it replaces, it stays a personal tool and no paid plan launches.
 
-## Competitive context (summary; full table in `docs/research/2026-09-01-competitors.md`)
+## Competitive context
 
-No OSS project combines own-Cloudflare + MCP-first + multi-user + drop policies. Nearest:
-`coda0HQ/open-artifacts` (50★, no MCP, single-tenant) — a weekend from closing the gap, so
-speed matters more than feature count. The convenience segment belongs to Anthropic's
-built-in Artifacts; our users are the ones it excludes. Cloudflare holds every primitive and
-could ship a first-party version at any time.
+See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained here).

@@ -7,8 +7,12 @@ Every drop can be password-locked, set to expire, and kept out of search engines
 entirely inside one Cloudflare account — one Worker, one R2 bucket — and costs nothing at
 personal scale. There is no dashboard: agents are the console, through MCP, CLI or REST.
 
-> Status: design complete, implementation not started. See `docs/decisions.md` for every
-> choice made and why, and `docs/research/` for the dated evidence behind them.
+> Pre-release. The commands below are the target contract; nothing is published to npm yet.
+> `docs/decisions.md` records every choice and why; `docs/research/` holds the dated evidence.
+
+**Security note:** a drop is arbitrary HTML served as active content. dropthis does not make
+it safe. Serve drops from a dedicated domain, never from a subdomain of a site whose cookies
+matter. See `SECURITY.md`.
 
 ## Who it is for
 
@@ -76,13 +80,14 @@ dropthis user add anna               # → key shown once + connect instructions
 Same operations as MCP tools (`publish`, `update_content`, `update_settings`, `get`, `list`,
 `delete`, `resolve`; admin: `user_*`, `host_*`, `config_*`, `usage`, `prune`, `doctor`) and as
 REST under `/_api/v1`. claude.ai and the Claude desktop app connect to `/_api/mcp` and log in
-by pasting a key.
+by pasting a key (ChatGPT connectors: expected to work the same way, not yet exercised).
 
 ## Cost
 
-Personal instance: $0 (Workers Free, R2 free tier; Cloudflare requires a card on file to
-enable R2). Small agency, 20 client sites, ~500k views/month: about $5/month (Workers Paid,
-once per account). Egress is free. Numbers as of 2026-09-01 — see `docs/research/`.
+Personal instance: $0 (Workers Free, R2 free tier; enabling R2 appears to require a payment
+method on file — community-reported, not in Cloudflare docs). Small agency, 20 client sites,
+~500k views/month: about $5/month (Workers Paid, once per account). Egress is free. Numbers
+as of 2026-09-01 — see `docs/research/`.
 
 ## Licence
 

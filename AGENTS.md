@@ -33,6 +33,10 @@ Nothing else from that codebase is carried over.
 5. **Old drops never die from a schema change.** See "Data durability" below.
 6. **Ship small, measure, then add.** The MVP is frozen in `docs/decisions.md`. New
    features wait for a real user asking.
+7. **Documentation is an API.** Structured `--json` output, stable error codes with a
+   remediation field, non-interactive operation, idempotent reruns and generated connection
+   instructions are product behaviour, not documentation polish. An agent must be able to
+   install, operate and administer an instance with no human reading anything.
 
 ## Architecture
 
@@ -45,8 +49,8 @@ cron (daily)         expire + prune
 ```
 
 Bindings: `BUCKET` (R2), `OAUTH_KV` (KV), secrets `ADMIN_KEY_HASH`, `HMAC_SECRET`.
-Everything is declared in `wrangler.jsonc` with binding names and no IDs; `wrangler deploy`
-auto-provisions (wrangler ≥ 4.45, JSONC only — TOML does not get IDs written back).
+Everything is declared in `wrangler.jsonc` with binding names and no IDs so `wrangler deploy`
+and the Deploy button auto-provision them (JSONC only — TOML does not get IDs written back).
 
 ### Key layout (the real schema — never renamed)
 
@@ -69,21 +73,21 @@ system/usage.json                    coarse counters for `usage`
   old gen is deleted after the flip; a weekly reconcile removes orphans.
 - **Uploads are manifest-first.** Client sends `{path, sha256, size}` per file; server
   answers which hashes it lacks; client PUTs only those (one file per request, streamed
-  straight into R2 — the 100 MB per-request cap is the per-file cap); unchanged files are
+  straight into R2 — the Worker request-body cap is therefore the per-file cap); unchanged files are
   R2-copied from the previous gen; client commits. This is the same three-step shape the
   existing SDK/CLI/MCP already speak (create → signed PUT → finalize); the signed PUT URLs
   simply point at the Worker's own HMAC-signed endpoint.
-- **R2 facts this relies on** (verified 2026-09-01, `docs/research/`): strong global
-  consistency for reads and `list()`; conditional `put` via `onlyIf` / `Headers`
-  (`If-None-Match: *`, `If-Match`); 1 write/sec per key; delete is free; `list()` is a
-  Class A op (12.5× the price of a GET). Verify conditional-write behaviour against remote
-  R2 — local Miniflare has had reversed condition logic.
+- **R2 facts this relies on** (evidence in `docs/research/`): strong global consistency for
+  reads and `list()`; conditional `put` via `onlyIf` / `Headers` (`If-None-Match: *`,
+  `If-Match`); a per-key write-rate limit; delete is free; `list()` costs an order of
+  magnitude more than a GET. Verify conditional-write behaviour against remote R2 — local
+  Miniflare has had reversed condition logic.
 
 ### Auth
 
 - Keys are 32 random bytes, shown once, stored as `sha256(key)`; compared with
-  `crypto.subtle.timingSafeEqual`. No slow KDF: keys are high-entropy, and Workers Free has
-  10 ms CPU per request (workerd caps PBKDF2 at 100k iterations anyway).
+  `crypto.subtle.timingSafeEqual`. No slow KDF: keys are high-entropy, and the Free plan's
+  CPU budget per request is tiny (workerd also caps PBKDF2 iterations).
 - Two scopes: `admin` (all tools) and `user` (drop tools). MCP filters its tool list by the
   caller's scope so a user's context carries ~8 tools.
 - OAuth on `/_api/mcp` exists only because claude.ai and the Claude desktop app add MCP
@@ -98,15 +102,16 @@ system/usage.json                    coarse counters for `usage`
 Two layers: *defaults* applied when the caller says nothing, *rules* enforced regardless.
 Example: `expiry: {default: "30d", max: "90d", allow_never: false}`,
 `password: {default: "generate", required: true}`, `noindex: {default: true, forced: true}`,
-`max_file_bytes`, optional `webhook_url` (POST `{url, slug, password, expires_at, label}` on
-publish so external automation can deliver passwords by SMS/email — dropthis itself never
-sends messages). Policy is per instance; two groups with different rules get two instances.
+`max_file_bytes`, `auto_index`. dropthis itself never sends messages; password delivery is
+the caller's job (a publish webhook is recorded as a post-MVP decision). Policy is per
+instance; two groups with different rules get two instances.
 
 ### Multi-client hosting
 
 **Instance = client.** No tenant concept. Isolation comes from the bucket and Worker
 boundary. An operator hosts many clients on one Cloudflare account
-(`npx @dropthis/cf init --name client-x` per client; 500 Workers on Paid) and invoices them;
+(`npx @dropthis/cf init --name client-x` per client; the per-account Worker limit is in the
+hundreds) and invoices them;
 or a client runs it on their own account with their own token. Same command, different
 token. If cross-client reporting is ever needed, `tenant` is one more field in `meta.json`;
 tolerant readers already handle it.
@@ -127,18 +132,40 @@ tolerant readers already handle it.
 Three kinds of garbage, three mechanisms: expired drops → daily cron over
 `expiring/<today>/`; abandoned uploads → R2 lifecycle rule on `staging/` (set once by the
 installer) plus abort-incomplete-multipart; orphaned generations → weekly reconcile in the
-same cron. `prune --dry-run` and `usage` read the same layout. Free-plan cron has 10 ms CPU
-and 50 subrequests per invocation — batch and chain; measure, do not guess.
+same cron. `prune --dry-run` and `usage` read the same layout. Free-plan cron has a small
+CPU and subrequest budget per invocation — batch and chain; measure, do not guess.
 
 ## Operation registry
 
 Every operation is defined once (name, input schema, scope, description) and generates the
 REST route, the CLI subcommand, the MCP tool and the reference docs. Adding an operation
-means adding one entry. Drop ops: `publish`, `update_content`, `update_settings`, `get`,
-`list`, `delete`, `resolve`. Admin ops: `user_add` (returns key + connect instructions),
-`user_list`, `user_remove`, `user_rotate`, `host_add`, `host_remove`, `config_get`,
-`config_set`, `usage`, `prune`, `doctor`. Instance lifecycle (`init`, `upgrade`, `destroy`,
-`doctor`) lives in the installer CLI only — it needs the Cloudflare token, not an instance key.
+means adding one entry; the current inventory lives in the generated reference, not here.
+Two families: drop operations (user scope) and admin operations (admin scope — users, hosts,
+policy, usage, prune, doctor). `user_add` and `user_rotate` return the key together with a
+structured `connect` object (per-client MCP snippets) so onboarding a person is one call.
+Instance lifecycle (`init`, `upgrade`, `destroy`, `doctor`) lives in the installer CLI only —
+it needs the Cloudflare token, not an instance key.
+
+### Bootstrap invariants
+
+Bootstrap exists only in the installer; no public request can create or claim the first
+administrator. `init --json` returns the new admin key exactly once and persists it
+atomically before reporting success. Diagnostic output and Worker logs never contain it. A
+missing credential fails with a recovery instruction; rotation requires an explicit command.
+Tests cover concurrent bootstrap, interruption, rerun, missing credentials and secret redaction.
+
+### Reserved paths
+
+`RESERVED_PREFIXES` is a list of literal path strings (`/_api`, `/_connect`, …) checked with
+`startsWith`. Validation regexes are separate values and never enter routing. Every new
+control-plane prefix adds a viewer-collision test (a slug must never shadow it).
+
+### Release trust
+
+Published npm packages and release archives carry an SPDX or CycloneDX SBOM and a provenance
+attestation. GitHub Actions dependencies are pinned to commit SHAs. The release gate verifies
+both. Deployments carry a versioned release manifest; `upgrade` refuses an instance whose
+schema is newer than it understands.
 
 ## Non-goals (decided, do not reopen without a user asking)
 
