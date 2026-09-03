@@ -22,6 +22,8 @@ const USER_TOOLS = [
   "dropthis_get",
   "dropthis_list",
   "dropthis_delete",
+  "dropthis_upload",
+  "dropthis_commit",
 ];
 
 const label = (name: string) => `ct-oauth-${name}-${Math.random().toString(36).slice(2, 8)}`;
@@ -265,7 +267,7 @@ describe("the paste-key page", () => {
 });
 
 describe("the dance", () => {
-  it("gives a user key exactly the five drop tools, and the admin key more", async () => {
+  it("gives a user key exactly the user-scope tools, and the admin key more", async () => {
     const anna = await addUser(label("anna"));
     const user = await connect(anna.key);
     expect(await toolNames(`Bearer ${user.access_token}`)).toEqual([...USER_TOOLS].sort());

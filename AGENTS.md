@@ -117,7 +117,7 @@ requests/<hash>/claim, …/result     idempotency: two keys, each written ONCE (
                                      password (encrypted)} BEFORE side effects, so retries converge;
                                      result put at the end, AES-GCM-encrypted (key via HKDF from
                                      HMAC_SECRET); lifecycle 7 days
-uploads/<id>/session.json, commit,   staged-upload session (CLI path only): three write-once keys
+uploads/<id>/session.json, commit,   staged-upload session (CLI and MCP): three write-once keys
   result                             (session at creation; commit = fenced claim with payload +
                                      state hash; result = encrypted Drop); lifecycle 1 day. Staged
                                      PUTs write blobs straight to drops/<id>/blobs/ — nothing is ever
@@ -196,7 +196,8 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   request, so the failure (Cloudflare error 1102) is load-dependent, not a clean size
   ceiling — the measurement shuffles sizes to keep the two apart. `url` and staged
   entries stream to R2 with R2 verifying the hash and cost almost no CPU. `/_skill.md`
-  prints the current value and says: text inline, files by `url`. Above it **the CLI — the only staged-path client in v1** — uses
+  prints the current value and says: text inline, files by `url`, `dropthis_upload` + `curl`
+  for the rest. Above it **the CLI, and any MCP agent whose environment can run `curl`** — use
   `POST /_api/v1/uploads` (`{target?, manifest: [{path, size, sha256}], idempotency_key?}`
   → `{upload_id, drop_id, slug, missing, put_urls, expires}`: drop id and slug allocated
   and the slug claimed now — pointer body = the id, `customMetadata {pending_upload,
@@ -213,8 +214,11 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   exists, naming the missing hashes as `INVALID_INPUT`; then steps (4)–(7) of the write
   order, an update CASing against the session's etag; replays the sealed `result` on
   repeat; a different payload is `IDEMPOTENCY_MISMATCH`, another key `FORBIDDEN_SCOPE`,
-  a session past its day or unknown `UPLOAD_EXPIRED`). Nothing is ever copied. All three
-  routes are `restOnly`: MCP and REST publish callers never see them (#85).
+  a session past its day or unknown `UPLOAD_EXPIRED`). Nothing is ever copied. Of the three
+  routes only the blob PUT is `restOnly` — its credential is the HMAC in its own URL, so an
+  agent curls it rather than calling it; the session and the commit are also MCP tools,
+  `dropthis_upload` and `dropthis_commit` (user scope), because a browser agent that cannot
+  type a photo as base64 can still `curl -T` it (#93, superseding the `restOnly` half of #85).
 - **R2 write rate.** Measured against remote R2 (`docs/research/2026-09-03-free-plan-measurements.md`):
   writes to one key that are **in flight at once** are refused with
   `Reduce your concurrent request rate for the same object. (10058)` — roughly half of ten
@@ -332,7 +336,7 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   `crypto.subtle.timingSafeEqual`. No slow KDF: keys are high-entropy, and the Free plan's
   CPU budget per request is tiny (workerd also caps PBKDF2 iterations).
 - Two scopes: `admin` (all tools) and `user` (drop tools). MCP filters its tool list by the
-  caller's scope so a user's context carries five tools.
+  caller's scope so a user's context carries seven tools.
 - OAuth on `/_api/mcp` exists only because claude.ai and the Claude desktop app add MCP
   servers as connectors that speak OAuth and cannot send static headers. The authorize page
   is one form — *paste your dropthis key* — so identity stays "the key". Revoking the key
@@ -431,7 +435,7 @@ REST route, the CLI subcommand and the MCP tool (the reference-docs generator co
 v1). Adding an operation
 means adding one entry.
 
-**Drop operations (user scope), exactly five:**
+**Drop operations (user scope), exactly five — plus the two staged-upload steps below:**
 
 | op        | does                                                                                   |
 |-----------|----------------------------------------------------------------------------------------|
@@ -440,6 +444,11 @@ means adding one entry.
 | `get`     | by slug or URL; `files: true` adds content. Replaces the old `resolve` and `get_content`. |
 | `list`    | one page of `Drop`s, newest-first, `cursor`, `limit`, `q` → `{drops, cursor, has_more}`. |
 | `delete`  | immediate, files and pointers.                                                          |
+
+The staged-upload path adds `upload.create` and `upload.commit` to the same user scope, named
+`dropthis_upload` and `dropthis_commit` as tools (#93). They are the same publish, split so the
+bytes travel outside the call: manifest in, one signed PUT URL per missing blob out, then the
+settings. The blob PUT itself is REST-only and signed.
 
 **Admin operations (admin scope, instance key):** `user add|list|remove`, `config get|set`,
 `usage`, `prune [--dry-run]`, `doctor`. `user add` returns the key once together with a
@@ -652,6 +661,8 @@ decision entry in the same commit.
 - Docs are generated from the operation registry wherever possible. Hand-written prose is
   limited to README, this file, `SECURITY.md`, `docs/decisions.md` and `docs/spec-v1.md`
   (the v1 spec, committed by owner decision #65; code beats it on conflict).
+- Several worktrees share this machine. Never kill a test process by name (`pkill vitest`,
+  `killall node`); kill only the PID of the run you started.
 - No plan files or status notes in the repo. Decisions go in `docs/decisions.md` with a date
   and a reason; superseded entries are marked, not deleted.
 
