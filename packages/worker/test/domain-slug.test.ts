@@ -4,7 +4,7 @@ import { generateSlug, isSlug, SLUG_ALPHABET, SLUG_LENGTH } from "../src/domain/
 /** A stand-in for `crypto.getRandomValues` that yields a scripted byte stream. */
 function scriptedRandom(bytes: readonly number[]) {
   let next = 0;
-  return (buffer: Uint8Array) => {
+  return (buffer: Uint8Array<ArrayBuffer>) => {
     for (let i = 0; i < buffer.length; i += 1) {
       buffer[i] = bytes[next % bytes.length] ?? 0;
       next += 1;

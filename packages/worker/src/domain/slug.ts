@@ -19,7 +19,7 @@ const UNBIASED_LIMIT = 256 - (256 % SLUG_ALPHABET.length);
 
 const SLUG_PATTERN = new RegExp(`^[${SLUG_ALPHABET}]{${SLUG_LENGTH}}$`);
 
-export type RandomBytes = (buffer: Uint8Array) => Uint8Array;
+export type RandomBytes = (buffer: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>;
 
 const webcryptoRandom: RandomBytes = (buffer) => crypto.getRandomValues(buffer);
 
