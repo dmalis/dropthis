@@ -81,6 +81,15 @@ describe("the MCP tool surface", () => {
     }
   });
 
+  it("carries the chosen slug on publish, and nowhere else (#94)", () => {
+    const byName = Object.fromEntries(surface.map((tool) => [tool.name, tool]));
+    expect(byName.dropthis_publish!.inputSchema.properties).toHaveProperty("slug");
+    expect(byName.dropthis_publish!.inputSchema.required).not.toContain("slug");
+    expect(byName.dropthis_publish!.description).toContain("SLUG_TAKEN");
+    // `update` takes `target`, never a slug to rename to: a URL is permanent.
+    expect(byName.dropthis_update!.inputSchema.properties).not.toHaveProperty("slug");
+  });
+
   it("steers between siblings: publish names update, update names publish, get names list", () => {
     const byName = Object.fromEntries(surface.map((tool) => [tool.name, tool.description]));
     expect(byName.dropthis_publish).toContain("dropthis_update");
