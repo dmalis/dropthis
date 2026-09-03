@@ -1,9 +1,14 @@
 import Cloudflare from "cloudflare";
 
-/** Credentials + optional API base (tests point this at the fake). */
+/**
+ * Credentials + optional API base (tests point this at the fake). `accountId`
+ * is carried here for callers' convenience (a known account skips
+ * `pinAccount`'s guesswork) but the Cloudflare client itself never needs it
+ * at construction — every SDK call takes `account_id` per-request.
+ */
 export type CloudflareCreds = {
   apiToken: string;
-  accountId: string;
+  accountId?: string;
   apiBase?: string;
 };
 
