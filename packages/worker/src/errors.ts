@@ -138,3 +138,20 @@ export function errorBody(code: ErrorCode, message: string): ErrorBody {
     },
   };
 }
+
+/**
+ * A failure already resolved to a catalogue code, thrown from anywhere below
+ * the routes and turned into the wire object by one error handler. The
+ * catalogue decides the status and the remediation, so a handler never has to.
+ */
+export class ApiError extends Error {
+  readonly code: ErrorCode;
+  readonly retryAfterSeconds: number | undefined;
+
+  constructor(code: ErrorCode, message: string, retryAfterSeconds?: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
