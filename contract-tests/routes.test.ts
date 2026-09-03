@@ -28,9 +28,10 @@ describe("health", () => {
 });
 
 describe("unknown control-plane routes", () => {
-  // `/_skill.md` is a real route since issue #8 (see mcp.test.ts) and `/_oauth/authorize`
-  // since #12; `/_connect` is still reserved-but-unbuilt.
-  const paths = ["/_api", "/_apiXYZ", "/_api/", "/_api/v1/nope", "/_oauth/nope", "/.well-known/nope", "/_connect"];
+  // `/_skill.md` is a real route since issue #8 (see mcp.test.ts), `/_oauth/authorize`
+  // since #12 and `/_connect` since #21 (see connect.test.ts) — but only the exact
+  // path: a request under one of them is still the control plane's own 404.
+  const paths = ["/_api", "/_apiXYZ", "/_api/", "/_api/v1/nope", "/_oauth/nope", "/.well-known/nope", "/_connect/nope"];
 
   it.each(paths)("GET %s → 404 with the frozen error object", async (path) => {
     const response = await get(path);

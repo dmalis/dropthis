@@ -2,12 +2,15 @@ import { Hono } from "hono";
 import { mcpRoutes } from "./api/mcp.js";
 import { apiRoutes } from "./api/router.js";
 import type { Env } from "./bindings.js";
+import { aliasRedirect } from "./canonical.js";
+import { renderConnectPage } from "./connect-page.js";
 import { PRODUCTION_HOOKS } from "./dev/hooks.js";
 import type { DevHooks } from "./dev/hooks.js";
 import { errorBody } from "./errors.js";
 import { loadInstanceConfig } from "./instance-config.js";
 import { oauthRoutes } from "./oauth/routes.js";
 import { runCron } from "./operations/cron.js";
+import { connectFor } from "./registry/connect.js";
 import { isReservedPath } from "./reserved.js";
 import { renderSkill } from "./skill.js";
 import { viewerRoutes } from "./viewer.js";
@@ -63,6 +66,22 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
     const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
     return c.text(renderSkill(config), 200, {
       "content-type": "text/markdown; charset=utf-8",
+      "cache-control": "no-cache, must-revalidate",
+    });
+  });
+
+  // The instance's own connect page, open for the same reason the skill is:
+  // it holds no secret, and the `user add` message links a colleague straight
+  // to it (issue #21). Same `connectFor()` payload as the agent gets.
+  app.on(["GET", "HEAD"], "/_connect", async (c) => {
+    const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
+    const moved = aliasRedirect(c.req.raw, config);
+    if (moved !== null) return moved;
+    const connect = connectFor({
+      canonicalUrl: config.canonicalUrl,
+      instanceName: config.instanceName,
+    });
+    return c.html(renderConnectPage(connect), 200, {
       "cache-control": "no-cache, must-revalidate",
     });
   });

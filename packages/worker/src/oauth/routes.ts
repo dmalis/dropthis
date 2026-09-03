@@ -11,6 +11,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { errorResponse } from "../api/errors.js";
 import type { Env } from "../bindings.js";
+import { aliasRedirect } from "../canonical.js";
 import type { DevHooks } from "../dev/hooks.js";
 import { ApiError } from "../errors.js";
 import { loadInstanceConfig } from "../instance-config.js";
@@ -53,18 +54,6 @@ export function oauthRoutes(hooks: DevHooks) {
   }
 
   return routes;
-}
-
-function aliasRedirect(request: Request, config: InstanceConfig): Response | null {
-  if (request.method !== "GET" && request.method !== "HEAD") return null;
-  const url = new URL(request.url);
-  if (!config.aliasOrigins.includes(url.origin)) return null;
-  // Not `Response.redirect`: its headers are immutable, and the noindex
-  // middleware still has to stamp this response.
-  return new Response(null, {
-    status: 301,
-    headers: { location: `${config.canonicalUrl}${url.pathname}${url.search}` },
-  });
 }
 
 /**
