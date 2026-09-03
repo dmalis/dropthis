@@ -488,3 +488,58 @@ describe("a publish that fails part-way", () => {
     expect(records.length).toBeGreaterThan(0);
   });
 });
+
+describe("the projections the write order writes", () => {
+  it("writes a list/ pointer and an expiring/ marker beside meta.json", async () => {
+    const drop = await publishOk({
+      files: [{ path: "a.txt", text: "x" }],
+      title: "Projected",
+      expires: "7d",
+    });
+
+    const listKeys = (await devKeys("list/")).filter((key) => key.endsWith(`-${drop.slug as string}`));
+    expect(listKeys).toHaveLength(1);
+    expect(listKeys[0]).toMatch(/^list\/\d{13}-[a-z0-9]{10}$/);
+
+    // The marker is dated the expiry plus the 7-day grace, and names the drop id.
+    const expiresAt = Date.parse(drop.expires_at as string);
+    const markerDate = new Date(expiresAt + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const markers = await devKeys(`expiring/${markerDate}/`);
+    expect(markers.length).toBeGreaterThan(0);
+
+    const records = await devKeys("drops/");
+    expect(records.some((key) => key.endsWith("/meta.json"))).toBe(true);
+  });
+
+  it("writes no expiring/ marker for a drop that never expires", async () => {
+    const before = await devKeys("expiring/");
+    await publishOk({ files: [{ path: "a.txt", text: "x" }], expires: "never" });
+    expect(await devKeys("expiring/")).toEqual(before);
+  });
+});
+
+describe("the inline content budget of get(files:true)", () => {
+  it("stops inlining at 1 MB and hands the rest a download_url", async () => {
+    // Exactly the whole budget: it is inlined, and nothing after it can be.
+    const big = "x".repeat(1024 * 1024);
+    const drop = await publishOk({
+      files: [
+        { path: "big.txt", text: big },
+        { path: "small.txt", text: "still text" },
+      ],
+    });
+
+    const response = await api(`/_api/v1/drops/${drop.slug as string}?files=true`);
+    const files = ((await response.json()) as Json).files as Array<Record<string, unknown>>;
+
+    expect(files[0]!.path).toBe("big.txt");
+    expect((files[0]!.content as string).length).toBe(big.length);
+
+    // Text, well under any per-file limit — but the budget is already spent.
+    expect(files[1]!.path).toBe("small.txt");
+    expect(files[1]!.content).toBeUndefined();
+    expect(files[1]!.download_url).toBe(
+      `${BASE_URL}/_api/v1/drops/${drop.slug as string}/files/small.txt`,
+    );
+  }, 30_000);
+});
