@@ -203,3 +203,48 @@ describe("an expired protected drop", () => {
     expect(await gone.text()).not.toContain('name="password"');
   });
 });
+
+describe("delete works in any state", () => {
+  const removeAt = (nowMs: number, slug: string) =>
+    api(`/_api/v1/drops/${slug}`, { method: "DELETE", headers: clock(nowMs) });
+
+  const dropIdOf = async (slug: string): Promise<string> => {
+    const response = await apiJson("/_dev/r2/get", "POST", { key: `slugs/${slug}` });
+    return ((await response.json()) as { body: string }).body;
+  };
+
+  async function assertGone(nowMs: number, slug: string, dropId: string): Promise<void> {
+    expect((await visitAt(nowMs, `/${slug}/`)).status).toBe(404);
+    const got = await errorOf(await getAt(nowMs, slug));
+    expect(got.status).toBe(404);
+    expect(got.code).toBe("NOT_FOUND");
+    expect(await devKeys(`drops/${dropId}/`)).toEqual([]);
+    expect(await devKeys(`slugs/${slug}`)).toEqual([]);
+    expect((await devKeys("list/")).filter((k) => k.endsWith(`-${slug}`))).toEqual([]);
+    expect((await devKeys("expiring/")).filter((k) => k.endsWith(`/${dropId}`))).toEqual([]);
+  }
+
+  it("inside grace: 204, and nothing of the drop is left for the cron", async () => {
+    const drop = await publishAt(T0, { files: page("<p>x</p>"), expires: "7d" });
+    const slug = drop.slug as string;
+    const dropId = await dropIdOf(slug);
+    const inGrace = T0 + 7 * DAY + 1000;
+    expect((await getAt(inGrace, slug)).status).toBe(200);
+
+    expect((await removeAt(inGrace, slug)).status).toBe(204);
+    await assertGone(inGrace, slug, dropId);
+  });
+
+  it("past grace, before the cron gets to it: 204 where get is already 410", async () => {
+    const drop = await publishAt(T0, { files: page("<p>x</p>"), expires: "7d" });
+    const slug = drop.slug as string;
+    const dropId = await dropIdOf(slug);
+    const pastGrace = T0 + 14 * DAY + 1000;
+    expect((await errorOf(await getAt(pastGrace, slug))).code).toBe("EXPIRED_FINAL");
+
+    expect((await removeAt(pastGrace, slug)).status).toBe(204);
+    await assertGone(pastGrace, slug, dropId);
+    // Rerun-safe in this state too.
+    expect((await removeAt(pastGrace, slug)).status).toBe(204);
+  });
+});

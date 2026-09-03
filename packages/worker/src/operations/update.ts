@@ -119,28 +119,40 @@ export async function updateDrop(
     access = rest;
   }
   let password: string | undefined = change.kind === "set" ? change.password : undefined;
-  if (claim !== null) {
-    // The claim fixed the access record too: a generated password is random,
-    // and a retry that drew another would never converge on the first attempt.
-    access = claim.access;
-    password = await openPassword(claim, ctx.secret);
-  }
 
-  const desired = await desiredMeta(current, input, manifest, access, {
-    policy: config.policy,
-    now,
-    // Decision #74: everything the first attempt read from the clock lives in
-    // the claim, so a retry does not re-resolve "30d" against its own clock.
-    expiresAt: claim === null ? undefined : claim.expires_at,
-  });
-  const desiredHash = await stateHash(desired);
+  // The state this call is trying to reach. A claim fixes the access record
+  // too — a generated password is random, and a retry that drew another would
+  // never converge on the first attempt — and, per decision #74, the resolved
+  // expiry, so a retry does not re-resolve "30d" against its own clock.
+  const fromClaim = async (fixed: ClaimRecord) => {
+    access = fixed.access;
+    password = await openPassword(fixed, ctx.secret);
+    return desiredMeta(current, input, fixed.manifest, access, {
+      policy: config.policy,
+      now,
+      expiresAt: fixed.expires_at,
+    });
+  };
+  let desired =
+    claim === null
+      ? await desiredMeta(current, input, manifest, access, { policy: config.policy, now })
+      : await fromClaim(claim);
+  let desiredHash = await stateHash(desired);
 
   // The no-op rule: equality is the canonical `meta.json` minus `updated`. It
   // writes NOTHING — not the record, not a claim, not a result. A repeat of the
   // same no-op is another no-op, so convergence needs no bookkeeping.
   if (desiredHash === (await stateHash(current))) {
     await repairListEntry(bucket, current);
-    return toDrop(current, { canonicalUrl: config.canonicalUrl, now });
+    const drop = toDrop(current, { canonicalUrl: config.canonicalUrl, now });
+    // A retry whose first attempt committed the CAS and then died before its
+    // result was stored lands here. It is still that call, so it still gets the
+    // password once, and stores the result it was owed.
+    if (claim !== null) {
+      if (password !== undefined) drop.password = password;
+      if (hash !== undefined) await putResult(bucket, hash, ctx.secret, drop);
+    }
+    return drop;
   }
 
   // (0) blobs. A digest the drop already holds is not written again — that is
@@ -180,7 +192,8 @@ export async function updateDrop(
       requireSamePayload(claim, payloadHash);
       const replayed = await readResult(bucket, hash, ctx.secret);
       if (replayed !== null) return replayed;
-      return updateDrop(slug, input, ctx);
+      desired = await fromClaim(claim);
+      desiredHash = await stateHash(desired);
     } else {
       claim = record;
     }

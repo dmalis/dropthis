@@ -204,3 +204,137 @@ describe("the agent's own read", () => {
     expect(read).not.toHaveProperty("password");
   });
 });
+
+async function updateOk(slug: string, body: unknown): Promise<Json> {
+  const response = await apiJson(`/_api/v1/drops/${slug}`, "PATCH", body);
+  expect(response.status, await response.clone().text()).toBe(200);
+  return (await response.json()) as Json;
+}
+
+/** Unlock the drop root and hand back the cookie the browser would keep. */
+async function cookieFor(slug: string, password: string): Promise<string> {
+  const opened = await unlock(`/${slug}/`, password);
+  expect(opened.status).toBe(303);
+  return opened.headers.get("set-cookie")!.split(";")[0]!;
+}
+
+describe("changing the password with update", () => {
+  const content = "<h1>the secret content</h1>";
+
+  it("re-sending the password the drop already has changes nothing: the cookie still opens it", async () => {
+    const drop = await publishOk({ files: page(content), password: secret });
+    const cookie = await cookieFor(drop.slug as string, secret);
+
+    const same = await updateOk(drop.slug as string, { password: secret });
+    expect(same.has_password).toBe(true);
+    // Nothing was set, so nothing is echoed — the no-op rule, cookie included.
+    expect(same).not.toHaveProperty("password");
+
+    const served = await visit(`/${drop.slug}/`, { headers: { cookie } });
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe(content);
+  });
+
+  it("a different chosen password revokes every cookie and is echoed once", async () => {
+    const drop = await publishOk({ files: page(content), password: secret });
+    const cookie = await cookieFor(drop.slug as string, secret);
+
+    const changed = await updateOk(drop.slug as string, { password: "another-secret-1" });
+    expect(changed.password).toBe("another-secret-1");
+    expect(changed.has_password).toBe(true);
+
+    const stale = await visit(`/${drop.slug}/`, { headers: { cookie } });
+    expect(stale.status).toBe(401);
+    expect(await stale.text()).not.toContain("the secret content");
+
+    expect((await unlock(`/${drop.slug}/`, secret)).status).toBe(401);
+    const fresh = await cookieFor(drop.slug as string, "another-secret-1");
+    const served = await visit(`/${drop.slug}/`, { headers: { cookie: fresh } });
+    expect(await served.text()).toBe(content);
+
+    const read = (await (await api(`/_api/v1/drops/${drop.slug}`)).json()) as Json;
+    expect(read).not.toHaveProperty("password");
+  });
+
+  it("generate on update returns a fresh password once, and the old one no longer unlocks", async () => {
+    const drop = await publishOk({ files: page(content), password: secret });
+    const cookie = await cookieFor(drop.slug as string, secret);
+
+    const rotated = await updateOk(drop.slug as string, { password: "generate" });
+    const generated = rotated.password as string;
+    expect(generated).toMatch(GENERATED);
+    expect(generated).not.toBe(secret);
+
+    expect((await visit(`/${drop.slug}/`, { headers: { cookie } })).status).toBe(401);
+    expect((await unlock(`/${drop.slug}/`, secret)).status).toBe(401);
+    expect((await unlock(`/${drop.slug}/`, generated)).status).toBe(303);
+  });
+
+  it("null removes it: the drop opens with no cookie, and the drop says so", async () => {
+    const drop = await publishOk({ files: page(content), password: secret });
+    expect((await visit(`/${drop.slug}/`)).status).toBe(401);
+
+    const opened = await updateOk(drop.slug as string, { password: null });
+    expect(opened.has_password).toBe(false);
+    expect(opened).not.toHaveProperty("password");
+
+    const served = await visit(`/${drop.slug}/`);
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe(content);
+    // Nothing to unlock any more: the POST is a 404, not a 405.
+    expect((await unlock(`/${drop.slug}/`, secret)).status).toBe(404);
+  });
+
+  it("adds a password to an open drop, and an update that says nothing keeps it", async () => {
+    const drop = await publishOk({ files: page(content) });
+    expect(drop.has_password).toBe(false);
+
+    const locked = await updateOk(drop.slug as string, { password: secret });
+    expect(locked.password).toBe(secret);
+    expect(locked.has_password).toBe(true);
+    expect((await visit(`/${drop.slug}/`)).status).toBe(401);
+
+    const retitled = await updateOk(drop.slug as string, { title: "still locked" });
+    expect(retitled.has_password).toBe(true);
+    expect(retitled).not.toHaveProperty("password");
+    expect((await visit(`/${drop.slug}/`)).status).toBe(401);
+  });
+
+  it("replays the same generated password to an idempotent retry of the update", async () => {
+    const drop = await publishOk({ files: page(content) });
+    const key = `rotate-${crypto.randomUUID()}`;
+
+    const first = await updateOk(drop.slug as string, { password: "generate", idempotency_key: key });
+    const again = await updateOk(drop.slug as string, { password: "generate", idempotency_key: key });
+    expect(first.password).toMatch(GENERATED);
+    expect(again.password).toBe(first.password);
+    expect(again.updated).toBe(first.updated);
+
+    const read = (await (await api(`/_api/v1/drops/${drop.slug}`)).json()) as Json;
+    expect(read).not.toHaveProperty("password");
+    expect(read.has_password).toBe(true);
+  });
+});
+
+describe("has_password on the listing", () => {
+  const rowOf = async (slug: string): Promise<Json> => {
+    const page = (await (await api("/_api/v1/drops?limit=1000")).json()) as { drops: Json[] };
+    const row = page.drops.find((d) => d.slug === slug);
+    expect(row).toBeDefined();
+    return row!;
+  };
+
+  it("is read off the pointer publish wrote, and follows an update", async () => {
+    const locked = await publishOk({ files: page("<p>a</p>"), password: secret });
+    const open = await publishOk({ files: page("<p>b</p>") });
+
+    expect((await rowOf(locked.slug as string)).has_password).toBe(true);
+    expect((await rowOf(open.slug as string)).has_password).toBe(false);
+    expect(await rowOf(locked.slug as string)).not.toHaveProperty("password");
+
+    await updateOk(locked.slug as string, { password: null });
+    await updateOk(open.slug as string, { password: "generate" });
+    expect((await rowOf(locked.slug as string)).has_password).toBe(false);
+    expect((await rowOf(open.slug as string)).has_password).toBe(true);
+  });
+});
