@@ -46,7 +46,7 @@ beforeEach(async () => {
     }),
   );
   bucket.seed(userKey("admin"), JSON.stringify({ id: "admin" }));
-  env = { BUCKET: bucket, OAUTH_KV: {}, HMAC_SECRET: "s".repeat(32), DEV_ROUTES: "1" };
+  env = { BUCKET: bucket, OAUTH_KV: {} as never, HMAC_SECRET: "s".repeat(32), DEV_ROUTES: "1" };
 });
 
 const app = () => createApp(DEV_HOOKS);

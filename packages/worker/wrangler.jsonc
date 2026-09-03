@@ -6,6 +6,10 @@
   "name": "dropthis",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-03",
+  // Client ID Metadata Documents (how claude.ai identifies itself) make the
+  // Worker fetch a URL a client named; this flag is Cloudflare's SSRF guard
+  // for that fetch, and the OAuth provider refuses CIMD without it.
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
   "observability": { "enabled": true },
   // Hourly and resumable: `system/prune-state.json` is written once per

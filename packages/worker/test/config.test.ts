@@ -44,7 +44,7 @@ beforeEach(async () => {
   );
   await seedKey(ADMIN_KEY, "admin", "admin", "admin");
   await seedKey(USER_KEY, "id-anna", "anna", "user");
-  env = { BUCKET: bucket, OAUTH_KV: {}, HMAC_SECRET: "s".repeat(32) };
+  env = { BUCKET: bucket, OAUTH_KV: {} as never, HMAC_SECRET: "s".repeat(32) };
 });
 
 async function call(path: string, init: RequestInit = {}, key = ADMIN_KEY): Promise<Response> {

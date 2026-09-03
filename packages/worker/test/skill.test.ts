@@ -22,7 +22,7 @@ let env: Env;
 beforeEach(() => {
   bucket = memoryBucket();
   bucket.seed(CONFIG_KEY, JSON.stringify({ ...INITIAL_POLICY, canonical_url: ORIGIN }));
-  env = { BUCKET: bucket, OAUTH_KV: {}, HMAC_SECRET: "s".repeat(32) };
+  env = { BUCKET: bucket, OAUTH_KV: {} as never, HMAC_SECRET: "s".repeat(32) };
 });
 
 const skill = () => createApp().fetch(new Request(`${ORIGIN}/_skill.md`), env);

@@ -553,8 +553,8 @@ isolation is a door kept open, not v1. A contract test pins the documented behav
 
 ### Reserved paths
 
-`RESERVED_PREFIXES` is a list of literal path strings (`/_api`, `/_oauth`, `/_connect`, …)
-checked with `startsWith`. Generated slugs never start with `_`. Validation regexes are
+`RESERVED_PREFIXES` is a list of literal path strings (`/_api`, `/_oauth`, `/.well-known`,
+`/_connect`, …) checked with `startsWith`. Generated slugs never start with `_`. Validation regexes are
 separate values and never enter routing. Every new control-plane prefix adds a
 viewer-collision test (a slug must never shadow it).
 

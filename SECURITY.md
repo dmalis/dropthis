@@ -26,18 +26,31 @@ that must not see each other's drops get two instances.
   expiry (7 days, never past the drop's) inside the signature, so it cannot be extended.
 - **v1 has no attempt rate limiting** (the design stores no counters). A chosen password
   can be guessed by a patient attacker; a drop that must not be guessed uses a generated
-  one. Rate limiting arrives when a real deployment needs it.
+  one. The same holds for the OAuth paste-key page: a wrong key re-renders the form and
+  issues nothing, and nothing counts the attempts — a key is 256 random bits, so the page
+  is not guessable either. Rate limiting arrives when a real deployment needs it.
 - A generated slug (10 characters, `a-z0-9`) with `noindex` is a share link, not a secret:
   anyone with the URL can open an unprotected drop.
 
 ## Operator controls
 
 - Any key can be revoked and any drop deleted immediately (`user remove`, `delete`).
-  Revoking a key ends every OAuth session behind it.
+  Revoking a key ends every OAuth session behind it: an OAuth token is an alias for a key,
+  the grant in `OAUTH_KV` stores the key id (encrypted) and never the key, and every
+  `/_api/mcp` request re-reads the key record and its `keyhash/` pointer before the MCP
+  surface runs — the same write that ends bearer access ends OAuth access. A connection
+  never expires on its own: refresh tokens and grants carry no expiry, and a refresh is
+  refused only when the key behind it is gone. It ends with `user remove`, an admin key
+  rotation, or the user disconnecting the connector.
+- A `client_id` that is a URL (a Client ID Metadata Document, how claude.ai identifies
+  itself) is fetched by the Worker. It passes the same guard as `url` file entries first
+  (https on 443, no loopback/private/link-local/metadata targets) and the Worker runs with
+  `global_fetch_strictly_public`; the provider caps the document at 5 KB and 10 s and
+  caches a validated one for at most 7 days, honouring its `Cache-Control`.
 - Instance policy caps file size and can force passwords, expiry and `noindex`.
 - Keys travel only as a bearer header or through the OAuth paste page — never in a URL.
-- Reserved path prefixes (`/_api`, `/_oauth`, `/_connect`, `/_skill.md`) cannot be shadowed
-  by a slug; generated slugs never start with `_`.
+- Reserved path prefixes (`/_api`, `/_oauth`, `/.well-known`, `/_connect`, `/_skill.md`)
+  cannot be shadowed by a slug; generated slugs never start with `_` or `.`.
 - Keys are stored hashed and never logged; the admin key is shown once at install. A key is
   32 random bytes stored as `sha256(key)` and compared in constant time. There is no slow
   KDF and no attempt rate limiting on keys: a 256-bit random key is not guessable, and the

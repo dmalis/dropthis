@@ -41,7 +41,15 @@ export function bearerKey(request: Request): string | null {
 export async function resolveCaller(request: Request, bucket: Bucket): Promise<Caller> {
   const key = bearerKey(request);
   if (key === null) throw unauthenticated();
+  return resolveKey(key, bucket);
+}
 
+/**
+ * The two reads and the compare for a key that arrived by any route: the
+ * bearer header, or pasted into the OAuth authorize page. One function, so
+ * the two presentations can never accept different keys.
+ */
+export async function resolveKey(key: string, bucket: Bucket): Promise<Caller> {
   const hash = await hashKey(key);
 
   const pointer = await bucket.get(keyHashKey(hash));
@@ -67,7 +75,7 @@ export async function resolveCaller(request: Request, bucket: Bucket): Promise<C
  * through the R2 API; tolerating a bare id as well costs one branch and means
  * a pointer repaired by hand still works.
  */
-function pointerId(body: string): string | null {
+export function pointerId(body: string): string | null {
   const text = body.trim();
   if (text.length === 0) return null;
   if (text.startsWith("{")) {
@@ -125,14 +133,4 @@ export function requireScope(caller: Caller, required: Scope): void {
  */
 export function attribution(caller: Caller): CreatedBy {
   return { id: caller.id, label: caller.label };
-}
-
-/**
- * The caller of `/_api/mcp` — the ONE function the MCP route asks. Today it
- * is the bearer lookup above and nothing else; issue #12 adds the OAuth
- * fallback behind it ("header if present, else OAuth", AGENTS.md "Auth")
- * without the route or the tool layer learning a second identity.
- */
-export function resolveMcpCaller(request: Request, bucket: Bucket): Promise<Caller> {
-  return resolveCaller(request, bucket);
 }

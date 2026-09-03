@@ -172,7 +172,12 @@ describe("tools/call", () => {
       updated.structuredContent,
     );
 
-    const listed = await call(client, "dropthis_list", { q: "MCP renamed", limit: 5 });
+    // `q` filters WITHIN the page (AGENTS.md, "Responses and errors"), so a
+    // small page proves nothing: `expiry.test.ts` and `cron.test.ts` publish
+    // with a future `DEV-Clock`, and a drop created in 2032 keeps the top of
+    // this newest-first listing for the whole run. One full page, as every
+    // other contract file does.
+    const listed = await call(client, "dropthis_list", { q: "MCP renamed", limit: 1000 });
     const page = listed.structuredContent as { drops: Array<{ slug: string }> };
     expect(page.drops.map((row) => row.slug)).toContain(drop.slug);
 
