@@ -1,0 +1,13 @@
+{
+  // Repo template for the Deploy-button path: bindings by NAME, no ids.
+  // Never deployed from directly — `scripts/deploy-dev.mjs` (and later
+  // `dropthis init`) render a per-instance config with the reconciled ids.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "dropthis",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-03",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "dropthis-drops" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }]
+}
