@@ -1,8 +1,34 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+/**
+ * Where the Worker source lives, found by walking up from this module until a
+ * directory holds `packages/worker/wrangler.jsonc`.
+ *
+ * A fixed number of `..` is wrong in one of the two places this code runs: it
+ * is four levels from `src/init/plan-render.ts` and three from the bundled
+ * `dist/cli.cjs`, and the bundle is what an operator runs. Walking up is right
+ * in both, and it fails with a sentence instead of building a path that
+ * silently points outside the repo (v1 is used from the repo build,
+ * `npx ./packages/dropthis`; bundling the built Worker into the package is the
+ * first-public-release milestone).
+ */
+function findRepoRoot(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let up = 0; up < 10; up += 1) {
+    if (existsSync(join(dir, "packages", "worker", "wrangler.jsonc"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(
+    "Cannot find packages/worker/wrangler.jsonc above this CLI. In v1 `init` deploys the Worker from this repository; run it as `npx ./packages/dropthis`.",
+  );
+}
+
+const repoRoot = findRepoRoot();
 const templatePath = join(repoRoot, "packages", "worker", "wrangler.jsonc");
 const workerMain = join(repoRoot, "packages", "worker", "src", "index.ts");
 

@@ -75,6 +75,9 @@ step needs you.
 npx dropthis@latest init --domain drops.example.com --json
 ```
 
+Until the first npm release, that line is `npx ./packages/dropthis init …` from a clone of
+this repository — `init` deploys the Worker from the repo's own source.
+
 Automation (agents, CI, n8n) skips the browser entirely: set `CLOUDFLARE_API_TOKEN`
 (create at https://dash.cloudflare.com/profile/api-tokens → Create Custom Token:
 **Workers Scripts — Edit · Workers KV Storage — Edit · Workers R2 Storage — Edit ·
@@ -91,9 +94,20 @@ drop and reports every check; the hello drop is gone afterwards), saves the inst
 prints the Claude Code / Cursor / Codex / claude.ai connect snippets. Result:
 
 ```json
-{ "ok": true, "url": "https://drops.example.com", "mcp_url": "https://drops.example.com/_api/mcp",
-  "admin_key": "…", "doctor": { "ok": true, "checks": [ … ] }, "steps": [ … ] }
+{ "ok": true, "name": "main", "worker": "dropthis-main", "bucket": "dropthis-main-drops",
+  "kv_namespace": "dropthis-main-oauth", "canonical_url": "https://drops.example.com",
+  "alias_origins": ["https://dropthis-main.<subdomain>.workers.dev"],
+  "admin_key_status": "created", "admin_key": "…",
+  "steps": [ { "step": "token", "status": "ok" }, … { "step": "doctor", "status": "ok" } ],
+  "doctor": { "ok": true, "checks": [ … ] },
+  "instances_file": "~/.config/dropthis/instances.json",
+  "connect": { "mcp_url": "https://drops.example.com/_api/mcp", "clients": { … } } }
 ```
+
+`--jsonl` streams one `{step, status, detail?}` line as each step completes and ends with
+that same document. `init --check` answers the three account-level questions
+(`lifecycle_rules`, `kv_bound`, `domain_attached`) and stops — the instance-side checks are
+`dropthis doctor`.
 
 `admin_key` appears only on the run that minted it. Re-running reports `"admin_key_status":
 "existing"`; `--rotate-admin-key` is explicit. `--dry-run` stops after the preflight. Without
@@ -119,7 +133,9 @@ dropthis delete k7x2m9q4pz
 
 dropthis user add anna --json        # → key shown once + connect snippets + ready-to-send message
 dropthis user remove anna            # revokes the key; every session behind it ends
-dropthis connect --client claude-code
+dropthis connect --client claude-code   # writes .mcp.json with a header helper, no key in it
+dropthis connect --client cursor        # prints the snippet + the DROPTHIS_KEY_<NAME> export
+dropthis doctor --json                  # the instance proves itself
 ```
 
 Same five drop operations as MCP tools (`dropthis_publish`, `dropthis_update`,

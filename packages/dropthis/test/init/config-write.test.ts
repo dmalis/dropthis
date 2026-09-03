@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { startFakeCloudflare } from "../../../../test/fake-cloudflare/src/server.js";
+import { INITIAL_POLICY } from "../../../worker/src/policy/defaults.js";
 import { makeClient } from "../../src/init/cloudflare-client.js";
 import { writeInstanceConfig } from "../../src/init/config-write.js";
 import { getObjectJson } from "../../src/init/r2-objects.js";
@@ -19,7 +20,7 @@ const ACCOUNT = "fake-account-id";
 const BUCKET = "dropthis-x-drops";
 
 describe("writeInstanceConfig", () => {
-  it("writes the frozen Free-safe defaults plus this instance's identity", async () => {
+  it("writes the instance's identity plus the worker's own initial policy, field for field", async () => {
     const cf = await fake({ buckets: [BUCKET] });
     const client = makeClient({ apiToken: "fake-token", accountId: ACCOUNT, apiBase: cf.apiBase });
 
@@ -35,14 +36,12 @@ describe("writeInstanceConfig", () => {
       instance_name: "main",
       canonical_url: "https://dropthis-main.fake-subdomain.workers.dev",
       alias_origins: [],
-      expiry: { default: "30d", max: "365d", allow_never: true },
-      password: { default: null, required: false },
-      noindex: { default: true, forced: false },
-      max_file_bytes: 104_857_600,
-      max_request_bytes: 2_097_152,
-      auto_index: "list",
-      pbkdf2_iterations: 5000,
-      cron_ops_budget: 40,
+      ...INITIAL_POLICY,
     });
+
+    // The measured values, named here so a silent drift of either source is a
+    // failing test and not a quietly weaker instance (decision #73).
+    expect(config?.pbkdf2_iterations).toBe(25_000);
+    expect(config?.max_request_bytes).toBe(4 * 1024 * 1024);
   });
 });

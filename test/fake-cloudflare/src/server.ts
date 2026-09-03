@@ -11,6 +11,17 @@ import { Hono } from "hono";
 /** The permission scopes the fake understands, named as the dashboard would. */
 export type FakeScope = "r2" | "kv" | "workers";
 
+/** A deployed Worker script, as the fake remembers it. */
+export type FakeScript = {
+  name: string;
+  secrets: string[];
+  bindings: Array<Record<string, unknown>>;
+};
+
+export type FakeZone = { id: string; name: string; account: { id: string } };
+export type FakeDnsRecord = { id: string; zoneId: string; name: string; type: string };
+export type FakeWorkerDomain = { id: string; hostname: string; service: string; zone_id: string };
+
 export type FakeState = {
   token: string;
   accountId: string;
@@ -20,6 +31,11 @@ export type FakeState = {
   /** bucket name -> object key -> stored body (as raw bytes + content type) */
   objects: Map<string, Map<string, { body: Uint8Array; contentType: string }>>;
   lifecycleRules: Map<string, unknown[]>;
+  /** script name -> what a deploy left behind (secrets and bindings). */
+  scripts: Map<string, FakeScript>;
+  zones: FakeZone[];
+  dnsRecords: FakeDnsRecord[];
+  workerDomains: FakeWorkerDomain[];
   accounts: Array<{ id: string; name: string }>;
   /** Scopes the token does NOT have — used to test named-permission preflight. */
   missingScopes: FakeScope[];
@@ -38,8 +54,16 @@ export type FakeOptions = {
   accounts?: Array<{ id: string; name: string }>;
   missingScopes?: FakeScope[];
   r2SubscriptionEnabled?: boolean;
+  zones?: FakeZone[];
+  dnsRecords?: FakeDnsRecord[];
   /** Page size the fake enforces regardless of what the client asks for. */
   perPage?: number;
+  /**
+   * Called when a stub wrangler reports a deploy. A test uses it to hand the
+   * bucket it just wrote to an already-running instance, which is the only
+   * way to have a localhost URL BEFORE the deploy that fills the bucket.
+   */
+  onDeploy?: (script: FakeScript) => Promise<void> | void;
 };
 
 type Envelope<T> = {
@@ -74,6 +98,10 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     namespaces: [...(options.namespaces ?? [])],
     objects: new Map(),
     lifecycleRules: new Map(),
+    scripts: new Map(),
+    zones: [...(options.zones ?? [])],
+    dnsRecords: [...(options.dnsRecords ?? [])],
+    workerDomains: [],
     accounts: options.accounts ?? [{ id: options.accountId ?? "fake-account-id", name: "Fake Account" }],
     missingScopes: [...(options.missingScopes ?? [])],
     r2SubscriptionEnabled: options.r2SubscriptionEnabled ?? true,
@@ -271,6 +299,112 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     return c.json(
       ok(slice, { page, per_page: perPage, count: slice.length, total_count: state.accounts.length }),
     );
+  });
+
+
+  /**
+   * A deploy, as the fake sees it: `wrangler deploy` is never run here, so the
+   * stub deploy (in-process or a spawned stub binary) POSTs what it uploaded.
+   * That is what makes `worker secrets` and `kv_bound` answerable offline.
+   */
+  app.post("/__deploy", async (c) => {
+    const body = (await c.req.json()) as {
+      name?: string;
+      secrets?: string[];
+      bindings?: Array<Record<string, unknown>>;
+    };
+    const name = body.name ?? "";
+    const existing = state.scripts.get(name);
+    state.scripts.set(name, {
+      name,
+      // A deploy without a secrets file keeps the secrets the script already
+      // has: that is exactly what Cloudflare does, and the rule the rerun
+      // depends on (a re-shipped HMAC_SECRET would invalidate every cookie).
+      secrets: [...new Set([...(existing?.secrets ?? []), ...(body.secrets ?? [])])],
+      bindings: body.bindings ?? existing?.bindings ?? [],
+    });
+    await options.onDeploy?.(state.scripts.get(name)!);
+    return c.json(ok({ name }));
+  });
+
+  app.get("/client/v4/accounts/:accountId/workers/scripts/:scriptName/secrets", (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const script = state.scripts.get(c.req.param("scriptName"));
+    if (!script) return c.json(fail(10007, "workers.api.error.script_not_found"), 404);
+    return c.json(ok(script.secrets.map((name) => ({ name, type: "secret_text" }))));
+  });
+
+  // The metadata a deploy wrote (bindings, compatibility date). NOT
+  // `/script-settings`, which is logpush and tags.
+  app.get("/client/v4/accounts/:accountId/workers/scripts/:scriptName/settings", (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const script = state.scripts.get(c.req.param("scriptName"));
+    if (!script) return c.json(fail(10007, "workers.api.error.script_not_found"), 404);
+    return c.json(ok({ bindings: script.bindings }));
+  });
+
+  // Zones the token can see, for the longest-suffix match `--domain` needs.
+  app.get("/client/v4/zones", (c) => {
+    const page = Number(c.req.query("page") ?? "1");
+    const perPage = Number(c.req.query("per_page") ?? String(state.perPage));
+    const start = (page - 1) * perPage;
+    const slice = state.zones.slice(start, start + perPage);
+    return c.json(
+      ok(slice, { page, per_page: perPage, count: slice.length, total_count: state.zones.length }),
+    );
+  });
+
+  app.get("/client/v4/zones/:zoneId/dns_records", (c) => {
+    const zoneId = c.req.param("zoneId");
+    // The SDK sends the exact-name filter as `name.exact` (its `Name` filter
+    // object); a bare `name` is what a hand-written call would send.
+    const name = c.req.query("name.exact") ?? c.req.query("name");
+    const matching = state.dnsRecords.filter(
+      (record) => record.zoneId === zoneId && (name === undefined || record.name === name),
+    );
+    return c.json(
+      ok(matching.map(({ id, name: recordName, type }) => ({ id, name: recordName, type })), {
+        page: 1,
+        per_page: state.perPage,
+        count: matching.length,
+        total_count: matching.length,
+      }),
+    );
+  });
+
+  app.get("/client/v4/accounts/:accountId/workers/domains", (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const hostname = c.req.query("hostname");
+    const matching = state.workerDomains.filter(
+      (domain) => hostname === undefined || domain.hostname === hostname,
+    );
+    return c.json(ok(matching));
+  });
+
+  app.put("/client/v4/accounts/:accountId/workers/domains", async (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const forbidden = requireScope("workers");
+    if (forbidden) return c.json(forbidden, 403);
+    const body = (await c.req.json()) as { hostname?: string; service?: string; zone_id?: string };
+    const hostname = body.hostname ?? "";
+    const existing = state.workerDomains.find((domain) => domain.hostname === hostname);
+    if (existing) return c.json(ok(existing));
+    const domain = {
+      id: `domain-${state.workerDomains.length + 1}`,
+      hostname,
+      service: body.service ?? "",
+      zone_id: body.zone_id ?? "",
+    };
+    state.workerDomains.push(domain);
+    return c.json(ok(domain));
   });
 
   app.all("*", (c) => c.json(fail(7000, "No route for that URI"), 404));

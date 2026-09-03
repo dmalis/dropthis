@@ -39,6 +39,21 @@ export async function getObjectJson<T>(
   }
 }
 
+/** Delete tolerates a missing key: every caller here is a resumable repair. */
+export async function deleteObject(
+  client: Cloudflare,
+  accountId: string,
+  bucketName: string,
+  key: string,
+): Promise<void> {
+  try {
+    await client.r2.buckets.objects.delete(key, { account_id: accountId, bucket_name: bucketName });
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+}
+
 function isNotFound(error: unknown): boolean {
   return (
     typeof error === "object" &&
