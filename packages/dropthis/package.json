@@ -7,7 +7,11 @@
   "scripts": {
     "build": "tsup"
   },
+  "dependencies": {
+    "cloudflare": "7.1.0"
+  },
   "devDependencies": {
+    "@dropthis/fake-cloudflare": "0.1.0",
     "tsup": "8.5.1"
   }
 }
