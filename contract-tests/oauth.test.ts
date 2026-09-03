@@ -384,6 +384,42 @@ describe("Client ID Metadata Documents", () => {
     expect(await toolNames(`Bearer ${tokens.access_token}`)).toEqual([...USER_TOOLS].sort());
   });
 
+  it("issues a year-long access token, so no one is sent back to the page an hour later", async () => {
+    const clientId = await publishMetadata([REDIRECT]);
+    const anna = await addUser(label("anna"));
+    const tokens = await connect(anna.key, { clientId });
+    expect(tokens.expires_in).toBeGreaterThanOrEqual(365 * 24 * 60 * 60 - 60);
+  });
+
+  /**
+   * claude.ai is a CIMD client, and what it did on 2026-09-03 was go to the
+   * authorize page after the access token expired instead of refreshing
+   * (issue #20). The refresh path itself is pinned here for that kind of
+   * client, not only for the DCR client the test above it uses.
+   */
+  it("refreshes silently after expiry for a client_id that is a metadata URL", async () => {
+    const clientId = await publishMetadata([REDIRECT]);
+    const anna = await addUser(label("anna"));
+    const tokens = await connect(anna.key, { clientId, ttlHeader: "60" });
+    expect(tokens.expires_in).toBe(60);
+    expect((await rpc(`Bearer ${tokens.access_token}`, "initialize", INITIALIZE)).status).toBe(200);
+
+    await new Promise((resolve) => setTimeout(resolve, 62_000));
+    expect((await rpc(`Bearer ${tokens.access_token}`, "initialize", INITIALIZE)).status).toBe(401);
+
+    const refreshed = await refresh(clientId, tokens.refresh_token);
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+    const next = (await refreshed.json()) as Tokens;
+    expect(next.access_token).not.toBe(tokens.access_token);
+    expect(next.expires_in).toBeGreaterThanOrEqual(365 * 24 * 60 * 60 - 60);
+    const call = await rpc(`Bearer ${next.access_token}`, "tools/call", {
+      name: "dropthis_list",
+      arguments: { limit: 1 },
+    });
+    expect(call.status, call.text).toBe(200);
+    expect(call.body).toMatchObject({ result: expect.anything() });
+  }, 110_000);
+
   it("refuses a redirect the document does not list, locally", async () => {
     const clientId = await publishMetadata(["http://localhost:8976/somewhere-else"]);
     const { challenge } = pkce();

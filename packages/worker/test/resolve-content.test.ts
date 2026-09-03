@@ -308,3 +308,63 @@ describe("resolveFiles with url entries", () => {
     expect(Object.keys(resolved.manifest)).toEqual(["index.html", "logo.png"]);
   });
 });
+
+/**
+ * The keep kind (issue #17): `{path, sha256}` names a blob the drop already
+ * holds. Nothing is fetched, nothing is decoded, nothing lands in `blobs` —
+ * the manifest just points at what is already there.
+ */
+describe("resolveFiles with keep entries", () => {
+  const digest = "c".repeat(64);
+  const current = {
+    "logo.png": { sha256: digest, size: 40, content_type: "image/png" },
+  };
+
+  it("takes size and content type from the current manifest", async () => {
+    const resolved = await resolveFiles([{ path: "logo.png", sha256: digest }], { current });
+    expect(resolved.blobs.size).toBe(0);
+    expect(resolved.files[0]).toMatchObject({ sha256: digest, contentType: "image/png" });
+    expect(resolved.files[0]!.bytes).toBeUndefined();
+    expect(resolved.manifest).toEqual({
+      "logo.png": { sha256: digest, size: 40, content_type: "image/png" },
+    });
+  });
+
+  it("keeps a held blob under a NEW path, typed from the extension table", async () => {
+    const resolved = await resolveFiles([{ path: "assets/mark.png", sha256: digest }], { current });
+    expect(resolved.manifest).toEqual({
+      "assets/mark.png": { sha256: digest, size: 40, content_type: "image/png" },
+    });
+    expect(resolved.blobs.size).toBe(0);
+  });
+
+  it("resolves a keep beside an inline change", async () => {
+    const resolved = await resolveFiles(
+      [
+        { path: "index.html", text: "<h1>fixed</h1>" },
+        { path: "logo.png", sha256: digest },
+      ],
+      { current },
+    );
+    expect(Object.keys(resolved.manifest)).toEqual(["index.html", "logo.png"]);
+    expect(resolved.blobs.size).toBe(1);
+  });
+
+  it("names the path and the hash when the drop does not hold it", async () => {
+    let thrown: { code?: string; message?: string } = {};
+    try {
+      await resolveFiles([{ path: "logo.png", sha256: "d".repeat(64) }], { current });
+    } catch (error) {
+      thrown = error as { code?: string; message?: string };
+    }
+    expect(thrown.code).toBe("INVALID_INPUT");
+    expect(thrown.message).toContain("logo.png");
+    expect(thrown.message).toContain("d".repeat(64));
+  });
+
+  it("holds nothing when there is no current manifest, so every keep is refused", async () => {
+    expect(await codeOf(() => resolveFiles([{ path: "logo.png", sha256: digest }]))).toBe(
+      "INVALID_INPUT",
+    );
+  });
+});

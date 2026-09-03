@@ -50,7 +50,12 @@ describe("resolveTarget", () => {
     expect(() => resolveTarget("https://drops.example.com/", ORIGINS)).toThrow(TargetError);
   });
 
-  it.each(["", "ABCDEFGHIJ", "abcdefghi", "not a slug", "ftp://drops.example.com/abcdefghij/"])(
+  it("accepts a chosen slug, which needs no origin", () => {
+    expect(resolveTarget("tan-dash", ORIGINS)).toBe("tan-dash");
+    expect(resolveTarget("https://drops.example.com/tan-dash/", ORIGINS)).toBe("tan-dash");
+  });
+
+  it.each(["", "ab", "ABCDEFGHIJ", "-tan-dash", "not a slug", "ftp://drops.example.com/abcdefghij/"])(
     "refuses %s as INVALID_INPUT",
     (target) => {
       expect(() => resolveTarget(target, ORIGINS)).toThrow(

@@ -24,6 +24,7 @@ describe("parsePublishInput", () => {
       meta: { source: "n8n", rows: 12, nested: { a: [1, 2] } },
       expires: "7d",
       noindex: false,
+      slug: "tan-dash",
       idempotency_key: "run-42",
     };
     expect(parsePublishInput(full)).toEqual(full);
@@ -31,8 +32,23 @@ describe("parsePublishInput", () => {
 
   it("rejects an unknown top-level field — the schema is the contract", () => {
     expect(codeOf(() => parsePublishInput({ ...ok, visibility: "public" }))).toBe("INVALID_INPUT");
-    expect(codeOf(() => parsePublishInput({ ...ok, slug: "mine" }))).toBe("INVALID_INPUT");
+    expect(codeOf(() => parsePublishInput({ ...ok, vanity: "mine" }))).toBe("INVALID_INPUT");
   });
+
+  /**
+   * The chosen slug is the URL, so it is normalized where every other surface
+   * reads it — here — and not by each caller (issue #18).
+   */
+  it("normalizes a chosen slug before it becomes a claim", () => {
+    expect(parsePublishInput({ ...ok, slug: "  TAN-Dash " }).slug).toBe("tan-dash");
+  });
+
+  it.each(["ab", "-tan-dash", "tan_dash", "tan dash", "_api", ".well-known", "a".repeat(41)])(
+    "refuses the chosen slug %s as INVALID_INPUT",
+    (slug) => {
+      expect(codeOf(() => parsePublishInput({ ...ok, slug }))).toBe("INVALID_INPUT");
+    },
+  );
 
   it("names the unknown field so the agent can fix it", () => {
     expect(() => parsePublishInput({ ...ok, visibility: "public" })).toThrow(/visibility/);
@@ -169,5 +185,23 @@ describe("parsePublishInput", () => {
 
   it("rejects an empty idempotency_key", () => {
     expect(codeOf(() => parsePublishInput({ ...ok, idempotency_key: "" }))).toBe("INVALID_INPUT");
+  });
+});
+
+const messageOf = (body: unknown): string => {
+  try {
+    parsePublishInput(body);
+  } catch (error) {
+    return `${(error as { code?: string }).code}: ${(error as Error).message}`;
+  }
+  throw new Error("parsePublishInput accepted a body it should have refused.");
+};
+
+describe("parsePublishInput and the keep kind", () => {
+  it("refuses {path, sha256} by name: a new drop holds nothing to keep", () => {
+    const said = messageOf({ files: [{ path: "logo.png", sha256: "b".repeat(64) }] });
+    expect(said).toContain("INVALID_INPUT");
+    expect(said).toContain("logo.png");
+    expect(said).toContain("update");
   });
 });

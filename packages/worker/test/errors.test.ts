@@ -15,6 +15,8 @@ const SPEC: Array<[ErrorCode, number, boolean]> = [
   ["UPDATE_CONFLICT", 409, true],
   ["IDEMPOTENCY_MISMATCH", 409, false],
   ["LABEL_TAKEN", 409, false],
+  // Added by issue #18 with the optional vanity slug; docs/decisions.md #94.
+  ["SLUG_TAKEN", 409, false],
   ["NAME_TAKEN", 409, false],
   ["EXPIRED_FINAL", 410, false],
   ["UPLOAD_EXPIRED", 410, false],

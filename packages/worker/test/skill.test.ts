@@ -102,6 +102,9 @@ describe("GET /_skill.md", () => {
     }
     expect(text.indexOf("### `dropthis_delete`")).toBeLessThan(text.indexOf("### `dropthis_user_add`"));
     expect(text).toContain("never publish again");
+    // Issue #18: the chosen slug is one sentence on the skill and one on the tool.
+    expect(text).toContain("SLUG_TAKEN");
+    expect(text).toMatch(/campaign link/);
   });
 
   it("uses the canonical origin, not the host the request arrived on", async () => {

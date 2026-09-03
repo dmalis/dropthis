@@ -527,6 +527,68 @@ describe("POST /uploads/:id/commit", () => {
     );
   });
 
+  /**
+   * The keep kind on the staged path (#95): a manifest entry with no `size` is
+   * "keep what the target already holds under this digest". It is the same
+   * `{path, sha256}` an inline `update` takes, so an agent — and the CLI —
+   * spell "unchanged" one way on both paths.
+   */
+  it("takes a manifest entry with no size as a keep, and never asks for it", async () => {
+    const before = [await file("index.html", "<p>v1</p>"), await file("logo.png", "PNGBYTES")];
+    const first = await openSession(before);
+    await uploadAll(first, before);
+    const v1 = (await (await commit(first.upload_id, { title: "V1" })).json()) as Json;
+
+    const changed = await file("index.html", "<p>v2</p>");
+    const response = await json("/_api/v1/uploads", "POST", {
+      target: v1.slug,
+      manifest: [
+        { path: changed.path, size: changed.bytes.length, sha256: changed.sha256 },
+        { path: "logo.png", sha256: before[1]!.sha256 },
+      ],
+    });
+    expect(response.status, await response.clone().text()).toBe(201);
+    const second = (await response.json()) as Session;
+    expect(second.missing).toEqual([changed.sha256]);
+    await uploadAll(second, [changed]);
+
+    const committed = await commit(second.upload_id, {});
+    expect(committed.status, await committed.clone().text()).toBe(200);
+    const v2 = (await committed.json()) as Json;
+    expect(v2.files).toMatchObject([
+      { path: "index.html", sha256: changed.sha256 },
+      { path: "logo.png", sha256: before[1]!.sha256, size: 8, content_type: "image/png" },
+    ]);
+  });
+
+  it("refuses a size-less entry the target does not hold, naming path and hash", async () => {
+    const before = [await file("index.html", "<p>v1</p>")];
+    const first = await openSession(before);
+    await uploadAll(first, before);
+    const v1 = (await (await commit(first.upload_id, {})).json()) as Json;
+
+    const missing = "e".repeat(64);
+    const failed = await errorOf(
+      await json("/_api/v1/uploads", "POST", {
+        target: v1.slug,
+        manifest: [{ path: "logo.png", sha256: missing }],
+      }),
+    );
+    expect(failed.code).toBe("INVALID_INPUT");
+    expect(failed.message).toContain("logo.png");
+    expect(failed.message).toContain(missing);
+  });
+
+  it("refuses a size-less entry with no target: a new drop holds nothing", async () => {
+    const failed = await errorOf(
+      await json("/_api/v1/uploads", "POST", {
+        manifest: [{ path: "logo.png", sha256: "f".repeat(64) }],
+      }),
+    );
+    expect(failed.code).toBe("INVALID_INPUT");
+    expect(failed.message).toContain("logo.png");
+  });
+
   it("refuses to commit an update over a drop that moved since the session opened", async () => {
     const before = [await file("index.html", "<p>v1</p>")];
     const first = await openSession(before);

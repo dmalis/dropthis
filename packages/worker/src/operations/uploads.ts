@@ -49,7 +49,7 @@ import { decryptResult, encryptResult } from "../storage/result-crypto.js";
 import { signUploadUrl, verifyUploadSignature } from "../storage/upload-sign.js";
 import { checkPublicUrl, fetchPublicUrl, newFetchBudget } from "./fetch-url.js";
 import { MAX_URL_ENTRIES } from "../registry/fields.js";
-import { streamToBlob } from "./resolve-content.js";
+import { resolveKeep, streamToBlob } from "./resolve-content.js";
 import { loadDrop } from "./get.js";
 import { openPassword, sealPassword } from "./idempotency.js";
 import { writeProjections } from "./projections.js";
@@ -63,11 +63,19 @@ export const PUT_URL_TTL_S = 60 * 60;
 
 export type ManifestInput = {
   path: string;
-  size: number;
+  /**
+   * Absent = the keep kind (#95): the target drop already holds this digest, so
+   * its size and content type come from the drop and nothing is uploaded. It is
+   * the same `{path, sha256}` an inline `update` takes.
+   */
+  size?: number | undefined;
   sha256: string;
   /** A public URL the INSTANCE fetches at commit; the client never uploads it. */
   url?: string | undefined;
 };
+
+/** A manifest entry as the caller sent it, before a keep is resolved. */
+type DeclaredEntry = { path: string; sha256: string; size?: number | undefined };
 
 export type SessionInput = {
   target?: string | undefined;
@@ -156,9 +164,15 @@ export async function createSession(
   ctx: UploadContext,
 ): Promise<{ session: SessionResult; created: boolean }> {
   const { bucket, now } = ctx;
-  const { manifest, sources } = parseManifest(input.manifest, ctx.config.policy);
+  // The manifest is parsed as DECLARED and resolved once the target is known: a
+  // keep entry's size and content type live in the target's own manifest.
+  const { declared, sources } = parseManifest(
+    input.manifest,
+    ctx.config.policy,
+    input.target !== undefined,
+  );
   const manifestHash = await sha256Hex(
-    canonicalJson({ target: input.target ?? null, manifest, sources }),
+    canonicalJson({ target: input.target ?? null, manifest: declared, sources }),
   );
 
   const uploadId =
@@ -186,6 +200,7 @@ export async function createSession(
   let dropId: string;
   let slug: string;
   let baseEtag: string | null = null;
+  let manifest: Manifest;
   const expires = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
 
   if (input.target !== undefined) {
@@ -197,7 +212,11 @@ export async function createSession(
     dropId = loaded.dropId;
     slug = loaded.meta.slug;
     baseEtag = loaded.etag;
+    // Before the slug or any blob moves: a keep the drop does not hold is the
+    // caller's mistake, and it costs nothing to say so now.
+    manifest = resolveManifest(declared, loaded.meta.manifest);
   } else {
+    manifest = resolveManifest(declared, {});
     dropId = newDropId(now);
     slug = await claimPendingSlug(bucket, dropId, expires);
   }
@@ -238,7 +257,8 @@ export async function createSession(
 function parseManifest(
   entries: ManifestInput[],
   policy: ResolvedPolicy,
-): { manifest: Manifest; sources: Record<string, string> } {
+  hasTarget: boolean,
+): { declared: DeclaredEntry[]; sources: Record<string, string> } {
   if (entries.length === 0) throw new ApiError("INVALID_INPUT", "manifest must hold at least one entry.");
   if (entries.length > MAX_FILES_PER_CALL) {
     throw new ApiError(
@@ -255,12 +275,30 @@ function parseManifest(
     throw error;
   }
 
-  const manifest: Manifest = {};
+  const declared: DeclaredEntry[] = [];
   const sources: Record<string, string> = {};
   for (const [index, entry] of entries.entries()) {
     const path = paths[index]!;
     if (!SHA256_HEX.test(entry.sha256)) {
       throw new ApiError("INVALID_INPUT", `manifest.${index}.sha256: must be 64 lowercase hex characters.`);
+    }
+    // No size = keep what the target already holds. There is nothing to upload
+    // and nothing to fetch, so a `url` beside it is two kinds in one entry.
+    if (entry.size === undefined) {
+      if (!hasTarget) {
+        throw new ApiError(
+          "INVALID_INPUT",
+          `${JSON.stringify(path)} carries only a sha256, which keeps a file the target drop already has. This session creates a drop, and a new drop has no files yet: send its size and upload the bytes.`,
+        );
+      }
+      if (entry.url !== undefined) {
+        throw new ApiError(
+          "INVALID_INPUT",
+          `manifest.${index}: an entry with no size keeps a file the drop already has, so it cannot also name a url.`,
+        );
+      }
+      declared.push({ path, sha256: entry.sha256 });
+      continue;
     }
     if (!Number.isInteger(entry.size) || entry.size < 0) {
       throw new ApiError("INVALID_INPUT", `manifest.${index}.size: must be a whole number of bytes.`);
@@ -271,7 +309,7 @@ function parseManifest(
         `${JSON.stringify(path)} is ${entry.size} bytes; this instance accepts files up to ${policy.max_file_bytes}.`,
       );
     }
-    manifest[path] = { sha256: entry.sha256, size: entry.size, content_type: contentTypeForPath(path) };
+    declared.push({ path, sha256: entry.sha256, size: entry.size });
     // The target is validated now, not at commit: a URL this instance will
     // never fetch should fail before the client uploads anything else.
     if (entry.url !== undefined) sources[entry.sha256] = checkPublicUrl(entry.url).href;
@@ -282,7 +320,24 @@ function parseManifest(
       `A single upload fetches at most ${MAX_URL_ENTRIES} url entries; this one has ${Object.keys(sources).length}.`,
     );
   }
-  return { manifest, sources };
+  return { declared, sources };
+}
+
+/**
+ * The declared manifest against the drop as it stands: a keep entry takes its
+ * size and content type from `current`, exactly the way an inline `update`
+ * resolves the same `{path, sha256}` — one function, so the two paths can never
+ * disagree about what "keep" means.
+ */
+function resolveManifest(declared: DeclaredEntry[], current: Manifest): Manifest {
+  const manifest: Manifest = {};
+  for (const entry of declared) {
+    manifest[entry.path] =
+      entry.size === undefined
+        ? resolveKeep(entry.path, entry.sha256, current)
+        : { sha256: entry.sha256, size: entry.size, content_type: contentTypeForPath(entry.path) };
+  }
+  return manifest;
 }
 
 /**

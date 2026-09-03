@@ -30,8 +30,9 @@ matter. See `SECURITY.md`.
 
 A drop is a set of files served at `https://<host>/<slug>/`. A single-file drop (a PDF, an
 `.xlsx`, one HTML page) is served directly at its URL with the right content type. The slug
-is generated (10 characters, `a-z0-9`) and never changes: the URL is the drop's identity,
-and every operation accepts the URL or the slug.
+is generated (10 characters, `a-z0-9`) unless `publish` was given one — `slug: "tan-dash"`,
+3-40 characters of `a-z0-9-`, for a campaign link a human reads — and never changes either
+way: the URL is the drop's identity, and every operation accepts the URL or the slug.
 
 Every drop has:
 

@@ -27,9 +27,14 @@ import type { Operation, OperationContext } from "./types.js";
 
 const manifestEntry = z.strictObject({
   path: z.string().describe(PATH_DESCRIPTION),
+  /** Absent = keep what the target drop already holds under this digest (#95). */
   size: z
     .number()
-    .describe("The file's length in bytes; the PUT must send exactly this many."),
+    .optional()
+    .describe(
+      "The file's length in bytes; the PUT must send exactly this many. Leave it out to keep " +
+        "a file the target drop already holds under this sha256.",
+    ),
   sha256: z
     .string()
     .describe(

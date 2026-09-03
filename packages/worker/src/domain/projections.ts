@@ -20,6 +20,7 @@
  * travel as "0"/"1" and an absent key means `null`.
  */
 import { dropState } from "./expiry.js";
+import { isSlug } from "./slug.js";
 import type { Drop, DropMeta } from "./meta.js";
 import { dropUrl } from "./target.js";
 
@@ -42,10 +43,18 @@ export function listEntryMetadata(meta: DropMeta): ListEntryMetadata {
   return entry;
 }
 
-/** The slug half of `list/<inverted-created-ms>-<slug>`, or `null`. */
+/**
+ * The slug half of `list/<inverted-created-ms>-<slug>`, or `null`.
+ *
+ * The number is fixed-width, so the first dash after it is the separator and a
+ * chosen slug's own dashes are never mistaken for it. The shape is checked with
+ * `isSlug` rather than a second regex: a key whose slug half this Worker cannot
+ * read is skipped by `list` and never destroyed.
+ */
 export function slugOfListKey(key: string): string | null {
-  const match = /^list\/\d{13}-([a-z0-9]{10})$/.exec(key);
-  return match === null ? null : match[1]!;
+  const match = /^list\/\d{13}-(.+)$/.exec(key);
+  if (match === null) return null;
+  return isSlug(match[1]!) ? match[1]! : null;
 }
 
 export type ProjectionOptions = { canonicalUrl: string; now: Date };

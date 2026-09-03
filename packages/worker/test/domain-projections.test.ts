@@ -106,8 +106,22 @@ describe("slugOfListKey", () => {
     );
   });
 
+  /**
+   * A chosen slug holds dashes, and the key is `<13 digits>-<slug>`: the
+   * separator is the dash after a FIXED-width number, so the slug half is
+   * unambiguous however many dashes it carries. `list` builds its whole row —
+   * url included — from this, so a slug that failed to parse would come back
+   * as an empty string and a broken URL.
+   */
+  it("reads a chosen slug back, dashes and all", () => {
+    const key = listKey(Date.parse("2026-09-03T12:00:00Z"), "spring-2026-campaign");
+    expect(slugOfListKey(key)).toBe("spring-2026-campaign");
+  });
+
   it("returns null for a key that is not a listing pointer", () => {
     expect(slugOfListKey("list/nonsense")).toBeNull();
     expect(slugOfListKey("drops/x/meta.json")).toBeNull();
+    expect(slugOfListKey("list/0000000000000--tan-dash")).toBeNull();
+    expect(slugOfListKey("list/0000000000000-ab")).toBeNull();
   });
 });

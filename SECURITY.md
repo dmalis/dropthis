@@ -30,7 +30,9 @@ that must not see each other's drops get two instances.
   issues nothing, and nothing counts the attempts — a key is 256 random bits, so the page
   is not guessable either. Rate limiting arrives when a real deployment needs it.
 - A generated slug (10 characters, `a-z0-9`) with `noindex` is a share link, not a secret:
-  anyone with the URL can open an unprotected drop.
+  anyone with the URL can open an unprotected drop. A slug the caller CHOSE (`publish({slug})`)
+  is weaker still — `/spring-sale` is guessable by anyone who tries — so a drop that must not
+  be found by guessing takes a generated slug, a password, or both.
 
 ## Operator controls
 

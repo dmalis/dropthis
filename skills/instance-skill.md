@@ -31,11 +31,15 @@ names below are the MCP names; the REST routes are the same five operations.
 ## The rules that matter
 
 - **The URL is the identity.** `dropthis_get`, `dropthis_update` and `dropthis_delete` take
-  the drop's URL or its slug (the 10-character path segment). Nothing is resolved first.
+  the drop's URL or its slug (the first path segment). Nothing is resolved first.
   A URL from another instance is `WRONG_INSTANCE`: send it to the instance that made it.
 - **Always set `title`.** It is what the user sees in lists and on the password page.
+- **The slug is generated.** Pass `slug` on `publish` only when the user wants a readable
+  campaign link — 3-40 characters of `a-z 0-9 -`, permanent, and `SLUG_TAKEN` when another
+  drop already holds it.
 - **Text inline, everything else by `url`.** A file entry is `{path, text}`,
-  `{path, base64}` or `{path, url}` — exactly one of the three.
+  `{path, base64}`, `{path, url}` or — on `update` only — `{path, sha256}`: exactly one of
+  the four.
   - `{path, text}` for text you wrote: HTML, CSS, JS, Markdown, JSON, SVG.
   - `{path, url}` for a picture, PDF, font or archive that already exists at a public
     http(s) address. This instance fetches it, so **it costs you no tokens**. Add `sha256`
@@ -61,7 +65,12 @@ names below are the MCP names; the REST routes are the same five operations.
   does the same three steps for you. If none of the three applies, shrink the file.
 - **`update` replaces the whole file set.** Send every file the drop should have, not only
   the changed ones: `dropthis_get` with `files: true` returns the current text content, so
-  read, change, write back. `meta` merges at the top level; a key set to `null` is removed.
+  read, change, write back. **Send the changed files inline and every other one as
+  `{path, sha256}`** — the digest `dropthis_get` returned for it. That fourth entry kind
+  keeps the bytes the drop already has: nothing is sent, so a one-line CSS fix in a drop
+  full of images costs you the CSS and nothing else. A hash this drop does not hold is
+  `INVALID_INPUT`, and `dropthis_publish` refuses the kind — a new drop has no files yet.
+  `meta` merges at the top level; a key set to `null` is removed.
 {{password_rule}}
 - **Expiry and grace.** `expires` is `"7d"`, a date, an RFC 3339 instant or `"never"`; this
   instance's default is **{{expiry_default}}**, its maximum **{{expiry_max}}**, and

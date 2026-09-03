@@ -772,6 +772,21 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `tokenExchangeCallback` and answers `401 invalid_grant` after `user remove`. A DCR
     client that expired after 90 days would have ended a connection on its own — hence
     the client TTL too.
+    **Amended 2026-09-03 (issue #20): an access token lives a year too.** The library
+    default was one hour, and the owner's claude.ai connector answered that hour by
+    sending the human back to `/_oauth/authorize` — observed on dev8 at 18:39Z, with
+    the two discovery documents fetched and **no `POST /_oauth/token
+    grant_type=refresh_token` in between**; the grant had never been refreshed
+    (`previousRefreshTokenId` absent). So "a connection never expires on its own" was
+    true of the grant and false of the experience. `accessTokenTTL` is now
+    `365 * 24 * 60 * 60` for every build; `DEV-Access-TTL` (g) still shortens one token
+    so the refresh path stays a 62-second test. A long access token costs nothing here
+    because the token is never the authority: `/_api/mcp` resolves every token to a key
+    id and re-reads `keys/<id>.json` and `keyhash/` on EVERY request, so `user remove`
+    ends the session on the very next call whatever the token's own lifetime says. The
+    refresh grant itself was never at fault — it works for CIMD clients (the shape
+    claude.ai uses) both before and after this change, pinned in
+    `packages/worker/test/oauth-flow.test.ts` and `contract-tests/oauth.test.ts`.
     (e) **The CIMD cache is the library's:** a Cache API entry honouring the document's
     own `Cache-Control`, capped at 7 days, not the KV-with-TTL the spec sketched. A second
     cache would be a second store of the same document; the library evicts a cached
@@ -917,3 +932,75 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     (e) **`openWorldHint` stays false on both**, as on `publish`, which also fetches `url`
     entries: the hint is about the tool reaching an open world of its own accord, and these
     reach only this instance and the targets the caller named.
+
+94. **The chosen (vanity) slug: a kept-open door, opened (issue #18, 2026-09-03).** AGENTS.md
+    listed vanity slugs under "Kept open, deliberately empty" — "one optional field away …
+    wait for a user asking". A user asked: a marketing team wants campaign links for
+    newsletters and ads, where `/tan-dash` in an email beats `/9ul4jschtk`. The door is now
+    open and the "Kept open" list no longer names it. `publish` takes an optional `slug`;
+    `update` does not, because rename stays a non-goal and a URL is permanent. The rulings
+    this slice needed:
+    (a) **One predicate, not two.** `isSlug` answers "could a drop live at this path
+    segment?" and is now the chosen form — 3–40 characters of `a-z0-9-` starting with a
+    letter or digit, never a reserved prefix — of which the generated 10-character form is a
+    subset. Routing, the viewer, `resolveTarget` and `delete` all ask that one question, and
+    nothing in the product ever has to tell a generated slug from a chosen one. A second
+    predicate would have been two ways to say the same thing, and the one that drifts is the
+    one nobody reads.
+    (b) **A chosen slug is NOT forbidden from the ten-character alphanumeric shape.** The
+    issue's reasoning assumed the two namespaces are disjoint. They are not, deliberately:
+    `newsletter` is exactly ten letters and exactly the kind of campaign slug that was asked
+    for, and refusing it to keep a boundary nothing depends on would be a worse product.
+    Nothing needs the boundary — the collision is already handled where it happens.
+    `slugs/<slug>` is claimed with `If-None-Match: *`, so a generated publish that lands on a
+    taken slug simply generates another (`operations/publish.ts`, `claimSlug`), and a chosen
+    one that lands on a taken slug is `SLUG_TAKEN`. The argument is written into
+    `test/domain-slug.test.ts` so it cannot be lost.
+    (c) **`SLUG_TAKEN` is raised only for a slug the CALLER chose** (409, not retryable,
+    "Choose another slug, or change the existing drop with `update`"). A generated collision
+    is retried inside `publish` and never reaches the caller — which is why #58 could remove
+    the code and why it comes back now that intent exists. The failing claim is conditional,
+    so the existing pointer and the drop behind it are untouched.
+    (d) **Normalisation happens once, in `parsePublishInput`.** NFC, then lowercase, then
+    trim, then validate: the slug is the URL, so `"TAN-Dash "` and `"tan-dash"` must be one
+    claim and not two. Anything that does not survive as `[a-z0-9-]` is `INVALID_INPUT`
+    rather than transliterated — a link the caller did not type is a link they cannot
+    predict. Normalising there also puts the final value into the idempotency payload hash,
+    so the same key with a different slug is `IDEMPOTENCY_MISMATCH` with no extra code.
+    (e) **The `list/` pointer had to learn about dashes.** `slugOfListKey` pinned
+    `[a-z0-9]{10}`, and `list` builds its whole row — url included — from that key, so a
+    chosen slug would have come back as an empty slug and a broken URL. The key is
+    `<13 fixed-width digits>-<slug>`, so the separator is unambiguous however many dashes the
+    slug carries; the parsed half is checked with `isSlug`, and a key this Worker cannot read
+    is skipped, never destroyed.
+
+95. **Keep-by-hash file entries on `update` (issue #17).** Same shape of failure as #92, one
+    step further along: on 2026-09-03 a claude.ai session had to re-type every base64 sprite
+    of a game into the tool call to change 40 lines of CSS, because `files` replaces the whole
+    set. So the file-entry union gains a fourth strict branch, `{path, sha256}`: keep the blob
+    this drop already holds under that digest. `get` already returns `sha256` per file, so the
+    round trip is `get` → change one file → `update` with that file inline and every other as
+    `{path, sha256}`. Nothing is sent, fetched, hashed or written; the new manifest points at
+    what is already there. The rulings the spec left open:
+    (a) **A keep at the SAME path carries the recorded `size` AND `content_type` over; a keep
+    under a NEW path is typed from the frozen extension table.** The two differ for a file
+    whose extension is unknown or absent — `{path: "README", text: …}` is stored `text/plain`,
+    while `contentTypeForPath("README")` is `application/octet-stream` — so re-typing a kept
+    file from its path would silently change what a visitor is served. The manifest is the
+    record; a keep reads it.
+    (b) **`publish` refuses the kind by name, at parse time.** A drop being created holds
+    nothing, so resolving a keep against an empty manifest would answer "this drop holds no
+    file with that sha256" — true but useless. The union stays one shared schema (four
+    branches, one `FILES_DESCRIPTION`) and the refusal names the path and says the kind is an
+    update entry.
+    (c) **Blobs stay per drop; there is no cross-drop keep.** `drops/<id>/blobs/<sha256>` is
+    the layout, and a digest another drop holds is not held here. The refusal names both the
+    path and the hash so an agent working from a stale `get` sees which file went wrong.
+    (d) **On the staged path a keep is a manifest entry with no `size`.** The client cannot
+    know a size it never had, and `{path, sha256}` is then literally the same entry on both
+    paths. It needs `target`: a session that creates a drop refuses it exactly as `publish`
+    does, and a size-less entry that also names a `url` is two kinds in one entry. One
+    `resolveKeep` serves both paths, so inline and staged cannot drift on what "keep" means.
+    (e) **The unheld digest is `INVALID_INPUT`, not `NOT_FOUND`.** The drop was found; the
+    entry the caller wrote is what is wrong, and the frozen catalogue's `NOT_FOUND` is about
+    the target.

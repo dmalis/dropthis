@@ -16,6 +16,11 @@
  *                           spends no CPU on the bytes; without one the Worker
  *                           must hash in-stream and refuses above
  *                           `max_unhashed_bytes`.
+ *   {path, sha256}          KEEP: the blob this drop already holds under that
+ *                           digest. Nothing is sent, fetched or written — the
+ *                           new manifest points at what is already there
+ *                           (decision #95). `update` only; `publish` refuses
+ *                           the kind before it reaches this file.
  *
  * Base64 is decoded with `Uint8Array.fromBase64` where the runtime has it. That
  * is not a micro-optimisation: the measured 4 MiB inline ceiling
@@ -24,7 +29,7 @@
  */
 import { contentTypeForPath, textEntryContentType } from "../domain/content-type.js";
 import { sha256Hex } from "../domain/meta.js";
-import type { Manifest } from "../domain/meta.js";
+import type { Manifest, ManifestEntry } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
 import { ApiError } from "../errors.js";
 import { StorageError } from "../storage/r2.js";
@@ -54,11 +59,14 @@ export type ResolvedContent = {
  * buffered: the caller owns the drop id, so it owns the key. `held` names the
  * digests the drop already stores — those are neither fetched nor written
  * again, which is what makes "one file changed in a ten-image drop" cost one
- * fetch.
+ * fetch. `current` is the drop's manifest as it stands, which is what a keep
+ * entry resolves against: same path and same digest means the recorded size
+ * and content type carry over exactly, so a kept file is served the way it was.
  */
 export type ResolveOptions = {
   policy?: ResolvedPolicy;
   held?: ReadonlyMap<string, number>;
+  current?: Manifest | undefined;
   streamBlob?: (
     sha256: string,
     body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>,
@@ -93,7 +101,12 @@ export async function resolveFiles(
 ): Promise<ResolvedContent> {
   const policy = options.policy ?? (INITIAL_POLICY as unknown as ResolvedPolicy);
   const budget = options.budget ?? newFetchBudget();
-  const held = options.held ?? new Map<string, number>();
+  const current = options.current ?? {};
+  const held =
+    options.held ??
+    new Map<string, number>(
+      Object.values(current).map((entry) => [entry.sha256, entry.size] as const),
+    );
 
   let paths: string[];
   try {
@@ -115,6 +128,13 @@ export async function resolveFiles(
       if (file.bytes !== undefined) blobs.set(file.sha256, file.bytes);
       files.push(file);
       manifest[path] = { sha256: file.sha256, size: file.size, content_type: file.contentType };
+      continue;
+    }
+
+    if (!("text" in entry) && !("base64" in entry)) {
+      const kept = resolveKeep(path, entry.sha256, current, held);
+      files.push({ path, sha256: kept.sha256, contentType: kept.content_type });
+      manifest[path] = kept;
       continue;
     }
 
@@ -149,6 +169,37 @@ export async function resolveFiles(
   }
 
   return { files, blobs, manifest };
+}
+
+/**
+ * A keep entry. The drop is the scope: blobs are content-addressed PER drop, so
+ * a digest another drop holds is not held here, and the refusal names both the
+ * path and the hash — an agent that sent a stale `get` has to see which file.
+ *
+ * Same path, same digest → the recorded size AND content type carry over. A
+ * kept blob under a NEW path is typed from the extension table, exactly as any
+ * other entry at that path would be.
+ */
+export function resolveKeep(
+  path: string,
+  sha256: string,
+  current: Manifest,
+  held?: ReadonlyMap<string, number>,
+): ManifestEntry {
+  const at = current[path];
+  if (at !== undefined && at.sha256 === sha256) {
+    return { sha256: at.sha256, size: at.size, content_type: at.content_type };
+  }
+  const sizes =
+    held ?? new Map(Object.values(current).map((entry) => [entry.sha256, entry.size] as const));
+  const size = sizes.get(sha256);
+  if (size === undefined) {
+    throw new ApiError(
+      "INVALID_INPUT",
+      `This drop holds no file with sha256 ${sha256}, so ${JSON.stringify(path)} cannot be kept. Send its bytes, or read the current digests with get.`,
+    );
+  }
+  return { sha256, size, content_type: contentTypeForPath(path) };
 }
 
 type UrlEntry = Extract<PublishFile, { url: string }>;
