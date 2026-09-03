@@ -8,12 +8,23 @@ import { Hono } from "hono";
  * pagination rules (R2: `per_page` + `start_after`; KV: `page` + `per_page`),
  * and it records every request so a test can assert that no create happened.
  */
+/** The permission scopes the fake understands, named as the dashboard would. */
+export type FakeScope = "r2" | "kv" | "workers";
+
 export type FakeState = {
   token: string;
   accountId: string;
   subdomain: string;
   buckets: string[];
   namespaces: Array<{ id: string; title: string }>;
+  /** bucket name -> object key -> stored body (as raw bytes + content type) */
+  objects: Map<string, Map<string, { body: Uint8Array; contentType: string }>>;
+  lifecycleRules: Map<string, unknown[]>;
+  accounts: Array<{ id: string; name: string }>;
+  /** Scopes the token does NOT have — used to test named-permission preflight. */
+  missingScopes: FakeScope[];
+  /** false simulates the account never having enabled the R2 subscription (10042). */
+  r2SubscriptionEnabled: boolean;
   perPage: number;
   calls: Array<{ method: string; path: string; query: Record<string, string> }>;
 };
@@ -24,6 +35,9 @@ export type FakeOptions = {
   subdomain?: string;
   buckets?: string[];
   namespaces?: Array<{ id: string; title: string }>;
+  accounts?: Array<{ id: string; name: string }>;
+  missingScopes?: FakeScope[];
+  r2SubscriptionEnabled?: boolean;
   /** Page size the fake enforces regardless of what the client asks for. */
   perPage?: number;
 };
@@ -58,11 +72,22 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     subdomain: options.subdomain ?? "fake-subdomain",
     buckets: [...(options.buckets ?? [])],
     namespaces: [...(options.namespaces ?? [])],
+    objects: new Map(),
+    lifecycleRules: new Map(),
+    accounts: options.accounts ?? [{ id: options.accountId ?? "fake-account-id", name: "Fake Account" }],
+    missingScopes: [...(options.missingScopes ?? [])],
+    r2SubscriptionEnabled: options.r2SubscriptionEnabled ?? true,
     perPage: options.perPage ?? 20,
     calls: [],
   };
 
   const app = new Hono();
+
+  /** Returns a 403 envelope when the fake's token lacks `scope`, else undefined. */
+  const requireScope = (scope: FakeScope) =>
+    state.missingScopes.includes(scope)
+      ? fail(10000, `Authentication error: missing permission for ${scope}`)
+      : undefined;
 
   app.use("*", async (c, next) => {
     const url = new URL(c.req.url);
@@ -88,6 +113,8 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     if (c.req.param("accountId") !== state.accountId) {
       return c.json(fail(7003, "Could not route to account"), 404);
     }
+    const forbidden = requireScope("workers");
+    if (forbidden) return c.json(forbidden, 403);
     return c.json(ok({ subdomain: state.subdomain }));
   });
 
@@ -96,6 +123,11 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     if (c.req.param("accountId") !== state.accountId) {
       return c.json(fail(7003, "Could not route to account"), 404);
     }
+    if (!state.r2SubscriptionEnabled) {
+      return c.json(fail(10042, "The R2 subscription for this account has not been enabled"), 403);
+    }
+    const forbidden = requireScope("r2");
+    if (forbidden) return c.json(forbidden, 403);
     const startAfter = c.req.query("start_after");
     const sorted = [...state.buckets].sort();
     const page = sorted
@@ -109,6 +141,11 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     if (c.req.param("accountId") !== state.accountId) {
       return c.json(fail(7003, "Could not route to account"), 404);
     }
+    if (!state.r2SubscriptionEnabled) {
+      return c.json(fail(10042, "The R2 subscription for this account has not been enabled"), 403);
+    }
+    const forbidden = requireScope("r2");
+    if (forbidden) return c.json(forbidden, 403);
     const body = (await c.req.json()) as { name?: string };
     const name = body.name;
     if (typeof name !== "string" || name.length === 0) {
@@ -126,6 +163,8 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     if (c.req.param("accountId") !== state.accountId) {
       return c.json(fail(7003, "Could not route to account"), 404);
     }
+    const forbidden = requireScope("kv");
+    if (forbidden) return c.json(forbidden, 403);
     const page = Number(c.req.query("page") ?? "1");
     const start = (page - 1) * state.perPage;
     const slice = state.namespaces.slice(start, start + state.perPage);
@@ -157,6 +196,81 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     };
     state.namespaces.push(namespace);
     return c.json(ok(namespace));
+  });
+
+  // R2 object read/write: PUT/GET on the account's per-bucket object store.
+  // Real Cloudflare returns raw bytes on a successful GET (not the JSON
+  // envelope) and 404 with the usual envelope when the key is missing.
+  app.put("/client/v4/accounts/:accountId/r2/buckets/:bucketName/objects/:key{.+}", async (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const bucketName = c.req.param("bucketName");
+    if (!state.buckets.includes(bucketName)) {
+      return c.json(fail(10006, "The specified bucket does not exist"), 404);
+    }
+    const key = c.req.param("key");
+    const body = new Uint8Array(await c.req.arrayBuffer());
+    const contentType = c.req.header("content-type") ?? "application/octet-stream";
+    let bucket = state.objects.get(bucketName);
+    if (!bucket) {
+      bucket = new Map();
+      state.objects.set(bucketName, bucket);
+    }
+    bucket.set(key, { body, contentType });
+    return c.json(ok({ key, etag: `fake-etag-${key}`, size: String(body.length), uploaded: "2026-01-01T00:00:00.000Z" }));
+  });
+
+  app.get("/client/v4/accounts/:accountId/r2/buckets/:bucketName/objects/:key{.+}", (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const bucketName = c.req.param("bucketName");
+    const key = c.req.param("key");
+    const object = state.objects.get(bucketName)?.get(key);
+    if (!object) return c.json(fail(10007, "The specified key does not exist"), 404);
+    return new Response(object.body, { status: 200, headers: { "content-type": object.contentType } });
+  });
+
+  app.delete("/client/v4/accounts/:accountId/r2/buckets/:bucketName/objects/:key{.+}", (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const bucketName = c.req.param("bucketName");
+    const key = c.req.param("key");
+    state.objects.get(bucketName)?.delete(key);
+    return c.json(ok({ key }));
+  });
+
+  // R2 lifecycle rules: the fake just stores and echoes what was set.
+  app.post("/client/v4/accounts/:accountId/r2/buckets/:bucketName/lifecycle", async (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const bucketName = c.req.param("bucketName");
+    const body = (await c.req.json()) as { rules?: unknown[] };
+    state.lifecycleRules.set(bucketName, body.rules ?? []);
+    return c.json(ok({}));
+  });
+
+  app.get("/client/v4/accounts/:accountId/r2/buckets/:bucketName/lifecycle", (c) => {
+    if (c.req.param("accountId") !== state.accountId) {
+      return c.json(fail(7003, "Could not route to account"), 404);
+    }
+    const bucketName = c.req.param("bucketName");
+    return c.json(ok({ rules: state.lifecycleRules.get(bucketName) ?? [] }));
+  });
+
+  // Account listing: used by the installer to pin an account or refuse to
+  // guess between several.
+  app.get("/client/v4/accounts", (c) => {
+    const page = Number(c.req.query("page") ?? "1");
+    const perPage = Number(c.req.query("per_page") ?? String(state.perPage));
+    const start = (page - 1) * perPage;
+    const slice = state.accounts.slice(start, start + perPage);
+    return c.json(
+      ok(slice, { page, per_page: perPage, count: slice.length, total_count: state.accounts.length }),
+    );
   });
 
   app.all("*", (c) => c.json(fail(7000, "No route for that URI"), 404));
