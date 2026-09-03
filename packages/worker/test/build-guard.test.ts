@@ -47,6 +47,7 @@ describe("production bundle", () => {
     // The clock override is a dev hook too, and lives in the dev entry only.
     expect(bundle).not.toContain("DEV-Clock");
     expect(bundle).not.toContain("DEV-Fault");
+    expect(bundle).not.toContain("DEV-Access-TTL");
   }, 120_000);
 
   it("still contains the product's own routes", async () => {
@@ -58,5 +59,7 @@ describe("production bundle", () => {
     expect(bundle).toContain("/health");
     expect(bundle).toContain("/drops");
     expect(bundle).toContain("/users");
+    expect(bundle).toContain("/_oauth/authorize");
+    expect(bundle).toContain("/_api/mcp");
   }, 120_000);
 });

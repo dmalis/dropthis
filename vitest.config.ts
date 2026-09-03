@@ -12,6 +12,8 @@ export default defineConfig({
            * the one class it wants, so the OAuth dance can run in-memory here.
            */
           alias: { "cloudflare:workers": new URL("./packages/worker/test/stubs/cloudflare-workers.ts", import.meta.url).pathname },
+          // Inlined so the alias applies: an external module is loaded by Node itself.
+          server: { deps: { inline: ["@cloudflare/workers-oauth-provider"] } },
           // The unit project runs FIRST and alone (groupOrder). Its installer
           // tests each start a localhost fake of the Cloudflare API; running
           // them beside the contract project's twenty minutes of network I/O

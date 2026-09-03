@@ -28,7 +28,7 @@ describe("health", () => {
 });
 
 describe("unknown control-plane routes", () => {
-  const paths = ["/_api", "/_apiXYZ", "/_api/", "/_api/v1/nope", "/_oauth/authorize", "/_connect", "/_skill.md"];
+  const paths = ["/_api", "/_apiXYZ", "/_api/", "/_api/v1/nope", "/_oauth/nope", "/.well-known/nope", "/_connect", "/_skill.md"];
 
   it.each(paths)("GET %s → 404 with the frozen error object", async (path) => {
     const response = await get(path);

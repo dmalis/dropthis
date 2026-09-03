@@ -41,7 +41,15 @@ export function bearerKey(request: Request): string | null {
 export async function resolveCaller(request: Request, bucket: Bucket): Promise<Caller> {
   const key = bearerKey(request);
   if (key === null) throw unauthenticated();
+  return resolveKey(key, bucket);
+}
 
+/**
+ * The two reads and the compare for a key that arrived by any route: the
+ * bearer header, or pasted into the OAuth authorize page. One function, so
+ * the two presentations can never accept different keys.
+ */
+export async function resolveKey(key: string, bucket: Bucket): Promise<Caller> {
   const hash = await hashKey(key);
 
   const pointer = await bucket.get(keyHashKey(hash));
@@ -67,7 +75,7 @@ export async function resolveCaller(request: Request, bucket: Bucket): Promise<C
  * through the R2 API; tolerating a bare id as well costs one branch and means
  * a pointer repaired by hand still works.
  */
-function pointerId(body: string): string | null {
+export function pointerId(body: string): string | null {
   const text = body.trim();
   if (text.length === 0) return null;
   if (text.startsWith("{")) {

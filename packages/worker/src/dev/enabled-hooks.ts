@@ -37,4 +37,15 @@ export const DEV_HOOKS: DevHooks = {
     if (env.DEV_ROUTES !== "1") return undefined;
     return request.headers.get("DEV-Fault") ?? undefined;
   },
+
+  /**
+   * `DEV-Access-TTL: <seconds>` on a token request shortens that access token
+   * (KV's floor is 60 s), so a test can watch it expire and prove the refresh
+   * flow works with no one at the keyboard.
+   */
+  accessTokenTtl(request: Request, env: Env) {
+    if (env.DEV_ROUTES !== "1") return undefined;
+    const seconds = Number(request.headers.get("DEV-Access-TTL") ?? "");
+    return Number.isInteger(seconds) && seconds >= 60 ? seconds : undefined;
+  },
 };

@@ -7,6 +7,7 @@
 export const RESERVED_PREFIXES = [
   "/_api",
   "/_oauth",
+  "/.well-known",
   "/_connect",
   "/_skill.md",
 ] as const;

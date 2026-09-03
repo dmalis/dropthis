@@ -39,7 +39,7 @@ beforeEach(async () => {
   );
   await seedKey(ADMIN_KEY, "id-admin", "admin", "admin");
   await seedKey(USER_KEY, "id-anna", "anna", "user");
-  env = { BUCKET: bucket, OAUTH_KV: {}, HMAC_SECRET: "s".repeat(32) };
+  env = { BUCKET: bucket, OAUTH_KV: {} as never, HMAC_SECRET: "s".repeat(32) };
 });
 
 const app = () => createApp();
