@@ -16,6 +16,7 @@ import {
   updateOp,
 } from "./drops.js";
 import { configGet, configSet } from "./config.js";
+import { doctorChecks, doctorOp } from "./doctor.js";
 import { pruneOp, usageOp } from "./maintenance.js";
 import { userAdd, userList, userRemove } from "./users.js";
 import type { Operation } from "./types.js";
@@ -35,6 +36,8 @@ export const OPERATIONS: Array<Operation<never>> = [
   configSet,
   usageOp,
   pruneOp,
+  doctorOp,
+  doctorChecks,
 ] as unknown as Array<Operation<never>>;
 
 export function operation(name: string): Operation<never> {
