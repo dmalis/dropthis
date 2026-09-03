@@ -56,7 +56,9 @@ async function run(
   const open = op.scope === "public";
 
   let caller = NOBODY;
-  if (op.scope !== "public") {
+  // A `signed` operation carries its credential in its own URL and verifies it
+  // itself; a `public` one has none. Everything else is a key and a scope.
+  if (op.scope !== "public" && op.scope !== "signed") {
     caller = await resolveCaller(c.req.raw, c.env.BUCKET);
     requireScope(caller, op.scope);
   }
@@ -102,7 +104,7 @@ async function collect(
 ): Promise<Record<string, unknown>> {
   const raw: Record<string, unknown> = {};
 
-  if (WITH_BODY.has(op.method)) {
+  if (WITH_BODY.has(op.method) && op.rawBody !== true) {
     const body = await readJsonBody(c.req.raw, maxBytes);
     if (body !== undefined) {
       if (typeof body !== "object" || body === null || Array.isArray(body)) {

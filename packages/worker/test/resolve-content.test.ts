@@ -86,6 +86,17 @@ describe("resolveInlineFiles", () => {
     );
   });
 
+  it("accepts a base64 entry's own digest and refuses one that does not match", async () => {
+    const png = "iVBORw0KGgo=";
+    const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+    const digest = await sha256Hex(bytes as Uint8Array<ArrayBuffer>);
+    const resolved = await resolveInlineFiles([{ path: "shot.png", base64: png, sha256: digest }]);
+    expect(resolved.manifest["shot.png"]!.sha256).toBe(digest);
+    expect(
+      await codeOf(() => resolveInlineFiles([{ path: "shot.png", base64: png, sha256: "0".repeat(64) }])),
+    ).toBe("HASH_MISMATCH");
+  });
+
   it("rejects base64 that is not base64", async () => {
     expect(await codeOf(() => resolveInlineFiles([{ path: "a.bin", base64: "!!!!" }]))).toBe(
       "INVALID_INPUT",

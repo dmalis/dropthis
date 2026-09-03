@@ -74,7 +74,8 @@ export function memoryBucket(): MemoryBucket {
     etag: stored.etag,
     size: stored.bytes.length,
     ...(stored.customMetadata === undefined ? {} : { customMetadata: stored.customMetadata }),
-    body: null,
+    // A fresh stream per read, so the viewer can pipe the bytes to a response.
+    body: new Blob([stored.bytes as Uint8Array<ArrayBuffer>]).stream(),
     text: async () => decoder.decode(stored.bytes),
     arrayBuffer: async () =>
       stored.bytes.buffer.slice(

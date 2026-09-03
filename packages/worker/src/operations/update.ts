@@ -91,7 +91,7 @@ export async function updateDrop(
   const content = input.files === undefined ? null : await resolveInlineFiles(input.files);
   const manifest: Manifest = claim?.manifest ?? content?.manifest ?? current.manifest;
 
-  const desired = await desiredMeta(current, input, manifest, {
+  const desired = await desiredUpdateMeta(current, input, manifest, {
     policy: config.policy,
     now,
     // Decision #74: everything the first attempt read from the clock lives in
@@ -181,7 +181,7 @@ export async function updateDrop(
   return drop;
 }
 
-type DesiredOptions = {
+export type DesiredOptions = {
   policy: ResolvedPolicy;
   now: Date;
   /** The claim's resolved expiry, when this call is resuming one. */
@@ -196,10 +196,13 @@ type DesiredOptions = {
  * only. Policy *rules* apply to the fields this call provides, so an omitted
  * field that a later `config set` made non-compliant is grandfathered until the
  * caller next sets it.
+ *
+ * Exported because the staged commit (`operations/uploads.ts`) is the same
+ * flip with the manifest coming from the session instead of the body.
  */
-async function desiredMeta(
+export async function desiredUpdateMeta(
   current: DropMeta,
-  input: UpdateInput,
+  input: Omit<UpdateInput, "files">,
   manifest: Manifest,
   options: DesiredOptions,
 ): Promise<DropMeta> {

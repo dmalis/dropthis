@@ -19,7 +19,16 @@ export const MAX_META_BYTES = 16 * 1024;
 const encoder = new TextEncoder();
 
 const textEntry = z.strictObject({ path: z.string(), text: z.string() });
-const base64Entry = z.strictObject({ path: z.string(), base64: z.string() });
+/**
+ * `sha256` is optional on a base64 entry: a client that already hashed the
+ * bytes (the CLI always does) sends it, and the Worker refuses a mismatch as
+ * `HASH_MISMATCH` instead of storing bytes the client did not mean to send.
+ */
+const base64Entry = z.strictObject({
+  path: z.string(),
+  base64: z.string(),
+  sha256: z.string().optional(),
+});
 
 /**
  * A union of strict objects, which is how "exactly one of `text` and `base64`"

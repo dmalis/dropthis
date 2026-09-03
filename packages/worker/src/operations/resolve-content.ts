@@ -86,6 +86,12 @@ export async function resolveInlineFiles(entries: readonly PublishFile[]): Promi
     }
 
     const digest = await sha256Hex(bytes);
+    if ("sha256" in entry && entry.sha256 !== undefined && entry.sha256 !== digest) {
+      throw new ApiError(
+        "HASH_MISMATCH",
+        `The bytes of ${JSON.stringify(path)} hash to ${digest}, not the sha256 sent with them.`,
+      );
+    }
     files.push({ path, bytes, sha256: digest, contentType });
     blobs.set(digest, bytes);
     manifest[path] = { sha256: digest, size: bytes.length, content_type: contentType };

@@ -17,6 +17,16 @@ export const requestClaimKey = (hash: string) => `requests/${hash}/claim`;
 export const requestResultKey = (hash: string) => `requests/${hash}/result`;
 
 /**
+ * The staged-upload session: three write-once keys under one prefix, so the
+ * bucket's 1-day lifecycle rule on `uploads/` removes an abandoned session
+ * whole. The blobs themselves are never here — a staged PUT writes straight to
+ * `drops/<id>/blobs/<sha256>`, so commit copies nothing.
+ */
+export const uploadSessionKey = (uploadId: string) => `uploads/${uploadId}/session.json`;
+export const uploadCommitKey = (uploadId: string) => `uploads/${uploadId}/commit`;
+export const uploadResultKey = (uploadId: string) => `uploads/${uploadId}/result`;
+
+/**
  * The three records a credential is made of. `keyhash/` is the AUTH lookup —
  * one computed GET per request — and `users/` is the uniqueness claim that
  * makes a label mean one person. Deleting `keyhash/` first is what makes
@@ -89,6 +99,11 @@ export function newDropId(now: Date = new Date()): string {
  * `list()`, and a sortable id makes that page oldest-first without a sort.
  */
 export function newKeyId(now: Date = new Date()): string {
+  return newUlid(now);
+}
+
+/** An upload session id without an idempotency key: a fresh ULID. */
+export function newUploadId(now: Date = new Date()): string {
   return newUlid(now);
 }
 

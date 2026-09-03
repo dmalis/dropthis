@@ -20,8 +20,12 @@ import type { InstanceConfig } from "../instance-config.js";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
-/** `public` is health and nothing else; the rest need a key. */
-export type OperationScope = Scope | "public";
+/**
+ * `public` is health and nothing else. `signed` is the staged-upload PUT, whose
+ * only credential is the HMAC in its own URL (the handler verifies it); the
+ * rest need a key.
+ */
+export type OperationScope = Scope | "public" | "signed";
 
 export type OperationContext = {
   env: Env;
@@ -61,10 +65,16 @@ export type Operation<I = never> = {
    */
   handler?: (input: I, context: OperationContext) => Promise<OperationResult | Response>;
   /**
-   * REST-only: a raw file body, not something an MCP tool can return. Issue #8
-   * skips these when it generates the tool list.
+   * REST-only: a raw file body, or the staged-upload path the CLI alone uses —
+   * nothing an MCP tool returns or an agent is told about. Issue #8 skips
+   * these when it generates the tool list.
    */
   restOnly?: boolean;
+  /**
+   * The body is bytes the handler streams (a staged blob PUT), not JSON the
+   * router parses. The router leaves `request.body` untouched.
+   */
+  rawBody?: boolean;
 };
 
 /**

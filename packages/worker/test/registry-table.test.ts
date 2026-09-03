@@ -7,9 +7,8 @@ import { OPERATIONS, operation, routeOf } from "../src/registry/index.js";
  * the routes, so a route that drifts from this list is a broken contract and
  * an operation added without a row here is an unannounced surface.
  *
- * Two rows of the frozen table are deliberately absent and asserted absent
- * below: the staged upload (issue #9) and `POST /_api/mcp` (issue #8 — a
- * transport, not an operation).
+ * One row of the frozen table is deliberately absent and asserted absent
+ * below: `POST /_api/mcp` (issue #8 — a transport, not an operation).
  */
 const FROZEN: Array<[name: string, route: string, scope: string]> = [
   ["health", "GET /_api/v1/health", "public"],
@@ -19,6 +18,9 @@ const FROZEN: Array<[name: string, route: string, scope: string]> = [
   ["list", "GET /_api/v1/drops", "user"],
   ["delete", "DELETE /_api/v1/drops/:slug", "user"],
   ["file_download", "GET /_api/v1/drops/:slug/files/*", "user"],
+  ["upload.create", "POST /_api/v1/uploads", "user"],
+  ["upload.put", "PUT /_api/v1/uploads/:id/blobs/:sha256", "signed"],
+  ["upload.commit", "POST /_api/v1/uploads/:id/commit", "user"],
   ["user.add", "POST /_api/v1/users", "admin"],
   ["user.list", "GET /_api/v1/users", "admin"],
   ["user.remove", "DELETE /_api/v1/users/:label", "admin"],
@@ -31,7 +33,7 @@ const FROZEN: Array<[name: string, route: string, scope: string]> = [
 ];
 
 /** Owned by another slice; the registry must not claim them yet. */
-const NOT_YET = ["POST /_api/v1/uploads", "POST /_api/mcp"];
+const NOT_YET = ["POST /_api/mcp"];
 
 describe("operation registry", () => {
   it("holds exactly the operations the frozen table names, in its order", () => {
@@ -61,9 +63,11 @@ describe("operation registry", () => {
     expect(new Set(OPERATIONS.map(routeOf)).size).toBe(OPERATIONS.length);
   });
 
-  it("authenticates everything but health", () => {
+  it("authenticates everything but health and the signed blob PUT", () => {
     const open = OPERATIONS.filter((op) => op.scope === "public").map((op) => op.name);
     expect(open).toEqual(["health"]);
+    const signed = OPERATIONS.filter((op) => op.scope === "signed").map((op) => op.name);
+    expect(signed).toEqual(["upload.put"]);
   });
 
   it("gives create and delete the statuses the spec froze", () => {
@@ -78,8 +82,8 @@ describe("operation registry", () => {
     expect(pending).toEqual([]);
   });
 
-  it("keeps only the raw-file route out of the MCP tool list", () => {
+  it("keeps the raw-file route and the staged-upload path out of the MCP tool list", () => {
     const restOnly = OPERATIONS.filter((op) => op.restOnly === true).map((op) => op.name);
-    expect(restOnly).toEqual(["file_download"]);
+    expect(restOnly).toEqual(["file_download", "upload.create", "upload.put", "upload.commit"]);
   });
 });
