@@ -586,8 +586,10 @@ decision entry in the same commit.
   the claude.ai spike and the two milestone runs. No CI before the first public release.
 - One monorepo: `packages/worker` (the deployed Worker), `packages/dropthis` (the one npm
   package: installer, CLI, stdio MCP, bundles the built Worker for `init`), `skills/`,
-  `contract-tests/`, `test/fake-cloudflare/`. Commits go straight to `main`; no branches,
-  PRs or worktrees unless asked.
+  `contract-tests/`, `test/fake-cloudflare/`. Every change is made in a worktree at
+  `.worktrees/<issue-or-name>/` on its own branch and lands on `main` by fast-forward merge;
+  the main checkout receives merges and nothing else. No PRs and no CI before the first
+  public release.
 - `wrangler.jsonc`, never TOML. The repo file has bindings by name and no IDs (button path);
   `init` renders the per-instance config with the reconciled ids and deploys from that.
 - Secrets are never printed to logs and never re-revealed by a rerun. A missing key file
