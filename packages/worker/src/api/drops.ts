@@ -33,7 +33,7 @@ export function dropRoutes(hooks: DevHooks) {
     const result = await publish(parsePublishInput(body), {
       bucket: c.env.BUCKET,
       config,
-      caller: attribution(resolveCaller(c.req.raw, c.env)),
+      caller: attribution(await resolveCaller(c.req.raw, c.env.BUCKET)),
       now: hooks.now(c.env),
       secret: requireSecret(c.env),
       fault: hooks.faultPoint(c.req.raw, c.env),
