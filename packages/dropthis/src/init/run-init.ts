@@ -1,15 +1,31 @@
 import { bootstrapAdminKey } from "./admin-bootstrap.js";
 import { makeClient, type CloudflareCreds } from "./cloudflare-client.js";
 import { writeInstanceConfig } from "./config-write.js";
+import { attachDomain, matchZone } from "./domain.js";
+import { saveInstance } from "./instances-file.js";
 import { applyLifecycleRules } from "./lifecycle-rules.js";
 import { renderWranglerConfig, type RenderedWranglerConfig } from "./plan-render.js";
 import { checkPermissions, checkR2Subscription, checkToken, pinAccount } from "./preflight.js";
+import { pollHealth, runRemoteDoctor, type PollOptions } from "./probe.js";
 import { reconcileBucket, reconcileNamespace } from "./reconcile.js";
 import { getObjectJson } from "./r2-objects.js";
+import { rotateAdminKey } from "./rotate.js";
 import { generateHmacSecret, secretsFilePayload } from "./secrets.js";
+import { workerSecretNames } from "./worker-secrets.js";
+import type { Env } from "../cli/credentials.js";
+import type { DoctorReport } from "../../../worker/src/operations/doctor.js";
 
 export type InitStepStatus = "ok" | "created" | "would_create" | "skip" | "error";
 export type InitStep = { id: string; status: InitStepStatus; detail?: string };
+
+/**
+ * What a deploy tells the installer. A real deploy knows nothing wrangler did
+ * not already put in the account, so it returns nothing and the URL comes from
+ * the account's own workers.dev subdomain — wrangler's stdout is never parsed
+ * (AGENTS.md, "Installer principles"). A test's deploy returns the localhost
+ * URL of the instance it started, so health and doctor probe the real Worker.
+ */
+export type DeployOutcome = { url?: string } | void;
 
 export type RunInitOptions = {
   /** apiToken required; accountId is optional — pinAccount resolves it when absent. */
@@ -18,7 +34,24 @@ export type RunInitOptions = {
   accountId?: string;
   name?: string;
   dryRun: boolean;
-  deploy: (config: RenderedWranglerConfig, secrets: Record<string, string>) => Promise<void>;
+  /** `--domain <hostname>`: validated before any deploy, attached after one. */
+  domain?: string;
+  /** `--rotate-admin-key`: mint a new admin key and revoke the old one. */
+  rotateAdminKey?: boolean;
+  /**
+   * The key already stored for this instance. A rerun cannot re-derive it (it
+   * is stored hashed), so without one `doctor` is skipped rather than guessed.
+   */
+  existingKey?: string;
+  /** When given, the run saves the instance to `instances.json` under it. */
+  env?: Env;
+  poll?: PollOptions;
+  /** `--jsonl`: one event per step, as it completes. */
+  onStep?: (step: InitStep) => void;
+  deploy: (
+    config: RenderedWranglerConfig,
+    secrets: Record<string, string> | undefined,
+  ) => Promise<DeployOutcome>;
 };
 
 export type RunInitResult = {
@@ -28,20 +61,34 @@ export type RunInitResult = {
   bucket: string;
   kvNamespace: string;
   canonicalUrl?: string;
+  aliasOrigins?: string[];
+  domain?: string;
   steps: InitStep[];
-  adminKeyStatus?: "created" | "existing";
-  /** present ONLY when freshly minted this run */
+  adminKeyStatus?: "created" | "existing" | "rotated";
+  /** present ONLY when freshly minted or rotated this run */
   adminKey?: string;
+  doctor?: DoctorReport;
+  instancesFile?: string;
 };
 
 /**
- * The init engine's account layer (issue #10, slice 10a): preflight, reconcile
- * bucket + KV by name, admin-key bootstrap before any deploy, lifecycle rules,
- * config write, render, then the injected (thin) deploy step. Domain attach,
- * `doctor` and `connect` are slice 10b.
+ * The init engine: preflight, reconcile bucket + KV by name, admin-key
+ * bootstrap before any deploy, lifecycle rules, config, render, deploy — and
+ * then the part that makes "deployed" mean "works": attach the domain, wait
+ * for the instance to answer, run its own `doctor`, and save it to
+ * `instances.json`.
+ *
+ * Nothing in here prompts, opens a browser or reads the terminal. The command
+ * layer (`cli/init-command.ts`) owns credentials, interactivity and output;
+ * this owns the account and the instance.
  */
 export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   const steps: InitStep[] = [];
+  const push = (step: InitStep): InitStep => {
+    steps.push(step);
+    options.onStep?.(step);
+    return step;
+  };
   const instanceName = options.name ?? "main";
   const worker = `dropthis-${instanceName}`;
   const bucket = `dropthis-${instanceName}-drops`;
@@ -59,36 +106,68 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
 
   const token = await checkToken(client);
   if (!token.ok) {
-    steps.push({ id: "token", status: "error", detail: `token status: ${token.status}` });
+    push({ id: "token", status: "error", detail: `token status: ${token.status}` });
     return failure();
   }
-  steps.push({ id: "token", status: "ok" });
+  push({ id: "token", status: "ok" });
 
   const pinned = await pinAccount(client, options.accountId ?? options.creds.accountId);
   if (!pinned.ok) {
-    steps.push({ id: "account", status: "error", detail: pinned.code });
+    push({ id: "account", status: "error", detail: pinned.code });
     return failure();
   }
   const accountId = pinned.accountId;
-  steps.push({ id: "account", status: "ok", detail: accountId });
+  push({ id: "account", status: "ok", detail: accountId });
 
   const r2Sub = await checkR2Subscription(client, accountId);
   if (!r2Sub.ok) {
-    steps.push({ id: "r2_subscription", status: "error", detail: r2Sub.dashboardUrl });
+    push({ id: "r2_subscription", status: "error", detail: r2Sub.dashboardUrl });
     return failure();
   }
-  steps.push({ id: "r2_subscription", status: "ok" });
+  push({ id: "r2_subscription", status: "ok" });
 
   const permissions = await checkPermissions(client, accountId);
   if (!permissions.ok) {
-    steps.push({
+    push({
       id: "permissions",
       status: "error",
       detail: permissions.missing.map((m) => m.permission).join(", "),
     });
     return failure();
   }
-  steps.push({ id: "permissions", status: "ok" });
+  push({ id: "permissions", status: "ok" });
+
+  /**
+   * The domain's read-only half runs BEFORE anything is deployed: a hostname
+   * in someone else's zone, or one that already has a DNS record, must cost
+   * the operator nothing. The write half needs the script to exist, so it
+   * happens after the deploy.
+   */
+  let domainZone: { id: string; name: string } | undefined;
+  if (options.domain !== undefined) {
+    const zone = await matchZone(client, accountId, options.domain);
+    if (!zone.ok) {
+      push({ id: "domain", status: "error", detail: `${zone.detail} ${zone.remediation}` });
+      return failure();
+    }
+    domainZone = zone.zone;
+    for await (const record of client.dns.records.list({
+      zone_id: zone.zone.id,
+      name: { exact: options.domain },
+    })) {
+      const taken = await isOurs(client, accountId, worker, options.domain);
+      if (!taken) {
+        push({
+          id: "domain",
+          status: "error",
+          detail: `A ${String(record.type)} record already exists at ${options.domain}. Remove it in the Cloudflare dashboard, then run init again.`,
+        });
+        return failure();
+      }
+      break;
+    }
+  }
+
 
   const bucketResult = await reconcileBucket(client, accountId, bucket, { dryRun: options.dryRun });
   if (bucketResult.status === "ok") {
@@ -97,54 +176,164 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     // dropthis never provisioned (spec-v1.md "Instance resource names").
     const existingConfig = await getObjectJson(client, accountId, bucket, "system/config.json");
     if (!existingConfig) {
-      steps.push({ id: "bucket", status: "error", detail: "NAME_TAKEN: bucket exists, not a dropthis instance" });
+      push({ id: "bucket", status: "error", detail: "NAME_TAKEN: bucket exists, not a dropthis instance" });
       return failure();
     }
   }
-  steps.push({ id: "bucket", status: bucketResult.status });
+  push({ id: "bucket", status: bucketResult.status });
 
   const kvResult = await reconcileNamespace(client, accountId, kvNamespace, { dryRun: options.dryRun });
-  steps.push({ id: "kv_namespace", status: kvResult.status });
+  push({ id: "kv_namespace", status: kvResult.status });
 
   if (options.dryRun) {
-    steps.push({ id: "deploy", status: "skip", detail: "dry-run" });
+    if (options.domain !== undefined) {
+      push({ id: "domain", status: "would_create", detail: `${options.domain} in zone ${domainZone!.name}` });
+    }
+    push({ id: "deploy", status: "skip", detail: "dry-run" });
     return { ok: true, name: instanceName, worker, bucket, kvNamespace, steps };
   }
 
-  const bootstrap = await bootstrapAdminKey(client, accountId, bucket);
-  steps.push({ id: "admin_key", status: bootstrap.status === "created" ? "created" : "ok" });
+  const rotate = options.rotateAdminKey === true;
+  let adminKey: string | undefined;
+  let adminKeyStatus: "created" | "existing" | "rotated";
+  if (rotate) {
+    const rotated = await rotateAdminKey(client, accountId, bucket);
+    adminKey = rotated.key;
+    adminKeyStatus = "rotated";
+    push({ id: "admin_key", status: "created", detail: "rotated" });
+  } else {
+    const bootstrap = await bootstrapAdminKey(client, accountId, bucket);
+    adminKey = bootstrap.status === "created" ? bootstrap.key : undefined;
+    adminKeyStatus = bootstrap.status;
+    push({ id: "admin_key", status: bootstrap.status === "created" ? "created" : "ok" });
+  }
 
   await applyLifecycleRules(client, accountId, bucket);
-  steps.push({ id: "lifecycle_rules", status: "ok" });
+  push({ id: "lifecycle_rules", status: "ok" });
 
   const { subdomain } = await client.workers.subdomains.get({ account_id: accountId });
-  const canonicalUrl = `https://${worker}.${subdomain}.workers.dev`;
+  const workersDevUrl = `https://${worker}.${subdomain}.workers.dev`;
+  // With a domain the drop URLs are the domain's, and workers.dev stays an
+  // alias so a request that arrives there redirects instead of 404ing.
+  const canonicalUrl = options.domain === undefined ? workersDevUrl : `https://${options.domain}`;
+  const aliasOrigins = options.domain === undefined ? [] : [workersDevUrl];
 
-  await writeInstanceConfig(client, accountId, bucket, {
-    instanceName,
-    canonicalUrl,
-    aliasOrigins: [],
-  });
-  steps.push({ id: "config", status: "ok" });
+  await writeInstanceConfig(client, accountId, bucket, { instanceName, canonicalUrl, aliasOrigins });
+  push({ id: "config", status: "ok" });
 
   const kvId = kvResult.id;
   if (kvId === undefined) throw new Error("KV namespace id missing after a non-dry-run reconcile");
   const renderedConfig = await renderWranglerConfig(instanceName, bucket, kvId);
-  steps.push({ id: "render", status: "ok" });
+  push({ id: "render", status: "ok" });
 
-  const hmacSecret = generateHmacSecret();
-  await options.deploy(renderedConfig, secretsFilePayload(hmacSecret));
-  steps.push({ id: "deploy", status: "ok" });
+  /**
+   * `HMAC_SECRET` is shipped only when the Worker has none. Re-shipping it on
+   * a rerun would invalidate every unlock cookie, every signed upload URL and
+   * every stored idempotency result — silently, and with no way back.
+   */
+  const secretNames = await workerSecretNames(client, accountId, worker);
+  const shipSecret = secretNames === undefined || !secretNames.includes("HMAC_SECRET");
+  const secrets = shipSecret ? secretsFilePayload(generateHmacSecret()) : undefined;
+  const deployed = await options.deploy(renderedConfig, secrets);
+  push({
+    id: "deploy",
+    status: "ok",
+    detail: shipSecret ? "HMAC_SECRET shipped" : "HMAC_SECRET reused from the deployed Worker",
+  });
+
+  let ok = true;
+  if (options.domain !== undefined) {
+    const attached = await attachDomain(client, accountId, worker, options.domain);
+    if (attached.ok) {
+      push({ id: "domain", status: attached.created ? "created" : "ok", detail: options.domain });
+    } else {
+      // The config already names this domain as canonical; put it back so the
+      // instance never advertises a host it does not answer on.
+      await writeInstanceConfig(client, accountId, bucket, {
+        instanceName,
+        canonicalUrl: workersDevUrl,
+        aliasOrigins: [],
+      });
+      push({ id: "domain", status: "error", detail: `${attached.detail} ${attached.remediation}` });
+      ok = false;
+    }
+  }
+
+  const probeUrl = (deployed ?? {}).url ?? (ok ? canonicalUrl : workersDevUrl);
+  const health = await pollHealth(probeUrl, options.poll ?? {});
+  push({ id: "health", status: health.ok ? "ok" : "error", detail: health.detail });
+  if (!health.ok) ok = false;
+
+  const doctorKey = adminKey ?? options.existingKey;
+  let report: DoctorReport | undefined;
+  if (!health.ok) {
+    push({ id: "doctor", status: "skip", detail: "the instance never answered, so there was nothing to check" });
+  } else if (doctorKey === undefined) {
+    push({
+      id: "doctor",
+      status: "skip",
+      detail:
+        "no admin key in hand for this instance: it is stored hashed and cannot be re-derived. Run with --rotate-admin-key, or run `dropthis doctor` with the key you kept.",
+    });
+  } else {
+    report = await runRemoteDoctor(probeUrl, doctorKey);
+    const failed = report.checks.filter((check) => check.status === "fail");
+    push({
+      id: "doctor",
+      status: report.ok ? "ok" : "error",
+      detail: report.ok
+        ? `${report.checks.length} checks passed`
+        : failed.map((check) => `${check.id}: ${check.evidence}`).join("; "),
+    });
+    if (!report.ok) ok = false;
+  }
+
+  let instancesFile: string | undefined;
+  if (options.env === undefined || doctorKey === undefined) {
+    push({
+      id: "instances_file",
+      status: "skip",
+      detail:
+        doctorKey === undefined
+          ? "no key to store: this rerun did not mint one"
+          : "no config home to write to",
+    });
+  } else {
+    const saved = await saveInstance(options.env, instanceName, { url: canonicalUrl, key: doctorKey });
+    instancesFile = saved.path;
+    push({
+      id: "instances_file",
+      status: "ok",
+      detail: saved.isDefault ? `${saved.path} (default)` : saved.path,
+    });
+  }
 
   return {
-    ok: true,
+    ok,
     name: instanceName,
     worker,
     bucket,
     kvNamespace,
     canonicalUrl,
+    aliasOrigins,
+    ...(options.domain === undefined ? {} : { domain: options.domain }),
     steps,
-    adminKeyStatus: bootstrap.status,
-    ...(bootstrap.status === "created" ? { adminKey: bootstrap.key } : {}),
+    adminKeyStatus,
+    ...(adminKey === undefined ? {} : { adminKey }),
+    ...(report === undefined ? {} : { doctor: report }),
+    ...(instancesFile === undefined ? {} : { instancesFile }),
   };
+}
+
+/** Is the hostname already attached to THIS Worker? Then a record at it is ours. */
+async function isOurs(
+  client: ReturnType<typeof makeClient>,
+  accountId: string,
+  worker: string,
+  hostname: string,
+): Promise<boolean> {
+  for await (const domain of client.workers.domains.list({ account_id: accountId, hostname })) {
+    return domain.service === worker;
+  }
+  return false;
 }

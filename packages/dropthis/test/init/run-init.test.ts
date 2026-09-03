@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { startFakeCloudflare } from "../../../../test/fake-cloudflare/src/server.js";
 import { getObjectJson, putObjectJson } from "../../src/init/r2-objects.js";
 import { runInit } from "../../src/init/run-init.js";
+import { FAST_POLL, stubDeploy } from "./helpers.js";
 
 const teardown: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -23,9 +24,9 @@ const CREDS = (cf: Awaited<ReturnType<typeof fake>>) => ({
 describe("runInit — happy path", () => {
   it("provisions a fresh `main` instance end to end and deploys once", async () => {
     const cf = await fake();
-    const deploy = vi.fn().mockResolvedValue(undefined);
+    const { deploy, calls } = stubDeploy(cf, teardown);
 
-    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
     expect(result.ok).toBe(true);
     expect(result.name).toBe("main");
@@ -36,11 +37,11 @@ describe("runInit — happy path", () => {
     expect(result.canonicalUrl).toBe("https://dropthis-main.fake-subdomain.workers.dev");
     expect(cf.state.buckets).toContain("dropthis-main-drops");
     expect(cf.state.namespaces.map((n) => n.title)).toContain("dropthis-main-oauth");
-    expect(deploy).toHaveBeenCalledTimes(1);
-    const [config, secrets] = deploy.mock.calls[0]!;
+    expect(calls).toHaveLength(1);
+    const { config, secrets } = calls[0]!;
     expect(config.name).toBe("dropthis-main");
     expect(config.r2_buckets).toEqual([{ binding: "BUCKET", bucket_name: "dropthis-main-drops" }]);
-    expect(secrets.HMAC_SECRET).toMatch(/^[0-9a-f]{64}$/);
+    expect(secrets?.HMAC_SECRET).toMatch(/^[0-9a-f]{64}$/);
 
     const client = (await import("../../src/init/cloudflare-client.js")).makeClient(CREDS(cf));
     const config2 = await getObjectJson<Record<string, unknown>>(
@@ -56,9 +57,9 @@ describe("runInit — happy path", () => {
 
   it("uses the given instance name to derive every resource", async () => {
     const cf = await fake();
-    const deploy = vi.fn().mockResolvedValue(undefined);
+    const { deploy } = stubDeploy(cf, teardown);
 
-    const result = await runInit({ creds: CREDS(cf), name: "byrokko", dryRun: false, deploy });
+    const result = await runInit({ creds: CREDS(cf), name: "byrokko", dryRun: false, deploy, poll: FAST_POLL });
 
     expect(result.name).toBe("byrokko");
     expect(result.bucket).toBe("dropthis-byrokko-drops");
@@ -69,10 +70,10 @@ describe("runInit — happy path", () => {
 describe("runInit — rerun", () => {
   it("reconciles without re-minting the admin key and without duplicate resources", async () => {
     const cf = await fake();
-    const deploy = vi.fn().mockResolvedValue(undefined);
-    const first = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+    const { deploy } = stubDeploy(cf, teardown);
+    const first = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
-    const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+    const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
     expect(second.ok).toBe(true);
     expect(second.adminKeyStatus).toBe("existing");
@@ -84,12 +85,12 @@ describe("runInit — rerun", () => {
 
   it("repairs a KV namespace deleted out from under a live instance", async () => {
     const cf = await fake();
-    const deploy = vi.fn().mockResolvedValue(undefined);
-    const first = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+    const { deploy } = stubDeploy(cf, teardown);
+    const first = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
     const deletedId = cf.state.namespaces.find((n) => n.title === "dropthis-main-oauth")!.id;
     cf.state.namespaces = cf.state.namespaces.filter((n) => n.id !== deletedId);
 
-    const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+    const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
     expect(second.ok).toBe(true);
     expect(second.adminKeyStatus).toBe("existing");
@@ -151,11 +152,11 @@ describe("runInit — NAME_TAKEN", () => {
     await putObjectJson(client, "fake-account-id", "dropthis-main-drops", "system/config.json", {
       instance_name: "main",
     });
-    const deploy = vi.fn().mockResolvedValue(undefined);
+    const { deploy, calls } = stubDeploy(cf, teardown);
 
-    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
     expect(result.ok).toBe(true);
-    expect(deploy).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
   });
 });
