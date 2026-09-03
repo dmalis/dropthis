@@ -63,8 +63,12 @@ export async function claimKey(
   bucket: R2BucketLike,
   key: string,
   body: R2Body,
+  options: Omit<R2WriteOptions, "onlyIf"> = {},
 ): Promise<ClaimResult> {
-  const written = await write(bucket, key, body, { onlyIf: { etagDoesNotMatch: "*" } });
+  const written = await write(bucket, key, body, {
+    ...options,
+    onlyIf: { etagDoesNotMatch: "*" },
+  });
   return written === null ? { claimed: false } : { claimed: true, etag: written.etag };
 }
 

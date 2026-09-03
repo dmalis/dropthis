@@ -674,6 +674,79 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     origin is not yet known; the spike's header shape is reproduced exactly. #12, which serves
     the discovery document, may move it to the canonical origin with the alias redirect rule.
 
+85. **The CLI and staged-upload slice's rulings (issue #9).** Entries #79 and #81–#84 are reserved
+    for the slices running in parallel.
+    (a) **Settings ride on the commit, not on the session.** The slice spec put them on
+    `POST /uploads`; AGENTS.md and docs/spec-v1.md put them on `commit`. The commit is the
+    fenced write and the one place a payload hash is taken, so the settings live where the
+    fence is — one claim covers identity and intent. The session takes `{target?, manifest:
+    [{path, size, sha256}], idempotency_key?}` and content types come from the frozen
+    extension table on the instance, never from the client (a second table would be a second
+    truth).
+    (b) **The staged session is idempotent by `idempotency_key`, like `publish`.** The
+    upload id is `sha256(caller ‖ key)`, so a rerun finds its own session, is told what is
+    still missing, and commit replays the sealed result: "re-running the same publish
+    replays the stored result" holds for the staged path exactly as for the inline one.
+    Without a key a rerun is a second drop, documented, as everywhere else.
+    (c) **The slug pointer of a staged publish holds the drop id, with the pending state in
+    `customMetadata`.** AGENTS.md sketched `{pending_upload, expires}` as the body; every
+    reader (`loadDrop`) takes the body as the id, and changing that for one writer would
+    have made the pending pointer unreadable by all of them. The metadata carries the same
+    two facts for the reconcile.
+    (d) **The blob PUT is a `signed` registry scope with `rawBody`.** The URL's HMAC (HKDF
+    from `HMAC_SECRET`, own `info`) is its only credential, so the router skips bearer auth
+    and body parsing for that one operation; the handler verifies the signature and the
+    `Content-Length` against the manifest before any byte reaches R2. All three upload
+    operations are `restOnly` — no MCP tool, no `/_skill.md` mention.
+    (e) **Inline base64 entries may carry `sha256`.** "Digests always" had no field to land
+    in; now the instance refuses a mismatch as `HASH_MISMATCH` instead of storing bytes the
+    client did not mean to send.
+    (f) **`instances.json` is `{default?, instances: {name: {url, key}}}`.** The shape was
+    unspecified; `init` (#10b) writes it. `default` may be absent when there is one
+    instance; several with no default is an error asking for `--instance`.
+    (g) **The CLI never inverts a boolean flag.** `prune` is a dry run unless
+    `--no-dry-run`, matching the server default (#78d) — a flag that meant the opposite of
+    its field would be the drift the registry exists to prevent.
+    (h) **`--jsonl` on `usage`/`prune` follows the cursor to the end.** One object per call,
+    then the summed report, which is the `--json` document; a cursor that does not advance
+    stops the loop with `incomplete: true`.
+    (i) **Local errors use catalogue codes with the CLI's own remediation.** No credentials
+    is `UNAUTHENTICATED` (exit 4) naming `DROPTHIS_URL`/`DROPTHIS_KEY`; an unknown instance
+    is `INVALID_INPUT` naming the known ones; an answer that is not JSON is `INTERNAL`
+    naming the content type. The code catalogue is frozen; the remediation is per surface
+    because the fix is.
+    (j) **`url` file entries (the Worker fetching a URL) are not in this slice.** The slice
+    spec's scope lists them nowhere as a deliverable — only "forward `sha256` when the
+    caller gave one" — and they are a feature of their own (SSRF rules, redirect budgets,
+    `FETCH_FAILED`). `errors-reachable.test.ts` still lists `FETCH_FAILED` as deferred to
+    issue #9; the owner decides which issue takes it.
+    (k) **Seam 2 has its own vitest project, `cli`, after `unit` and before `contract`.**
+    It builds the binary once in a global setup and runs files serially: a per-file build
+    (`tsup` cleans `dist/` first) racing another file's running binary produced empty
+    output and reset sockets, and its localhost servers starved the installer tests' fake
+    Cloudflare when they shared workers. The offline instance is the real Worker app on
+    `@hono/node-server` over the memory bucket (`test/fake-cloudflare/src/instance.ts`).
+    (l) **After #8 merged, a CLI flag's help line is the registry schema's own
+    description.** #8 put one canonical sentence per field on the zod schema, which the MCP
+    tool and `/_skill.md` render; the CLI had its own list of the same sentences. The list is
+    gone — `surface.ts` reads `schema.description` through the optional/nullable/pipe
+    wrappers, and the only text the CLI still writes itself is the `--no-<flag> clears it.`
+    clause, which is CLI grammar and exists nowhere else. `toolOf` also refuses a `signed`
+    operation now, not only a `public` one: MCP has no meaning for the staged blob PUT's
+    scope.
+    (m) **After #6 merged, the staged commit takes `password`, and the CLI never takes a
+    chosen one on argv.** #6 gave `publish` and `update` a `password` field; the staged
+    commit did not have one, so a drop above the inline ceiling was a drop the instance's
+    `password.required` rule could not reach — a policy bypass reachable from the CLI's own
+    large-file path. `upload.commit` now takes it with the same three spellings and fixes
+    the decided `access` and the sealed password in its claim, exactly as `publish` does, so
+    a retry converges on one password. On the CLI the generated `--password` flag would have
+    put a secret in the shell history and in `ps`, against AGENTS.md's "secrets via env or
+    stdin, never flags": `--password` accepts only `generate` (and `--no-password` clears
+    it), a chosen one arrives on `--password-stdin`, one line, and sending both is
+    `INVALID_INPUT`. Docker's `--password-stdin` is the precedent. `SECRET_FIELDS` in
+    `cli/surface.ts` is the one list; a future secret field gets the same companion flag
+    automatically.
 
 90. **The OAuth slice's rulings (issue #12).** The spec left these open; each is recorded
     with why the other way was worse.

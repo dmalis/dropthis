@@ -127,7 +127,7 @@ export async function updateDrop(
   const fromClaim = async (fixed: ClaimRecord) => {
     access = fixed.access;
     password = await openPassword(fixed, ctx.secret);
-    return desiredMeta(current, input, fixed.manifest, access, {
+    return desiredUpdateMeta(current, input, fixed.manifest, access, {
       policy: config.policy,
       now,
       expiresAt: fixed.expires_at,
@@ -135,7 +135,7 @@ export async function updateDrop(
   };
   let desired =
     claim === null
-      ? await desiredMeta(current, input, manifest, access, { policy: config.policy, now })
+      ? await desiredUpdateMeta(current, input, manifest, access, { policy: config.policy, now })
       : await fromClaim(claim);
   let desiredHash = await stateHash(desired);
 
@@ -238,7 +238,7 @@ export async function updateDrop(
   return drop;
 }
 
-type DesiredOptions = {
+export type DesiredOptions = {
   policy: ResolvedPolicy;
   now: Date;
   /** The claim's resolved expiry, when this call is resuming one. */
@@ -253,10 +253,13 @@ type DesiredOptions = {
  * only. Policy *rules* apply to the fields this call provides, so an omitted
  * field that a later `config set` made non-compliant is grandfathered until the
  * caller next sets it.
+ *
+ * Exported because the staged commit (`operations/uploads.ts`) is the same
+ * flip with the manifest coming from the session instead of the body.
  */
-async function desiredMeta(
+export async function desiredUpdateMeta(
   current: DropMeta,
-  input: UpdateInput,
+  input: Omit<UpdateInput, "files">,
   manifest: Manifest,
   access: Record<string, unknown>,
   options: DesiredOptions,

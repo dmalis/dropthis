@@ -45,8 +45,16 @@ export type ClaimRecord = {
   password_enc?: string;
 };
 
-/** The claim's sealed password, for a retry that has to rebuild the response. */
-export async function openPassword(claim: ClaimRecord, secret: string): Promise<string | undefined> {
+/**
+ * The claim's sealed password, for a retry that has to rebuild the response.
+ * Typed on the sealed field alone: the staged commit's own claim
+ * (`operations/uploads.ts`) carries it under the same name and unseals it the
+ * same way.
+ */
+export async function openPassword(
+  claim: { password_enc?: string },
+  secret: string,
+): Promise<string | undefined> {
   if (claim.password_enc === undefined) return undefined;
   return decryptResult(secret, claim.password_enc);
 }
