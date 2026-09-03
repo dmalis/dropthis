@@ -68,7 +68,15 @@ export function devRoutes() {
   dev.post("/r2/head", async (c) => {
     const { key } = await c.req.json<{ key: string }>();
     const object = await c.env.BUCKET.head(key);
-    return object === null ? c.json({ found: false }) : c.json({ found: true, size: object.size });
+    if (object === null) return c.json({ found: false });
+    // `uploaded` is how seam 1 proves a write did NOT happen: an unchanged file
+    // that was re-uploaded would carry a newer instant.
+    return c.json({
+      found: true,
+      size: object.size ?? null,
+      uploaded: object.uploaded?.toISOString() ?? null,
+      customMetadata: object.customMetadata ?? null,
+    });
   });
 
   /**

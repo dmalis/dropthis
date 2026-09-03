@@ -15,7 +15,9 @@ import { loadInstanceConfig } from "../instance-config.js";
 import { attribution, resolveCaller } from "../auth/caller.js";
 import { getDrop, loadDrop } from "../operations/get.js";
 import { publish } from "../operations/publish.js";
+import { updateDrop } from "../operations/update.js";
 import { parsePublishInput } from "../registry/publish.js";
+import { parseUpdateInput } from "../registry/update.js";
 import { blobKey } from "../storage/keys.js";
 import { errorResponse } from "./errors.js";
 import type { DevHooks } from "../dev/hooks.js";
@@ -40,6 +42,28 @@ export function dropRoutes(hooks: DevHooks) {
     });
 
     return c.json(result.drop, result.created ? 201 : 200);
+  });
+
+  // `update` takes any subset of the publish fields and changes only those.
+  // The slug is the target here: the URL form is resolved by the CLI and the
+  // MCP layer before the REST call, so this route never sees an origin.
+  routes.patch("/drops/:slug", async (c) => {
+    const slug = c.req.param("slug");
+    if (!isSlug(slug)) throw new ApiError("NOT_FOUND", `No drop at ${slug}.`);
+
+    const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
+    const body = await readJsonBody(c.req.raw, config.policy.max_request_bytes);
+
+    const drop = await updateDrop(slug, parseUpdateInput(body), {
+      bucket: c.env.BUCKET,
+      config,
+      caller: attribution(resolveCaller(c.req.raw, c.env)),
+      now: hooks.now(c.env),
+      secret: requireSecret(c.env),
+      fault: hooks.faultPoint(c.req.raw, c.env),
+    });
+
+    return c.json(drop);
   });
 
   routes.get("/drops/:slug", async (c) => {
