@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { mcpRoutes } from "./api/mcp.js";
 import { apiRoutes } from "./api/router.js";
 import type { Env } from "./bindings.js";
 import { PRODUCTION_HOOKS } from "./dev/hooks.js";
@@ -39,6 +40,9 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
   // Every REST route, generated from the operation registry. `health` is the
   // one open route in it; everything else needs a key and a scope.
   app.route("/_api/v1", apiRoutes(hooks));
+
+  // The same operations as MCP tools, one stateless server per request.
+  app.route("/_api/mcp", mcpRoutes(hooks));
 
   // The viewer is last: it owns every path that is not the control plane, and
   // `RESERVED_PREFIXES` plus the `_`-free slug alphabet keep the two apart.
