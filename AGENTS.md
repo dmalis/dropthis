@@ -535,6 +535,10 @@ noindex. **Prune** — deleting expired drops, abandoned uploads and orphaned ge
 
 ## Working rules for this repo
 
+- The dev credential: contract tests and `init` read `CLOUDFLARE_API_TOKEN` and
+  `CLOUDFLARE_ACCOUNT_ID` from the environment; on the maintainer's machine they live in
+  `~/.config/dropthis/dev.env` (mode 600, outside the repo) — `source` it before any slice
+  work. The file never enters the repo.
 - Test-first for every behaviour. Four seams: (1) a golden HTTP corpus against a real
   deployed `dev` Worker on the developer's own account, bucket reset through the R2 API
   before every run, expiry driven by a clock override that exists only in the `dev` build;
