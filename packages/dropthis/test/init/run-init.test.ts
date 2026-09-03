@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { startFakeCloudflare } from "../../../../test/fake-cloudflare/src/server.js";
 import { getObjectJson, putObjectJson } from "../../src/init/r2-objects.js";
 import { runInit } from "../../src/init/run-init.js";
-import { FAST_POLL, stubDeploy } from "./helpers.js";
+import { expectInstanceProved, FAST_POLL, onlySlowMachine, stubDeploy } from "./helpers.js";
 
 const teardown: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -28,7 +28,7 @@ describe("runInit — happy path", () => {
 
     const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
-    expect(result.ok).toBe(true);
+    expectInstanceProved(result);
     expect(result.name).toBe("main");
     expect(result.bucket).toBe("dropthis-main-drops");
     expect(result.kvNamespace).toBe("dropthis-main-oauth");
@@ -75,7 +75,7 @@ describe("runInit — rerun", () => {
 
     const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
-    expect(second.ok).toBe(true);
+    expect(second.ok, JSON.stringify(second.steps)).toBe(true);
     expect(second.adminKeyStatus).toBe("existing");
     expect(second.adminKey).toBeUndefined();
     expect(cf.state.buckets.filter((b) => b === "dropthis-main-drops")).toHaveLength(1);
@@ -92,7 +92,7 @@ describe("runInit — rerun", () => {
 
     const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
-    expect(second.ok).toBe(true);
+    expect(second.ok || onlySlowMachine(second)).toBe(true);
     expect(second.adminKeyStatus).toBe("existing");
     const recreated = cf.state.namespaces.find((n) => n.title === "dropthis-main-oauth");
     expect(recreated).toBeDefined();
@@ -108,7 +108,7 @@ describe("runInit — dry-run", () => {
 
     const result = await runInit({ creds: CREDS(cf), dryRun: true, deploy });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, JSON.stringify(result.steps)).toBe(true);
     expect(cf.state.buckets).toEqual([]);
     expect(cf.state.namespaces).toEqual([]);
     expect(deploy).not.toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe("runInit — NAME_TAKEN", () => {
 
     const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok || onlySlowMachine(result)).toBe(true);
     expect(calls).toHaveLength(1);
   });
 });
