@@ -147,7 +147,7 @@ describe("initialize and tools/list", () => {
     expect(client.getInstructions()).toContain("The URL is the identity");
   });
 
-  it("shows a user key exactly the five drop tools", async () => {
+  it("shows a user key the five drop tools and the staged-upload pair", async () => {
     const client = await connect(USER_KEY);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name)).toEqual([
@@ -156,6 +156,8 @@ describe("initialize and tools/list", () => {
       "dropthis_get",
       "dropthis_list",
       "dropthis_delete",
+      "dropthis_upload",
+      "dropthis_commit",
     ]);
     for (const tool of tools) {
       expect(tool.description, tool.name).toMatch(/^Use when the user says: /);
@@ -173,7 +175,7 @@ describe("initialize and tools/list", () => {
   it("shows the admin key the whole surface", async () => {
     const client = await connect(ADMIN_KEY);
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(16);
     expect(tools.map((tool) => tool.name)).toContain("dropthis_user_add");
   });
 });

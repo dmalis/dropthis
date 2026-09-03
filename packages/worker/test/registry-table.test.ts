@@ -82,8 +82,13 @@ describe("operation registry", () => {
     expect(pending).toEqual([]);
   });
 
-  it("keeps the raw-file route and the staged-upload path out of the MCP tool list", () => {
+  /**
+   * Only two rows are REST-only: a byte stream is not a tool result, and the
+   * staged blob PUT is signed rather than key-scoped — an agent curls its URL
+   * (decision #93). The session and the commit ARE tools.
+   */
+  it("keeps the raw-file route and the signed blob PUT out of the MCP tool list", () => {
     const restOnly = OPERATIONS.filter((op) => op.restOnly === true).map((op) => op.name);
-    expect(restOnly).toEqual(["file_download", "upload.create", "upload.put", "upload.commit"]);
+    expect(restOnly).toEqual(["file_download", "upload.put"]);
   });
 });

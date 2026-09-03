@@ -151,6 +151,54 @@ export const TOOL_TEXT: Record<string, ToolText> = {
     annotations: { title: "Delete a drop", ...hints(false, true, true, false) },
   },
 
+  "upload.create": {
+    title: "Upload big files",
+    triggers:
+      "upload this photo, share this video, this file is too big to paste, put this PDF online, " +
+      "send them the zip, publish the recording, host the screenshot I gave you",
+    body:
+      "Step one of THREE, for files too big to inline — a photo, a video, a PDF, an archive, or " +
+      "anything past this instance's max_request_bytes. Use it only when your environment can run " +
+      "curl and reach the internet; when it cannot, send {path, url} to dropthis_publish for " +
+      "anything already on the web, or shrink the file. " +
+      "Send manifest: every file as {path, size, sha256}, the digest in lowercase hex. Back come " +
+      "upload_id, the slug the drop will have, missing (the digests this instance does not hold " +
+      "yet) and put_urls, one absolute URL per missing digest. " +
+      "STEP TWO IS YOURS: for each digest in missing run curl -sS -T <file> '<put_url>'. The URL " +
+      "is the whole credential — send NO Authorization header — it fits one file and lasts one " +
+      "hour. Step three is dropthis_commit with the upload_id: NOTHING IS PUBLISHED and the URL " +
+      "does not work until then. " +
+      "target updates an EXISTING drop, its URL or its slug, and REPLACES its whole file set; " +
+      "omit target for a new drop. Bytes that do not match sha256 are HASH_MISMATCH and nothing " +
+      "is stored. A session lasts one day, past that UPLOAD_EXPIRED. A URL from another instance " +
+      "is WRONG_INSTANCE. Send idempotency_key when a retry must not open a second upload.",
+    annotations: { title: "Upload big files", ...hints(false, false, false, false) },
+  },
+
+  "upload.commit": {
+    title: "Finish an upload",
+    triggers:
+      "the upload finished, curl is done, publish what I uploaded, finish the upload, commit it",
+    body:
+      "Step three of the staged upload dropthis_upload opened: id is the upload_id it returned. " +
+      "This is where the drop is published — the response is the whole Drop (url, slug, title, " +
+      "expires_at, state, files) and the URL starts working here, not before. " +
+      "It takes the settings dropthis_publish takes: title (ALWAYS set it), meta, password, " +
+      "expires, noindex. {{password}} " +
+      "Call it only after every digest in missing has been PUT: a blob that is not there yet is " +
+      "INVALID_INPUT naming the digest — upload that one and call again. Calling twice is safe, " +
+      "the second call replays the same Drop; the same id with different settings is " +
+      "IDEMPOTENCY_MISMATCH. A session older than a day is UPLOAD_EXPIRED: open a new one with " +
+      "dropthis_upload. For files small enough to inline use dropthis_publish instead, and to " +
+      "change a drop later use dropthis_update.",
+    whenField: {
+      password:
+        'Prefer password: "generate" — the generated password is in THIS response once and ' +
+        "never again; hand it to the user.",
+    },
+    annotations: { title: "Finish an upload", ...hints(false, false, true, false) },
+  },
+
   "user.add": {
     title: "Add a person",
     triggers:

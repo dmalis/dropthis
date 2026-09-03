@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/bindings.js";
 import { createApp } from "../src/index.js";
 import { MAX_FILES_PER_CALL } from "../src/registry/fields.js";
+import { toolSurface } from "../src/mcp/tools.js";
 import { TOOL_TEXT } from "../src/registry/tools.js";
 import { INITIAL_POLICY } from "../src/policy/defaults.js";
 import { CONFIG_KEY } from "../src/storage/keys.js";
@@ -81,10 +82,10 @@ describe("GET /_skill.md", () => {
 
   it("renders every tool from the pinned tool text, user tools first", async () => {
     const text = await (await skill()).text();
-    for (const [name, entry] of Object.entries(TOOL_TEXT)) {
-      const tool = `dropthis_${name.replace(/\./g, "_")}`;
-      expect(text, tool).toContain(`### \`${tool}\``);
-      expect(text, tool).toContain(`Use when the user says: ${entry.triggers}.`);
+    expect(toolSurface().map((tool) => tool.operation).sort()).toEqual(Object.keys(TOOL_TEXT).sort());
+    for (const tool of toolSurface()) {
+      expect(text, tool.name).toContain(`### \`${tool.name}\``);
+      expect(text, tool.name).toContain(`Use when the user says: ${TOOL_TEXT[tool.operation]!.triggers}.`);
     }
     expect(text.indexOf("### `dropthis_delete`")).toBeLessThan(text.indexOf("### `dropthis_user_add`"));
     expect(text).toContain("never publish again");

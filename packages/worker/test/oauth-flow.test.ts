@@ -188,7 +188,15 @@ async function publishedBy(auth: string): Promise<{ id: string; label: string }>
   return body.result.structuredContent.created_by;
 }
 
-const USER_TOOLS = ["dropthis_delete", "dropthis_get", "dropthis_list", "dropthis_publish", "dropthis_update"];
+const USER_TOOLS = [
+  "dropthis_commit",
+  "dropthis_delete",
+  "dropthis_get",
+  "dropthis_list",
+  "dropthis_publish",
+  "dropthis_update",
+  "dropthis_upload",
+];
 
 const UNAUTHENTICATED_BODY = {
   error: {

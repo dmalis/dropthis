@@ -196,7 +196,7 @@ describe("a staged manifest with url entries", () => {
 });
 
 describe("the registry rows", () => {
-  it("declares the three staged-upload routes, REST-only, in the frozen order", () => {
+  it("declares the three staged-upload routes in the frozen order; only the PUT is REST-only", () => {
     const names = OPERATIONS.map((op) => op.name);
     expect(names.slice(names.indexOf("file_download") + 1, names.indexOf("user.add"))).toEqual([
       "upload.create",
@@ -206,10 +206,15 @@ describe("the registry rows", () => {
     expect(routeOf(operation("upload.create"))).toBe("POST /_api/v1/uploads");
     expect(routeOf(operation("upload.put"))).toBe("PUT /_api/v1/uploads/:id/blobs/:sha256");
     expect(routeOf(operation("upload.commit"))).toBe("POST /_api/v1/uploads/:id/commit");
-    for (const name of ["upload.create", "upload.put", "upload.commit"]) {
-      expect(operation(name).restOnly, name).toBe(true);
-    }
+    expect(operation("upload.put").restOnly).toBe(true);
     expect(operation("upload.put").scope).toBe("signed");
+    // The session and the commit are tools a user key calls (decision #93).
+    for (const name of ["upload.create", "upload.commit"]) {
+      expect(operation(name).restOnly, name).toBeUndefined();
+      expect(operation(name).scope, name).toBe("user");
+    }
+    expect(operation("upload.create").toolName).toBe("dropthis_upload");
+    expect(operation("upload.commit").toolName).toBe("dropthis_commit");
   });
 });
 

@@ -105,7 +105,7 @@ describe("doctor", () => {
     const report = await run();
 
     expect(checkOf(report, "mcp_initialize").status).toBe("pass");
-    expect(checkOf(report, "mcp_initialize").evidence).toMatch(/initialize answered dropthis .*; tools\/list offers 14 tools\./);
+    expect(checkOf(report, "mcp_initialize").evidence).toMatch(/initialize answered dropthis .*; tools\/list offers 16 tools\./);
   });
 
   /**

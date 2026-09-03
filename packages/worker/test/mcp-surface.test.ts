@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { OPERATIONS } from "../src/registry/index.js";
 import { TOOL_TEXT } from "../src/registry/tools.js";
-import { toolOf, toolSurface, toolsFor } from "../src/mcp/tools.js";
+import { toolNameOf, toolOf, toolSurface, toolsFor } from "../src/mcp/tools.js";
 
 /**
  * The MCP tool surface is PRODUCT SURFACE (docs/decisions.md #80): the words
@@ -27,6 +27,8 @@ const PINS: Record<string, string> = {
   dropthis_get: "4964c34dbb9531847016f669a634fbd86f1a1db1daee5d5c10e69255fdeee128",
   dropthis_list: "90c3017b61f72f78444e144555906de1efb1e5c6528fd1d76d902736e0dfdab4",
   dropthis_delete: "297d5fd6825dbc9c7fc91d2206d2a5713062be3ab1157fc2f4ede1c662021722",
+  dropthis_upload: "1dd247be334ab6dbdc1eb1064d47e3e578160dd1058a9678f90a5d0041751e2f",
+  dropthis_commit: "60064affedcd46147915dcda0f525b9ced9bf1b1622abcb32189d8d0e412c3ae",
   dropthis_user_add: "12e76b4fd3d95998568f5f51f19f2dbbdaf9cfa9d484505d913a5a7018c59f33",
   dropthis_user_list: "5e86d3fd30de497f07f8daa6fa7d4d5d6cf82903f945e0f165f5880014041981",
   dropthis_user_remove: "72699e099d45f867f8f375f889be75d4012a274dfc32969c680a083b323e74bc",
@@ -38,14 +40,22 @@ const PINS: Record<string, string> = {
   dropthis_doctor_checks: "52bff4d52780da4aecdf237320b34acd46682f5300298b70732b9b208b0b0c5d",
 };
 
-const USER_TOOLS = ["dropthis_publish", "dropthis_update", "dropthis_get", "dropthis_list", "dropthis_delete"];
+const USER_TOOLS = [
+  "dropthis_publish",
+  "dropthis_update",
+  "dropthis_get",
+  "dropthis_list",
+  "dropthis_delete",
+  "dropthis_upload",
+  "dropthis_commit",
+];
 
 describe("the MCP tool surface", () => {
   const surface = toolSurface();
 
   it("holds every registry operation that is not health or REST-only, in registry order", () => {
     const expected = OPERATIONS.filter((op) => op.scope !== "public" && op.restOnly !== true).map(
-      (op) => `dropthis_${op.name.replace(/\./g, "_")}`,
+      (op) => toolNameOf(op),
     );
     expect(surface.map((tool) => tool.name)).toEqual(expected);
     expect(surface.map((tool) => tool.name)).toEqual(Object.keys(PINS));
@@ -162,8 +172,53 @@ describe("the MCP tool surface", () => {
     }
   });
 
-  it("filters by scope: a user key sees exactly the five drop tools, admin sees all", () => {
+  it("filters by scope: a user key sees the drop tools and the staged pair, admin sees all", () => {
     expect(toolsFor("user").map((t) => t.name)).toEqual(USER_TOOLS);
     expect(toolsFor("admin").map((t) => t.name)).toEqual(Object.keys(PINS));
+  });
+
+  /**
+   * Issue #19: the staged path is how a browser agent moves bytes it cannot
+   * type. Two tools, never three — the blob PUT is signed, not key-scoped,
+   * and its URL is handed to the agent in the session response.
+   */
+  describe("the staged-upload pair", () => {
+    const upload = () => surface.find((t) => t.name === "dropthis_upload")!;
+    const commit = () => surface.find((t) => t.name === "dropthis_commit")!;
+
+    it("names them dropthis_upload and dropthis_commit, and exposes no PUT tool", () => {
+      expect(upload().operation).toBe("upload.create");
+      expect(commit().operation).toBe("upload.commit");
+      expect(surface.map((t) => t.operation)).not.toContain("upload.put");
+      expect(surface.map((t) => t.name)).not.toContain("dropthis_upload_create");
+    });
+
+    it("tells the agent to curl each put_url and then commit", () => {
+      expect(upload().description).toContain("curl");
+      expect(upload().description).toContain("dropthis_commit");
+      expect(commit().description).toContain("dropthis_upload");
+      expect(upload().description).toContain("put_urls");
+    });
+
+    it("takes target as the drop's URL or slug, and the session id on commit", () => {
+      const properties = upload().inputSchema.properties as Record<string, { description?: string }>;
+      expect(Object.keys(properties)).toEqual(["target", "manifest", "idempotency_key"]);
+      expect(properties.target!.description).toContain("URL");
+      expect(upload().inputSchema.required).toEqual(["manifest"]);
+      expect(upload().targetInBody).toBe(true);
+
+      const commitProperties = commit().inputSchema.properties as Record<string, { description?: string }>;
+      expect(commitProperties.id!.description).toContain("upload_id");
+      expect(commit().inputSchema.required).toEqual(["id"]);
+      expect(commit().takesTarget).toBe(false);
+    });
+
+    it("describes every field of the manifest entry", () => {
+      const manifest = (upload().inputSchema.properties as Record<string, { items?: { properties?: Record<string, { description?: string }> } }>)
+        .manifest!;
+      for (const [field, schema] of Object.entries(manifest.items!.properties!)) {
+        expect(schema.description, `manifest.${field}`).toBeTruthy();
+      }
+    });
   });
 });
