@@ -41,6 +41,12 @@ const textEntry = z.strictObject({
 const base64Entry = z.strictObject({
   path: z.string().describe(PATH_DESCRIPTION),
   base64: z.string().describe("The file's bytes, base64-encoded. For binaries."),
+  /**
+   * Optional: a client that already hashed the bytes (the CLI always does)
+   * sends it, and the Worker refuses a mismatch as `HASH_MISMATCH` instead of
+   * storing bytes the client did not mean to send.
+   */
+  sha256: z.string().optional(),
 });
 
 /**

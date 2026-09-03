@@ -3,8 +3,10 @@
  * "Operation registry"): one tool per operation, its input schema rendered
  * from the operation's own zod schema, its words from `registry/tools.ts`.
  *
- * Two operations never become tools: `health` (public, a liveness probe) and
- * the raw file download (`restOnly`: a byte stream is not a tool result).
+ * Some operations never become tools: `health` (public, a liveness probe), the
+ * raw file download (`restOnly`: a byte stream is not a tool result) and the
+ * three staged-upload routes (`restOnly`: a three-call handshake the CLI alone
+ * drives, and one of them signed rather than key-scoped).
  *
  * One translation, stated here because it is the only one: where REST takes
  * the drop's slug in the path, the tool takes `target` — the drop's URL or its
@@ -65,10 +67,24 @@ export function toolsFor(scope: Scope): Tool[] {
   return toolSurface().filter((tool) => scope === "admin" || tool.scope === "user");
 }
 
+/**
+ * A tool always belongs to a key scope. `public` is health and `signed` is the
+ * staged blob PUT, whose credential is the HMAC in its own URL — neither is
+ * something an agent calls, and both are already filtered out of the surface.
+ * The check is here as well so a new operation cannot reach `Tool.scope` with
+ * a scope MCP has no meaning for.
+ */
+function keyScopeOf(op: Operation<never>): Scope {
+  if (op.scope === "public" || op.scope === "signed") {
+    throw new Error(`Operation ${op.name} is not a key-scoped tool.`);
+  }
+  return op.scope;
+}
+
 export function toolOf(op: Operation<never>): Tool {
+  const scope = keyScopeOf(op);
   const text = TOOL_TEXT[op.name];
   if (text === undefined) throw new Error(`Operation ${op.name} has no tool text.`);
-  if (op.scope === "public") throw new Error(`Operation ${op.name} is public; it is not a tool.`);
 
   const takesTarget = op.params?.includes("slug") === true;
   return {
@@ -78,7 +94,7 @@ export function toolOf(op: Operation<never>): Tool {
     description: describe(op, text),
     inputSchema: jsonSchemaOf(toolSchema(op, takesTarget)),
     annotations: text.annotations,
-    scope: op.scope,
+    scope,
     takesTarget,
   };
 }

@@ -32,6 +32,7 @@ export default defineConfig({
             "packages/*/test/**/*.test.ts",
             "test/fake-cloudflare/test/**/*.test.ts",
           ],
+          exclude: ["**/node_modules/**", "packages/dropthis/test/cli*.test.ts"],
           environment: "node",
           testTimeout: 30_000,
         },
@@ -39,9 +40,27 @@ export default defineConfig({
       {
         plugins: [markdownAsText],
         test: {
-          name: "contract",
-          /** After the unit project; see the note there. */
+          name: "cli",
+          /**
+           * Seam 2: the built `dropthis` binary as a subprocess, against the
+           * real Worker app served on localhost. One build per run (the
+           * global setup), then the files one at a time: each spawns servers
+           * and processes, and a rebuild racing a running binary — tsup
+           * cleans `dist/` first — produced empty output and reset sockets.
+           */
           sequence: { groupOrder: 1 },
+          include: ["packages/dropthis/test/cli*.test.ts"],
+          environment: "node",
+          testTimeout: 30_000,
+          globalSetup: ["packages/dropthis/test/build-cli.ts"],
+          fileParallelism: false,
+        },
+      },
+      {
+        test: {
+          name: "contract",
+          /** After the unit and cli projects; see the note on unit. */
+          sequence: { groupOrder: 2 },
           include: ["contract-tests/**/*.test.ts"],
           environment: "node",
           /**

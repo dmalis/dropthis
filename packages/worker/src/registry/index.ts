@@ -18,6 +18,7 @@ import {
 import { configGet, configSet } from "./config.js";
 import { doctorChecks, doctorOp } from "./doctor.js";
 import { pruneOp, usageOp } from "./maintenance.js";
+import { uploadCommit, uploadCreate, uploadPut } from "./uploads.js";
 import { userAdd, userList, userRemove } from "./users.js";
 import type { Operation } from "./types.js";
 
@@ -29,6 +30,9 @@ export const OPERATIONS: Array<Operation<never>> = [
   listOp,
   deleteOp,
   fileDownload,
+  uploadCreate,
+  uploadPut,
+  uploadCommit,
   userAdd,
   userList,
   userRemove,

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { OPERATIONS } from "../src/registry/index.js";
 import { TOOL_TEXT } from "../src/registry/tools.js";
-import { toolSurface, toolsFor } from "../src/mcp/tools.js";
+import { toolOf, toolSurface, toolsFor } from "../src/mcp/tools.js";
 
 /**
  * The MCP tool surface is PRODUCT SURFACE (docs/decisions.md #80): the words
@@ -153,6 +153,12 @@ describe("the MCP tool surface", () => {
       for (const [field, schema] of Object.entries(properties)) {
         expect(schema.description, `${tool.name}.${field}`).toBeTruthy();
       }
+    }
+  });
+
+  it("refuses to make a tool of an operation whose scope is not a key scope", () => {
+    for (const op of OPERATIONS.filter((o) => o.scope === "public" || o.scope === "signed")) {
+      expect(() => toolOf(op), op.name).toThrow(`Operation ${op.name} is not a key-scoped tool.`);
     }
   });
 

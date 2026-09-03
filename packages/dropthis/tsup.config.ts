@@ -6,4 +6,8 @@ export default defineConfig({
   target: "node22",
   clean: true,
   banner: { js: "#!/usr/bin/env node" },
+  // The registry (and with it zod and canonicalize) is bundled from the worker
+  // package; the three CLI libraries are bundled too so the built file has no
+  // ESM-only require at runtime.
+  noExternal: ["commander", "@clack/prompts", "@vercel/detect-agent"],
 });
