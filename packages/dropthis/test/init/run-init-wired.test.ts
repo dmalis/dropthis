@@ -314,3 +314,70 @@ describe("runInit — guided preflight (decision #67)", () => {
     expect(asked).toBeLessThanOrEqual(10);
   });
 });
+
+describe("runInit — faults and interruptions", () => {
+  it("stops before any resource when the token sees no account at all", async () => {
+    const cf = await fake({ accounts: [] });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "account")?.detail).toBe("NO_ACCOUNTS");
+    expect(calls).toHaveLength(0);
+    expect(cf.state.buckets).toEqual([]);
+  });
+
+  it("names every missing dashboard permission and deploys nothing", async () => {
+    const cf = await fake({ missingScopes: ["kv", "workers"] });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+
+    expect(result.ok).toBe(false);
+    const detail = step(result.steps, "permissions")?.detail ?? "";
+    expect(detail).toContain("Workers KV Storage:Edit");
+    expect(detail).toContain("Workers Scripts:Edit");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a run interrupted at the deploy converges on a rerun, and does not re-ship the secret", async () => {
+    const cf = await fake();
+    const working = stubDeploy(cf, teardown);
+    const env = await home();
+
+    await expect(
+      runInit({
+        creds: CREDS(cf),
+        dryRun: false,
+        env,
+        poll: FAST_POLL,
+        deploy: async (config, secrets) => {
+          // The Worker was uploaded; the installer died before it could say so.
+          await working.deploy(config, secrets);
+          throw new Error("killed mid-deploy");
+        },
+      }),
+    ).rejects.toThrow(/killed mid-deploy/);
+
+    const rerun = await runInit({ creds: CREDS(cf), dryRun: false, deploy: working.deploy, env, poll: FAST_POLL });
+
+    expect(rerun.ok).toBe(true);
+    expect(rerun.adminKeyStatus).toBe("existing");
+    expect(working.calls[1]!.secrets).toBeUndefined();
+    expect(cf.state.buckets.filter((name) => name === "dropthis-main-drops")).toHaveLength(1);
+  });
+
+  it("a rerun that lost the minted key says how to get one back instead of pretending", async () => {
+    const cf = await fake();
+    const { deploy } = stubDeploy(cf, teardown);
+    // The first run minted a key nobody stored (no env, so no instances.json).
+    await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+
+    const rerun = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+
+    expect(rerun.ok).toBe(true);
+    expect(rerun.adminKey).toBeUndefined();
+    expect(step(rerun.steps, "doctor")?.detail).toMatch(/--rotate-admin-key/);
+  });
+});
