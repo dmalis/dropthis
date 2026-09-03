@@ -187,3 +187,21 @@ describe("parsePublishInput", () => {
     expect(codeOf(() => parsePublishInput({ ...ok, idempotency_key: "" }))).toBe("INVALID_INPUT");
   });
 });
+
+const messageOf = (body: unknown): string => {
+  try {
+    parsePublishInput(body);
+  } catch (error) {
+    return `${(error as { code?: string }).code}: ${(error as Error).message}`;
+  }
+  throw new Error("parsePublishInput accepted a body it should have refused.");
+};
+
+describe("parsePublishInput and the keep kind", () => {
+  it("refuses {path, sha256} by name: a new drop holds nothing to keep", () => {
+    const said = messageOf({ files: [{ path: "logo.png", sha256: "b".repeat(64) }] });
+    expect(said).toContain("INVALID_INPUT");
+    expect(said).toContain("logo.png");
+    expect(said).toContain("update");
+  });
+});

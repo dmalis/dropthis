@@ -78,3 +78,35 @@ describe("parseUpdateInput", () => {
     );
   });
 });
+
+/**
+ * The fourth entry kind (issue #17): `{path, sha256}` = keep the blob this drop
+ * already holds. It is an `update` kind only — a new drop holds nothing — and
+ * the union stays strict, so it can never be combined with content.
+ */
+describe("parseUpdateInput with keep entries", () => {
+  const digest = "a".repeat(64);
+
+  it("accepts {path, sha256} as the keep kind", () => {
+    expect(parseUpdateInput({ files: [{ path: "logo.png", sha256: digest }] })).toEqual({
+      files: [{ path: "logo.png", sha256: digest }],
+    });
+  });
+
+  it("accepts a keep beside an inline change, which is the whole point", () => {
+    const files = [
+      { path: "index.html", text: "<h1>fixed</h1>" },
+      { path: "logo.png", sha256: digest },
+    ];
+    expect(parseUpdateInput({ files }).files).toEqual(files);
+  });
+
+  it("refuses a keep that also carries content", () => {
+    expect(message({ files: [{ path: "a.png", sha256: digest, text: "x" }] })).toContain(
+      "INVALID_INPUT",
+    );
+    expect(message({ files: [{ path: "a.png", sha256: digest, size: 3 }] })).toContain(
+      "INVALID_INPUT",
+    );
+  });
+});

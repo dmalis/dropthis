@@ -769,6 +769,21 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `tokenExchangeCallback` and answers `401 invalid_grant` after `user remove`. A DCR
     client that expired after 90 days would have ended a connection on its own — hence
     the client TTL too.
+    **Amended 2026-09-03 (issue #20): an access token lives a year too.** The library
+    default was one hour, and the owner's claude.ai connector answered that hour by
+    sending the human back to `/_oauth/authorize` — observed on dev8 at 18:39Z, with
+    the two discovery documents fetched and **no `POST /_oauth/token
+    grant_type=refresh_token` in between**; the grant had never been refreshed
+    (`previousRefreshTokenId` absent). So "a connection never expires on its own" was
+    true of the grant and false of the experience. `accessTokenTTL` is now
+    `365 * 24 * 60 * 60` for every build; `DEV-Access-TTL` (g) still shortens one token
+    so the refresh path stays a 62-second test. A long access token costs nothing here
+    because the token is never the authority: `/_api/mcp` resolves every token to a key
+    id and re-reads `keys/<id>.json` and `keyhash/` on EVERY request, so `user remove`
+    ends the session on the very next call whatever the token's own lifetime says. The
+    refresh grant itself was never at fault — it works for CIMD clients (the shape
+    claude.ai uses) both before and after this change, pinned in
+    `packages/worker/test/oauth-flow.test.ts` and `contract-tests/oauth.test.ts`.
     (e) **The CIMD cache is the library's:** a Cache API entry honouring the document's
     own `Cache-Control`, capped at 7 days, not the KV-with-TTL the spec sketched. A second
     cache would be a second store of the same document; the library evicts a cached
@@ -919,3 +934,34 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `<13 fixed-width digits>-<slug>`, so the separator is unambiguous however many dashes the
     slug carries; the parsed half is checked with `isSlug`, and a key this Worker cannot read
     is skipped, never destroyed.
+
+95. **Keep-by-hash file entries on `update` (issue #17).** Same shape of failure as #92, one
+    step further along: on 2026-09-03 a claude.ai session had to re-type every base64 sprite
+    of a game into the tool call to change 40 lines of CSS, because `files` replaces the whole
+    set. So the file-entry union gains a fourth strict branch, `{path, sha256}`: keep the blob
+    this drop already holds under that digest. `get` already returns `sha256` per file, so the
+    round trip is `get` → change one file → `update` with that file inline and every other as
+    `{path, sha256}`. Nothing is sent, fetched, hashed or written; the new manifest points at
+    what is already there. The rulings the spec left open:
+    (a) **A keep at the SAME path carries the recorded `size` AND `content_type` over; a keep
+    under a NEW path is typed from the frozen extension table.** The two differ for a file
+    whose extension is unknown or absent — `{path: "README", text: …}` is stored `text/plain`,
+    while `contentTypeForPath("README")` is `application/octet-stream` — so re-typing a kept
+    file from its path would silently change what a visitor is served. The manifest is the
+    record; a keep reads it.
+    (b) **`publish` refuses the kind by name, at parse time.** A drop being created holds
+    nothing, so resolving a keep against an empty manifest would answer "this drop holds no
+    file with that sha256" — true but useless. The union stays one shared schema (four
+    branches, one `FILES_DESCRIPTION`) and the refusal names the path and says the kind is an
+    update entry.
+    (c) **Blobs stay per drop; there is no cross-drop keep.** `drops/<id>/blobs/<sha256>` is
+    the layout, and a digest another drop holds is not held here. The refusal names both the
+    path and the hash so an agent working from a stale `get` sees which file went wrong.
+    (d) **On the staged path a keep is a manifest entry with no `size`.** The client cannot
+    know a size it never had, and `{path, sha256}` is then literally the same entry on both
+    paths. It needs `target`: a session that creates a drop refuses it exactly as `publish`
+    does, and a size-less entry that also names a `url` is two kinds in one entry. One
+    `resolveKeep` serves both paths, so inline and staged cannot drift on what "keep" means.
+    (e) **The unheld digest is `INVALID_INPUT`, not `NOT_FOUND`.** The drop was found; the
+    entry the caller wrote is what is wrong, and the frozen catalogue's `NOT_FOUND` is about
+    the target.

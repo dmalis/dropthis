@@ -27,6 +27,7 @@ import {
   checkMetaSize,
   describeIssues,
   fileEntry,
+  isKeepEntry,
   normalizeTitle,
 } from "./fields.js";
 
@@ -67,6 +68,15 @@ export function parsePublishInput(body: unknown): PublishInput {
   const input = parsed.data;
 
   checkFiles(input.files);
+  // The keep kind (#95) names bytes a drop already holds; a drop being created
+  // holds nothing, so it is refused by name rather than resolved to nothing.
+  const keep = input.files.find(isKeepEntry);
+  if (keep !== undefined) {
+    throw new ApiError(
+      "INVALID_INPUT",
+      `${JSON.stringify(keep.path)} carries only a sha256, which keeps a file a drop already has — that is an update entry. A new drop has no files yet: send its bytes as text, base64 or url.`,
+    );
+  }
   if (input.title !== undefined) input.title = normalizeTitle(input.title);
   if (input.meta !== undefined) checkMetaSize(input.meta);
   // Normalized HERE, before it is hashed into the idempotency payload and

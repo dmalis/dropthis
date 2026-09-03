@@ -111,6 +111,7 @@ export async function updateDrop(
       : await resolveFiles(input.files, {
           policy: config.policy,
           held,
+          current: current.manifest,
           budget: newFetchBudget(),
           streamBlob: async (digest, body) =>
             (await putBlob(bucket, blobKey(current.id, digest), body, digest)).size,
