@@ -35,6 +35,18 @@ export const TOKEN_PATH = "/_oauth/token";
 export const REGISTER_PATH = "/_oauth/register";
 export const MCP_PATH = "/_api/mcp";
 
+/**
+ * An access token lives a year (decision #90d, amended 2026-09-03).
+ *
+ * The library's default is an hour, and claude.ai answered that hour by
+ * sending the human back to `/_oauth/authorize` — observed on 2026-09-03,
+ * with no `grant_type=refresh_token` attempt in between (issue #20). A long
+ * token is safe here because the token is never the authority: every request
+ * on `/_api/mcp` resolves it to a key id and re-reads `keys/<id>.json` and
+ * `keyhash/`, so `user remove` still ends the session on the very next call.
+ */
+export const ACCESS_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60;
+
 export type ProviderInput = {
   config: InstanceConfig;
   /** The bucket the refresh check reads; the same one the request carries. */
@@ -66,7 +78,7 @@ export function buildProvider({ config, bucket, protectedHandler, accessTokenTtl
       bearer_methods_supported: ["header"],
       resource_name: "dropthis",
     },
-    ...(accessTokenTtl === undefined ? {} : { accessTokenTTL: accessTokenTtl }),
+    accessTokenTTL: accessTokenTtl ?? ACCESS_TOKEN_TTL_SECONDS,
     /**
      * A refresh is the one moment the provider would mint a token without
      * the bucket being consulted, so the key is checked here too: a grant
