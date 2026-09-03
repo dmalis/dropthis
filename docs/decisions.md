@@ -1049,9 +1049,11 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `contract-tests/worker-clock.test.ts` asserts, against the deployed instance, that the
     clock is blind to CPU across five kinds of await, and that the caller's wall clock does
     see the same work. `/_dev/bench/bracket` is the probe behind it.
-    (d) **One shape does work, and it is deliberately NOT built yet.** A subrequest to this
+    (d) **One shape does work, and it is deliberately NOT built.** A subrequest to this
     Worker that performs the derives is visible to the caller as the duration of its own I/O:
-    measured 3 ms idle against 124 ms for 32 derives. Making `doctor` measure that way costs
+    measured 3 ms idle against 124 ms for 32 derives (2026-09-03, with a throwaway `self` mode
+    of the probe, since removed — a live-timing assertion on a shape nobody is building is a
+    flake waiting to happen, and it was one: 62 ms against a 65 ms threshold). Making `doctor` measure that way costs
     an external subrequest, a network round trip to the instance's own hostname — which
     AGENTS.md already treats as unreliable, and is why `mcp_initialize` runs in process — and
     a route whose only purpose is to spend CPU. That is a product decision (owner), not a

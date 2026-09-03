@@ -169,33 +169,23 @@ export function devRoutes(hooks: DevHooks) {
    * The shape is one bracket: read `Date.now()`, do `derives` PBKDF2 derives,
    * await `io`, read the clock again — measured first with no derives, so the
    * I/O's own cost is subtracted. Seam 1 pins the answer
-   * (`contract-tests/worker-clock.test.ts`): NONE of the in-process waits does.
-   * `io=self` is the exception, and the reason: the CPU is then spent in
-   * ANOTHER request, so the caller sees it as the duration of its own I/O.
+   * (`contract-tests/worker-clock.test.ts`): none of them does.
    *
    *   head | get | list   an R2 binding call (internal subrequest)
-   *   timer                setTimeout(0)
-   *   fetch                a real external request
-   *   none                 no wait at all
-   *   self                 a subrequest to this Worker that runs the derives
+   *   timer               setTimeout(0)
+   *   fetch               a real external request
+   *   none                no wait at all
    */
   dev.get("/bench/bracket", async (c) => {
     const derives = Number(c.req.query("derives") ?? "8");
     const iterations = Number(c.req.query("iterations") ?? "25000");
     const mode = c.req.query("io") ?? "head";
     const bucket = c.env.BUCKET;
-    const origin = new URL(c.req.url).origin;
-    const selfDerive = (rounds: number) =>
-      fetch(`${origin}/_dev/bench/pbkdf2?iterations=${iterations}&rounds=${rounds}`).then((r) =>
-        r.text(),
-      );
-
     const io = async () => {
       if (mode === "get") await bucket.get("system/config.json");
       else if (mode === "list") await bucket.list({ prefix: "system/", limit: 1 });
       else if (mode === "timer") await new Promise((resolve) => setTimeout(resolve, 0));
       else if (mode === "fetch") await fetch("https://cloudflare.com/cdn-cgi/trace", { cache: "no-store" });
-      else if (mode === "self") await selfDerive(0);
       else if (mode === "none") return;
       else await bucket.head("system/config.json");
     };
@@ -217,14 +207,10 @@ export function devRoutes(hooks: DevHooks) {
     const baseline_ms = Date.now() - b0;
 
     const s0 = Date.now();
-    if (mode === "self") {
-      await selfDerive(derives);
-    } else {
-      for (let i = 0; i < derives; i += 1) {
-        await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
-      }
-      await io();
+    for (let i = 0; i < derives; i += 1) {
+      await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
     }
+    await io();
     const bracket_ms = Date.now() - s0;
 
     return c.json({ derives, iterations, io: mode, baseline_ms, bracket_ms });

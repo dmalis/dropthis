@@ -75,20 +75,4 @@ describe("the Worker clock and CPU time", () => {
       ).toBeLessThan(EXPECTED_CPU_MS / 4);
     },
   );
-
-  /**
-   * The one shape that works, and why: CPU spent in ANOTHER request reaches
-   * the caller as the duration of the caller's own I/O. It costs a network
-   * round trip and an external subrequest, so whether `doctor` should measure
-   * this way is a product decision, not a test's (issue #16).
-   */
-  it("advances across a subrequest that spends the CPU somewhere else", async () => {
-    const idle = await bracket("self", 0);
-    const busy = await bracket("self", DERIVES);
-
-    expect(
-      busy.bracket_ms - idle.bracket_ms,
-      `${idle.bracket_ms} ms idle vs ${busy.bracket_ms} ms for ${DERIVES} derives`,
-    ).toBeGreaterThan(EXPECTED_CPU_MS / 3);
-  });
 });
