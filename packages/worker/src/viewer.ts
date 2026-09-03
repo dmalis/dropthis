@@ -47,11 +47,11 @@ const MAX_UNLOCK_BODY_BYTES = 4096;
 export function viewerRoutes(hooks: DevHooks) {
   const viewer = new Hono<{ Bindings: Env }>();
 
-  viewer.get("/:slug", (c) => {
+  viewer.get("/:slug", (c, next) => {
     // A drop is a directory: `/<slug>` redirects to `/<slug>/` so that relative
     // links inside a published page resolve against the drop, not the root.
     const slug = c.req.param("slug");
-    if (!isSlug(slug)) return c.notFound();
+    if (!isSlug(slug)) return next();
     const url = new URL(c.req.url);
     return c.redirect(`${url.pathname}/${url.search}`, 301);
   });
@@ -60,8 +60,9 @@ export function viewerRoutes(hooks: DevHooks) {
    * The unlock form's POST target is the very path the visitor asked for, so
    * unlocking lands them where they were going rather than at the drop root.
    */
-  viewer.post("/:slug/*", async (c) => {
+  viewer.post("/:slug/*", async (c, next) => {
     const gate = await openGate(c, hooks);
+    if (gate.kind === "not_a_drop") return next();
     if (gate.kind === "response") return gate.response;
     // Nothing to unlock: a 404 rather than a 405, so an open drop never
     // advertises an endpoint it does not have.
@@ -93,8 +94,9 @@ export function viewerRoutes(hooks: DevHooks) {
     });
   });
 
-  viewer.get("/:slug/*", async (c) => {
+  viewer.get("/:slug/*", async (c, next) => {
     const gate = await openGate(c, hooks);
+    if (gate.kind === "not_a_drop") return next();
     if (gate.kind === "response") return gate.response;
     if (gate.kind === "not_found") return c.notFound();
     if (gate.kind === "locked") return lockedPage(gate.loaded.meta, false);
@@ -131,16 +133,23 @@ export function viewerRoutes(hooks: DevHooks) {
  * the caller decides what to do about it; `response` is an answer already
  * decided; `not_found` is left to the route, because the 404 page belongs to
  * the app's own handler.
+ *
+ * `not_a_drop` is the one that is NOT an answer: the first segment cannot be a
+ * slug, so this request was never the viewer's. The route hands it on with
+ * `next()` instead of answering, because a route mounted after the viewer —
+ * the dev probes at `/_dev` — would otherwise be shadowed by `/:slug/*`, and
+ * a 404 from here would be the viewer swallowing another route's request.
  */
 type Gate =
   | { kind: "open"; loaded: LoadedDrop }
   | { kind: "locked"; loaded: LoadedDrop; password: PasswordRecord }
   | { kind: "response"; response: Response }
+  | { kind: "not_a_drop" }
   | { kind: "not_found" };
 
 async function openGate(c: Context<{ Bindings: Env }>, hooks: DevHooks): Promise<Gate> {
   const slug = c.req.param("slug") ?? "";
-  if (!isSlug(slug)) return { kind: "not_found" };
+  if (!isSlug(slug)) return { kind: "not_a_drop" };
 
   const loaded = await loadDrop(c.env.BUCKET, slug);
   if (loaded === null) return { kind: "not_found" };
