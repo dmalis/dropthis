@@ -4,6 +4,7 @@ import { hashKey } from "../src/auth/key.js";
 import { DEV_HOOKS } from "../src/dev/enabled-hooks.js";
 import { PRODUCTION_HOOKS } from "../src/dev/hooks.js";
 import { createApp } from "../src/index.js";
+import { ACCESS_TOKEN_TTL_SECONDS } from "../src/oauth/provider.js";
 import { RESERVED_PREFIXES } from "../src/reserved.js";
 import { CONFIG_KEY, keyHashKey, keyRecordKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
@@ -352,8 +353,8 @@ describe("tokens", () => {
     const final = grantPuts[grantPuts.length - 1]!;
     expect(final.options ?? {}).not.toHaveProperty("expiration");
     expect(final.options ?? {}).not.toHaveProperty("expirationTtl");
-    // The access token itself is short-lived (library default).
-    expect(tokens.expires_in).toBe(3600);
+    // The access token itself lives a year (decision #90d, amended; issue #20).
+    expect(tokens.expires_in).toBe(ACCESS_TOKEN_TTL_SECONDS);
   });
 
   it("never lets the key into a token or into KV; the grant names the key id", async () => {
@@ -458,6 +459,27 @@ describe("Client ID Metadata Documents", () => {
     expect(await publishedBy(`Bearer ${tokens.access_token}`)).toEqual({ id: "id-anna", label: "anna" });
   });
 
+  /**
+   * claude.ai is a CIMD client, and issue #20 could not tell whether it even
+   * tried to refresh. The refresh grant is pinned here for that kind of
+   * client too: the metadata document is fetched again at refresh time, so
+   * a client that never registered still gets a new access token.
+   */
+  it("exchanges a refresh token for a client_id that is a metadata URL", async () => {
+    serveMetadata(metadata([REDIRECT]));
+    const tokens = await connect(USER_KEY, CLIENT_ID);
+    const refreshed = await post("/_oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token!,
+      client_id: CLIENT_ID,
+    });
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+    const next = (await refreshed.json()) as { access_token: string; expires_in: number };
+    expect(next.access_token).not.toBe(tokens.access_token);
+    expect(next.expires_in).toBe(ACCESS_TOKEN_TTL_SECONDS);
+    expect(await toolNames(`Bearer ${next.access_token}`)).toEqual(USER_TOOLS);
+  });
+
   it("refuses a redirect the document does not list, locally", async () => {
     serveMetadata(metadata(["http://localhost:8976/other"]));
     const { challenge } = await pkce();
@@ -477,7 +499,19 @@ describe("Client ID Metadata Documents", () => {
   });
 });
 
-describe("the dev build's access-token TTL", () => {
+describe("the access-token TTL", () => {
+  it("is a year by default, and the token's KV write carries that expiration", async () => {
+    expect(ACCESS_TOKEN_TTL_SECONDS).toBe(365 * 24 * 60 * 60);
+    const tokens = await connect(USER_KEY);
+    expect(tokens.expires_in).toBe(ACCESS_TOKEN_TTL_SECONDS);
+
+    const written = kv.puts.filter((put) => put.key.startsWith("token:"));
+    expect(written.length).toBeGreaterThan(0);
+    for (const put of written) {
+      expect(put.options?.expirationTtl, `token ${put.key}`).toBe(ACCESS_TOKEN_TTL_SECONDS);
+    }
+  });
+
   it("honours DEV-Access-TTL only with DEV_ROUTES=1; production ignores it", async () => {
     const withHeader = (application: ReturnType<typeof createApp>, environment: Env) => async () => {
       const clientId = await (async () => {
@@ -505,7 +539,9 @@ describe("the dev build's access-token TTL", () => {
 
     const base = env;
     expect(await withHeader(createApp(DEV_HOOKS), { ...base, DEV_ROUTES: "1" })()).toBe(60);
-    expect(await withHeader(createApp(DEV_HOOKS), { ...base })()).toBe(3600);
-    expect(await withHeader(createApp(PRODUCTION_HOOKS), { ...base, DEV_ROUTES: "1" })()).toBe(3600);
+    expect(await withHeader(createApp(DEV_HOOKS), { ...base })()).toBe(ACCESS_TOKEN_TTL_SECONDS);
+    expect(await withHeader(createApp(PRODUCTION_HOOKS), { ...base, DEV_ROUTES: "1" })()).toBe(
+      ACCESS_TOKEN_TTL_SECONDS,
+    );
   });
 });

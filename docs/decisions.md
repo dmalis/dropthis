@@ -769,6 +769,21 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `tokenExchangeCallback` and answers `401 invalid_grant` after `user remove`. A DCR
     client that expired after 90 days would have ended a connection on its own — hence
     the client TTL too.
+    **Amended 2026-09-03 (issue #20): an access token lives a year too.** The library
+    default was one hour, and the owner's claude.ai connector answered that hour by
+    sending the human back to `/_oauth/authorize` — observed on dev8 at 18:39Z, with
+    the two discovery documents fetched and **no `POST /_oauth/token
+    grant_type=refresh_token` in between**; the grant had never been refreshed
+    (`previousRefreshTokenId` absent). So "a connection never expires on its own" was
+    true of the grant and false of the experience. `accessTokenTTL` is now
+    `365 * 24 * 60 * 60` for every build; `DEV-Access-TTL` (g) still shortens one token
+    so the refresh path stays a 62-second test. A long access token costs nothing here
+    because the token is never the authority: `/_api/mcp` resolves every token to a key
+    id and re-reads `keys/<id>.json` and `keyhash/` on EVERY request, so `user remove`
+    ends the session on the very next call whatever the token's own lifetime says. The
+    refresh grant itself was never at fault — it works for CIMD clients (the shape
+    claude.ai uses) both before and after this change, pinned in
+    `packages/worker/test/oauth-flow.test.ts` and `contract-tests/oauth.test.ts`.
     (e) **The CIMD cache is the library's:** a Cache API entry honouring the document's
     own `Cache-Control`, capped at 7 days, not the KV-with-TTL the spec sketched. A second
     cache would be a second store of the same document; the library evicts a cached
