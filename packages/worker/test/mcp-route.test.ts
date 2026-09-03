@@ -298,3 +298,59 @@ describe("tools/call runs the registry operation", () => {
     expect(textOf(config)).toContain("max_request_bytes");
   });
 });
+
+/**
+ * Issue #19: `upload.create` names the drop with its OWN body field `target`,
+ * not a path parameter, so the MCP layer resolves it in place — the one thing
+ * `takesTarget` does not cover. What is pinned here is the translation; the
+ * three-step handshake itself is proven against real R2 in
+ * `contract-tests/mcp.test.ts`.
+ */
+describe("dropthis_upload resolves target the way every other drop tool does", () => {
+  const manifest = [{ path: "big.bin", size: 3, sha256: "a".repeat(64) }];
+
+  const open = (client: Client, target?: string) =>
+    call(client, "dropthis_upload", target === undefined ? { manifest } : { target, manifest });
+
+  it("takes the canonical URL, an alias URL and a bare slug for the same drop", async () => {
+    const client = await connect(USER_KEY);
+    const published = await call(client, "dropthis_publish", HELLO);
+    const { slug } = published.structuredContent as { slug: string };
+
+    for (const target of [`${ORIGIN}/${slug}/`, `https://alias.test/${slug}/`, slug]) {
+      const session = await open(client, target);
+      expect(session.isError, `${target}: ${textOf(session)}`).toBeFalsy();
+      expect(session.structuredContent).toMatchObject({ slug });
+    }
+  });
+
+  it("answers another instance's URL with WRONG_INSTANCE, before any storage", async () => {
+    const client = await connect(USER_KEY);
+    const before = bucket.keys().length;
+    const session = await open(client, "https://someone-else.example/abcdefghij/");
+    expect(session.isError).toBe(true);
+    expect((session.structuredContent as { error: { code: string } }).error.code).toBe(
+      "WRONG_INSTANCE",
+    );
+    expect(bucket.keys().length).toBe(before);
+  });
+
+  it("opens a new drop when target is omitted, and signs put_urls on the canonical origin", async () => {
+    const client = await connect(USER_KEY);
+    const session = await open(client);
+    expect(session.isError, textOf(session)).toBeFalsy();
+    const value = session.structuredContent as {
+      upload_id: string;
+      slug: string;
+      missing: string[];
+      put_urls: Record<string, string>;
+    };
+    expect(value.missing).toEqual(["a".repeat(64)]);
+    const url = value.put_urls["a".repeat(64)]!;
+    expect(url.startsWith(`${ORIGIN}/_api/v1/uploads/${value.upload_id}/blobs/`)).toBe(true);
+    // The signature is the PUT's only credential; the key is never in the URL.
+    expect(url).toContain("sig=");
+    expect(url).not.toContain(USER_KEY);
+    expect(textOf(session)).toContain("then dropthis_commit");
+  });
+});
