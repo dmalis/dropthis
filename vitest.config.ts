@@ -14,6 +14,23 @@ const markdownAsText = {
   },
 };
 
+/**
+ * `@cloudflare/workers-oauth-provider` imports `cloudflare:workers` at load,
+ * and under Node that module does not exist. Every project that loads the
+ * Worker app needs the stub: the unit tests run it in-process, and the `cli`
+ * tests serve it on localhost for the binary to talk to.
+ */
+const workersRuntimeStub = {
+  alias: {
+    "cloudflare:workers": new URL(
+      "./packages/worker/test/stubs/cloudflare-workers.ts",
+      import.meta.url,
+    ).pathname,
+  },
+  // Inlined so the alias applies: an external module is loaded by Node itself.
+  server: { deps: { inline: ["@cloudflare/workers-oauth-provider"] } },
+};
+
 export default defineConfig({
   test: {
     projects: [
@@ -22,6 +39,7 @@ export default defineConfig({
         plugins: [markdownAsText],
         test: {
           name: "unit",
+          ...workersRuntimeStub,
           // The unit project runs FIRST and alone (groupOrder). Its installer
           // tests each start a localhost fake of the Cloudflare API; running
           // them beside the contract project's twenty minutes of network I/O
@@ -41,6 +59,7 @@ export default defineConfig({
         plugins: [markdownAsText],
         test: {
           name: "cli",
+          ...workersRuntimeStub,
           /**
            * Seam 2: the built `dropthis` binary as a subprocess, against the
            * real Worker app served on localhost. One build per run (the

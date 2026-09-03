@@ -44,7 +44,7 @@ export type FakeInstance = {
 
 export async function startFakeInstance(options: FakeInstanceOptions): Promise<FakeInstance> {
   const bucket = memoryBucket();
-  const env: Env = { BUCKET: bucket, OAUTH_KV: {}, HMAC_SECRET: "s".repeat(32), DEV_ROUTES: "1" };
+  const env: Env = { BUCKET: bucket, OAUTH_KV: {} as never, HMAC_SECRET: "s".repeat(32), DEV_ROUTES: "1" };
 
   const seedKey = async (key: string, id: string, label: string, scope: "admin" | "user") => {
     const hash = await hashKey(key);

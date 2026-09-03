@@ -1,8 +1,9 @@
 /**
  * `POST /_api/mcp` — MCP over Streamable HTTP, bearer (AGENTS.md, "Auth").
  *
- * The route does four things and nothing else: authenticate before the body
- * is read (a stranger's payload costs nothing); read the instance config;
+ * The route does four things and nothing else: read the instance config;
+ * authenticate before the body is read (a stranger's payload costs nothing)
+ * — bearer header if present, else OAuth, one function (`oauth/caller.ts`);
  * bound and parse the body with the same cap REST uses; hand the parsed
  * JSON-RPC message to a fresh, stateless transport wired to a server built for
  * this caller. There is no session: a Worker keeps nothing between requests,
@@ -16,7 +17,6 @@
  */
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Hono } from "hono";
-import { resolveMcpCaller } from "../auth/caller.js";
 import type { Env } from "../bindings.js";
 import type { DevHooks } from "../dev/hooks.js";
 import { ERRORS, errorBody } from "../errors.js";
@@ -24,6 +24,7 @@ import { loadInstanceConfig } from "../instance-config.js";
 import { readJsonBody } from "../registry/invoke.js";
 import type { SelfFetch } from "../registry/invoke.js";
 import { mcpServer } from "../mcp/server.js";
+import { resolveMcpCaller } from "../oauth/caller.js";
 import { errorResponse, toApiError } from "./errors.js";
 
 export const MCP_PATH = "/_api/mcp";
@@ -50,8 +51,10 @@ export function mcpRoutes(hooks: DevHooks, self: SelfFetch) {
     }
 
     try {
-      const caller = await resolveMcpCaller(request, c.env.BUCKET);
+      // The config first: the OAuth check needs the canonical origin (the
+      // token's audience). Neither read touches the body.
       const config = await loadInstanceConfig(c.env.BUCKET, request.url);
+      const caller = await resolveMcpCaller(request, c.env, config, hooks);
       const parsedBody = await readJsonBody(request, config.policy.max_request_bytes);
 
       const server = mcpServer({ env: c.env, config, caller, request, hooks, self });

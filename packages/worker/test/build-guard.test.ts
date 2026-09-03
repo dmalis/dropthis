@@ -52,6 +52,7 @@ describe("production bundle", () => {
     expect(bundle).not.toContain("DEV_CLOCK");
     expect(bundle).not.toContain("DEV-Clock");
     expect(bundle).not.toContain("DEV-Fault");
+    expect(bundle).not.toContain("DEV-Access-TTL");
   }, 120_000);
 
   it("still contains the product's own routes", async () => {
@@ -63,6 +64,7 @@ describe("production bundle", () => {
     expect(bundle).toContain("/health");
     expect(bundle).toContain("/drops");
     expect(bundle).toContain("/users");
+    expect(bundle).toContain("/_oauth/authorize");
     expect(bundle).toContain("/_api/mcp");
     // The served skill ships as a text module beside the bundle (the `Text`
     // rule); the bundle imports it by name.

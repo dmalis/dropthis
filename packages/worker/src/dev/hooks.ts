@@ -23,9 +23,16 @@ export type DevHooks = {
    * whatever comes next.
    */
   fault(request: Request, env: Env): string | undefined;
+  /**
+   * The lifetime of the OAuth access token THIS token request mints, in
+   * seconds, or `undefined` for the provider's default (one hour). Only the
+   * dev build answers: the refresh flow cannot be tested by waiting an hour.
+   */
+  accessTokenTtl(request: Request, env: Env): number | undefined;
 };
 
 export const PRODUCTION_HOOKS: DevHooks = {
   now: () => new Date(),
   fault: () => undefined,
+  accessTokenTtl: () => undefined,
 };

@@ -56,9 +56,20 @@ export type Bucket = R2BucketLike & {
   list(options?: R2ListOptions): Promise<R2Listing>;
 };
 
+/**
+ * The KV binding, as `@cloudflare/workers-oauth-provider` uses it. dropthis
+ * itself never reads or writes `OAUTH_KV`; the provider owns every key in it.
+ */
+export type KvNamespaceLike = {
+  get(key: string, options?: { type?: string } | string): Promise<unknown>;
+  put(key: string, value: string, options?: Record<string, unknown>): Promise<void>;
+  delete(key: string): Promise<void>;
+  list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<unknown>;
+};
+
 export type Env = {
   BUCKET: Bucket;
-  OAUTH_KV: unknown;
+  OAUTH_KV: KvNamespaceLike;
   HMAC_SECRET?: string;
   /** "1" only in the throwaway dev instance; see `src/dev/routes.ts`. */
   DEV_ROUTES?: string;

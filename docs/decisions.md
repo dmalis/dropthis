@@ -748,3 +748,42 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `cli/surface.ts` is the one list; a future secret field gets the same companion flag
     automatically.
 
+90. **The OAuth slice's rulings (issue #12).** The spec left these open; each is recorded
+    with why the other way was worse.
+    (a) **The paste-key form posts back to the SAME query it was served from.** The
+    provider re-parses and re-validates client, redirect and PKCE on submit; nothing about
+    the client is trusted from a hidden field (the spike carried the parsed request in one).
+    (b) **On `/_api/mcp` the bearer value is tried as a raw key first** (one `keyhash/`
+    GET), and handed to the provider only when it is not one — the literal "header if
+    present, else OAuth". Both refusals are `401 UNAUTHENTICATED` with the frozen error
+    object; the provider's `WWW-Authenticate` with the `resource_metadata` pointer is kept
+    on it, because that header is how a browser client finds the authorize page.
+    (c) **The provider is built per request from `system/config.json`,** so issuer,
+    resource and discovery documents name the canonical origin (a value in the bucket);
+    a GET/HEAD under `/_oauth/*` or `/.well-known/oauth-*` on an alias origin is 301'd
+    to it. A POST on an alias is served as-is: a 301 would lose the body.
+    (d) **A connection never expires on its own** (owner amendment, 2026-09-03):
+    `refreshTokenTTL` and `clientRegistrationTTL` are explicitly `undefined` (the
+    library's "never"); the grant's final write carries no expiration (pinned in memory
+    and read back from the deployed KV); a refresh re-reads `keys/<id>.json` through
+    `tokenExchangeCallback` and answers `401 invalid_grant` after `user remove`. A DCR
+    client that expired after 90 days would have ended a connection on its own — hence
+    the client TTL too.
+    (e) **The CIMD cache is the library's:** a Cache API entry honouring the document's
+    own `Cache-Control`, capped at 7 days, not the KV-with-TTL the spec sketched. A second
+    cache would be a second store of the same document; the library evicts a cached
+    document that stops validating in the same request; a `no-store` document is never
+    cached. Private `client_id` URLs are refused by `domain/public-url.ts` before any
+    fetch — the guard `url` file entries will share — and `global_fetch_strictly_public`
+    (now in `wrangler.jsonc`) covers what only DNS reveals.
+    (f) **`/.well-known` joins `RESERVED_PREFIXES`.** The discovery documents live there
+    by RFC; a slug cannot start with `.`, but the control plane's 404 must be the
+    machine-readable one.
+    (g) **The dev build shortens one access token on request** (`DEV-Access-TTL`, ≥ 60 s,
+    `DEV_ROUTES=1` only), so "after the access token's lifetime a refresh works with no
+    one at the keyboard" is a 62-second test, not an hour. `build-guard.test.ts` pins that
+    the header name is absent from a production bundle.
+    (h) **Grant `props` hold the key id and nothing else;** scope is read from the key
+    record at request time, never from the grant, so a rotated or re-scoped key is
+    never served stale. The grant's `userId` is the key id (the library keeps it in the
+    clear for enumeration), so `OAUTH_KV` holds key ids and hashed tokens only.
