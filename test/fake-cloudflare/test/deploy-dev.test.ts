@@ -42,6 +42,7 @@ async function readRendered(path: string) {
     name: string;
     main: string;
     vars?: Record<string, string>;
+    triggers?: unknown;
     r2_buckets: Array<{ binding: string; bucket_name: string }>;
     kv_namespaces: Array<{ binding: string; id: string }>;
   };
@@ -236,6 +237,9 @@ describe("deploy-dev renders the dev build", () => {
     const rendered = await readRendered(out);
     expect(rendered.main.endsWith("packages/worker/src/dev-entry.ts")).toBe(true);
     expect(rendered.vars).toEqual({ DEV_ROUTES: "1" });
+    // The Free plan allows five cron triggers PER ACCOUNT. A dev instance
+    // drives the cron through `POST /_dev/cron`, so it must not spend one.
+    expect(rendered.triggers).toBeUndefined();
   });
 
   it("mints HMAC_SECRET once and reuses it on every later run", async () => {

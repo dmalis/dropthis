@@ -150,7 +150,7 @@ describe("doctor", () => {
     expect(report.ok).toBe(true);
 
     const skipped = report.checks.filter((check) => check.status === "skip").map((c) => c.id);
-    expect(skipped).toEqual(["mcp_initialize", "cron_state"]);
+    expect(skipped).toEqual(["mcp_initialize"]);
   });
 
   it("publishes and cleans up a real drop, leaving the instance as it found it", async () => {

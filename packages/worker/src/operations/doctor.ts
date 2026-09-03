@@ -18,6 +18,7 @@ import type { Bucket } from "../bindings.js";
 import { expiringMarkerDate } from "../domain/expiry.js";
 import {
   CONFIG_KEY,
+  PRUNE_STATE_KEY,
   blobKey,
   expiringKey,
   listKey,
@@ -78,6 +79,14 @@ export type DoctorContext = {
 export const UNLOCK_BUDGET_MS = 8;
 
 /**
+ * How far the cron's checkpoint may fall behind today before the instance is
+ * called stranded. One day of slack absorbs the ordinary case — a checkpoint
+ * written at 23:59 read at 00:01 — so only a cron that has actually stopped,
+ * or one whose budget cannot keep up with the bucket, fails the check.
+ */
+export const CRON_LAG_DAYS = 2;
+
+/**
  * Derives to time before judging. The cost of a derive is what the check is
  * about; a single sample also measures whatever else the machine was doing at
  * that moment, so the report is the FASTEST of a few — the honest floor of
@@ -100,17 +109,75 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
       evidence: "This instance has no MCP endpoint yet; it arrives with issue #8.",
     },
     policyReadable(stored),
-    {
-      id: "cron_state",
-      status: "skip",
-      evidence: "This instance runs no cron yet; it arrives with issue #6.",
-    },
+    await cronState(ctx),
     canonicalOrigin(stored),
     await pbkdf2Benchmark(ctx),
     await adminRotationClean(ctx),
   ];
 
   return { ok: checks.every((check) => check.status !== "fail"), checks };
+}
+
+/**
+ * Has the cron run, and is it keeping up?
+ *
+ * A checkpoint that has never been written is not a failure: a fresh instance
+ * has simply not had its first hour yet. A checkpoint stuck days in the past
+ * is, because it means either the trigger is gone or `cron_ops_budget` is too
+ * small for the bucket — and either way expired drops are piling up.
+ */
+async function cronState(ctx: DoctorContext): Promise<CheckResult> {
+  const object = await ctx.bucket.get(PRUNE_STATE_KEY);
+  if (object === null) {
+    return {
+      id: "cron_state",
+      status: "pass",
+      evidence: "The cron has not run yet; it has no checkpoint to be stranded at.",
+    };
+  }
+
+  let state: { oldest_pending_date?: unknown; updated?: unknown };
+  try {
+    state = JSON.parse(await object.text()) as typeof state;
+  } catch {
+    return {
+      id: "cron_state",
+      status: "fail",
+      evidence: `${PRUNE_STATE_KEY} is not readable JSON.`,
+      remediation: `Delete ${PRUNE_STATE_KEY}; the next cron run rebuilds it from the bucket.`,
+    };
+  }
+
+  const date = typeof state.oldest_pending_date === "string" ? state.oldest_pending_date : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return {
+      id: "cron_state",
+      status: "fail",
+      evidence: `${PRUNE_STATE_KEY} holds no usable oldest_pending_date.`,
+      remediation: `Delete ${PRUNE_STATE_KEY}; the next cron run rebuilds it from the bucket.`,
+    };
+  }
+
+  const today = ctx.now.toISOString().slice(0, 10);
+  const lagDays = Math.round(
+    (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000,
+  );
+
+  if (lagDays > CRON_LAG_DAYS) {
+    return {
+      id: "cron_state",
+      status: "fail",
+      evidence: `The cron is ${lagDays} days behind: it is still working on ${date}.`,
+      remediation:
+        "Confirm the Worker has its hourly cron trigger, then raise cron_ops_budget with `config set`.",
+    };
+  }
+
+  return {
+    id: "cron_state",
+    status: "pass",
+    evidence: `The cron is up to date; its oldest pending day is ${date}.`,
+  };
 }
 
 /**

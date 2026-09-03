@@ -11,11 +11,14 @@
 import { Hono } from "hono";
 import type { Env } from "../bindings.js";
 import { errorBody, ERRORS } from "../errors.js";
+import { loadInstanceConfig } from "../instance-config.js";
+import { runCron } from "../operations/cron.js";
 import { StorageError, casPut, claimKey, createPut, mapStorageError, putBlob } from "../storage/r2.js";
+import type { DevHooks } from "./hooks.js";
 
 const encoder = new TextEncoder();
 
-export function devRoutes() {
+export function devRoutes(hooks: DevHooks) {
   const dev = new Hono<{ Bindings: Env }>();
 
   dev.use("*", async (c, next) => {
@@ -217,6 +220,40 @@ export function devRoutes() {
       cursor = listing.truncated ? listing.cursor : undefined;
     } while (cursor !== undefined);
     return c.json({ prefix, keys });
+  });
+
+  /**
+   * Runs the hourly cron NOW, through the same function the scheduled handler
+   * calls — a contract test cannot wait an hour, and asserting the cron on a
+   * copy of its logic would assert nothing. `budget` overrides
+   * `cron_ops_budget` for this one run, so the budget-exhausted case can be
+   * proven without a `config set` that would leak into every other test file.
+   */
+  dev.post("/cron", async (c) => {
+    const body = await c.req.json<{ budget?: number; force?: "sweep" | "reconcile" }>().catch(
+      () => ({}) as { budget?: number; force?: "sweep" | "reconcile" },
+    );
+    const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
+    return c.json(
+      await runCron({
+        bucket: c.env.BUCKET,
+        now: hooks.now(c.env, c.req.raw),
+        budget: body.budget ?? config.policy.cron_ops_budget,
+        ...(body.force === undefined ? {} : { force: body.force }),
+      }),
+    );
+  });
+
+  /**
+   * Deletes named keys, so a test can BREAK the bucket on purpose — a missing
+   * `list/` entry, an orphaned pointer — and then assert that the reconcile
+   * puts it right. There is no product operation that can do this, and a
+   * repair nobody can trigger is a repair nobody has tested.
+   */
+  dev.post("/r2/delete", async (c) => {
+    const { keys } = await c.req.json<{ keys: string[] }>();
+    if (keys.length > 0) await c.env.BUCKET.delete(keys);
+    return c.json({ deleted: keys.length });
   });
 
   /** Empties the bucket so a contract run starts from nothing. */

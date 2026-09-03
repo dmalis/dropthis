@@ -23,14 +23,24 @@ export type R2Range =
   | { suffix: number };
 
 export type R2Listing = {
-  objects: Array<R2WriteResult & { key: string }>;
+  objects: Array<
+    R2WriteResult & {
+      key: string;
+      /** When R2 stored it. The reconcile will not remove a blob younger than
+       * a day: a publish writes blobs BEFORE the `meta.json` that names them. */
+      uploaded?: Date;
+      customMetadata?: Record<string, string>;
+    }
+  >;
   truncated: boolean;
   cursor?: string;
 };
 
 export type Bucket = R2BucketLike & {
   get(key: string, options?: { range?: R2Range }): Promise<R2ObjectBody | null>;
-  head(key: string): Promise<(R2WriteResult & { key: string }) | null>;
+  head(
+    key: string,
+  ): Promise<(R2WriteResult & { key: string; customMetadata?: Record<string, string> }) | null>;
   delete(keys: string | string[]): Promise<void>;
   list(options?: {
     prefix?: string;
