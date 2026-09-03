@@ -13,7 +13,8 @@ import type { Operation, OperationContext } from "./types.js";
 
 const manifestEntry = z.strictObject({
   path: z.string(),
-  size: z.number(),
+  /** Absent = keep what the target drop already holds under this digest (#95). */
+  size: z.number().optional(),
   sha256: z.string(),
   /** A public http(s) URL the instance fetches at commit, instead of a PUT. */
   url: z.string().optional(),

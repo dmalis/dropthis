@@ -29,7 +29,7 @@
  */
 import { contentTypeForPath, textEntryContentType } from "../domain/content-type.js";
 import { sha256Hex } from "../domain/meta.js";
-import type { Manifest } from "../domain/meta.js";
+import type { Manifest, ManifestEntry } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
 import { ApiError } from "../errors.js";
 import { StorageError } from "../storage/r2.js";
@@ -132,9 +132,9 @@ export async function resolveFiles(
     }
 
     if (!("text" in entry) && !("base64" in entry)) {
-      const file = keepEntry(entry, path, current, held);
-      files.push(file);
-      manifest[path] = { sha256: file.sha256, size: file.size, content_type: file.contentType };
+      const kept = resolveKeep(path, entry.sha256, current, held);
+      files.push({ path, sha256: kept.sha256, contentType: kept.content_type });
+      manifest[path] = kept;
       continue;
     }
 
@@ -180,24 +180,26 @@ export async function resolveFiles(
  * kept blob under a NEW path is typed from the extension table, exactly as any
  * other entry at that path would be.
  */
-function keepEntry(
-  entry: { path: string; sha256: string },
+export function resolveKeep(
   path: string,
+  sha256: string,
   current: Manifest,
-  held: ReadonlyMap<string, number>,
-): ResolvedFile & { size: number } {
+  held?: ReadonlyMap<string, number>,
+): ManifestEntry {
   const at = current[path];
-  if (at !== undefined && at.sha256 === entry.sha256) {
-    return { path, sha256: at.sha256, contentType: at.content_type, size: at.size };
+  if (at !== undefined && at.sha256 === sha256) {
+    return { sha256: at.sha256, size: at.size, content_type: at.content_type };
   }
-  const size = held.get(entry.sha256);
+  const sizes =
+    held ?? new Map(Object.values(current).map((entry) => [entry.sha256, entry.size] as const));
+  const size = sizes.get(sha256);
   if (size === undefined) {
     throw new ApiError(
       "INVALID_INPUT",
-      `This drop holds no file with sha256 ${entry.sha256}, so ${JSON.stringify(path)} cannot be kept. Send its bytes, or read the current digests with get.`,
+      `This drop holds no file with sha256 ${sha256}, so ${JSON.stringify(path)} cannot be kept. Send its bytes, or read the current digests with get.`,
     );
   }
-  return { path, sha256: entry.sha256, contentType: contentTypeForPath(path), size };
+  return { sha256, size, content_type: contentTypeForPath(path) };
 }
 
 type UrlEntry = Extract<PublishFile, { url: string }>;
