@@ -81,6 +81,23 @@ describe("runInit — rerun", () => {
     expect(cf.state.namespaces.filter((n) => n.title === "dropthis-main-oauth")).toHaveLength(1);
     expect(first.adminKey).not.toBeUndefined();
   });
+
+  it("repairs a KV namespace deleted out from under a live instance", async () => {
+    const cf = await fake();
+    const deploy = vi.fn().mockResolvedValue(undefined);
+    const first = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+    const deletedId = cf.state.namespaces.find((n) => n.title === "dropthis-main-oauth")!.id;
+    cf.state.namespaces = cf.state.namespaces.filter((n) => n.id !== deletedId);
+
+    const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy });
+
+    expect(second.ok).toBe(true);
+    expect(second.adminKeyStatus).toBe("existing");
+    const recreated = cf.state.namespaces.find((n) => n.title === "dropthis-main-oauth");
+    expect(recreated).toBeDefined();
+    expect(cf.state.namespaces).toHaveLength(1);
+    expect(first.adminKey).not.toBeUndefined();
+  });
 });
 
 describe("runInit — dry-run", () => {
