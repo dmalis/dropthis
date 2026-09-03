@@ -55,7 +55,7 @@ describe("dropthis commands --json", () => {
     const publish = surface[0]!;
     expect(publish.arguments).toEqual([{ name: "paths", kind: "files", required: true, variadic: true }]);
     expect((publish.options as Array<{ flag: string }>).map((o) => o.flag)).toEqual([
-      "--title", "--meta", "--password", "--expires", "--noindex", "--idempotency-key",
+      "--title", "--meta", "--password", "--expires", "--noindex", "--slug", "--idempotency-key",
       "--password-stdin",
     ]);
     expect(surface.find((entry) => entry.command === "prune")!.steps).toBe(true);

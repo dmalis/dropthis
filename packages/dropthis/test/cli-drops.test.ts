@@ -65,6 +65,38 @@ describe("publish", () => {
     expect((oneJsonDocument(second.stdout) as Json).slug).toBe(drop.slug);
   });
 
+  /** Issue #18: the chosen slug is a flag the registry generated, not CLI code. */
+  it("--slug puts the drop at the chosen path, and refuses it a second time", async () => {
+    const first = await runCli(
+      ["publish", join(site, "index.html"), "--slug", "Spring-2026 ", "--json"],
+      { env },
+    );
+    expect(first.code, first.stderr).toBe(0);
+    const drop = oneJsonDocument(first.stdout) as Json;
+    expect(drop.slug).toBe("spring-2026");
+    expect(drop.url).toBe(`${instance.url}/spring-2026/`);
+    expect(await (await fetch(String(drop.url))).text()).toBe("<h1>site</h1>");
+
+    const again = await runCli(
+      ["publish", join(site, "index.html"), "--slug", "spring-2026", "--json"],
+      { env },
+    );
+    expect(again.code).toBe(1);
+    const error = oneJsonDocument(again.stderr) as Json;
+    expect(error.code).toBe("SLUG_TAKEN");
+    expect(error.retryable).toBe(false);
+    expect(error.remediation).toContain("update");
+
+    // The first drop is untouched: the pointer still answers with its bytes.
+    expect(await (await fetch(String(drop.url))).status).toBe(200);
+  });
+
+  it("refuses a chosen slug that is not a slug, before anything is written", async () => {
+    const run = await runCli(["publish", join(site, "index.html"), "--slug", "_api", "--json"], { env });
+    expect(run.code).toBe(1);
+    expect((oneJsonDocument(run.stderr) as Json).code).toBe("INVALID_INPUT");
+  });
+
   it("publishes a directory with relative paths, binaries included", async () => {
     const run = await runCli(["publish", site, "--json"], { env });
     expect(run.code, run.stderr).toBe(0);
