@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { hashKey } from "../src/auth/key.js";
 import type { Env } from "../src/bindings.js";
-import { CHECK_IDS, CRON_LAG_DAYS } from "../src/operations/doctor.js";
+import { BENCHMARK_DERIVES, CHECK_IDS, CRON_LAG_DAYS } from "../src/operations/doctor.js";
 import { createApp } from "../src/index.js";
 import { INITIAL_POLICY } from "../src/policy/defaults.js";
 import { CONFIG_KEY, PRUNE_STATE_KEY, keyHashKey, keyRecordKey, userKey } from "../src/storage/keys.js";
@@ -170,12 +170,33 @@ describe("doctor", () => {
     expect(bucket.keys()).toEqual(before);
   });
 
-  it("times PBKDF2 at the instance's own iteration count", async () => {
+  /**
+   * The number, not just a number: a pass that reports 0 ms per derive is the
+   * bug this check had on every deployed instance (issue #16), and it looked
+   * healthy. The evidence has to carry the method too, so an operator can see
+   * what was subtracted before raising `pbkdf2_iterations`.
+   */
+  it("times PBKDF2 at the instance's own iteration count, and says how", async () => {
     const report = await run();
     const check = checkOf(report, "pbkdf2_benchmark");
 
     expect(check.evidence).toContain(String(INITIAL_POLICY.pbkdf2_iterations));
-    expect(check.evidence).toMatch(/\d+ ms/);
+    expect(check.evidence).toContain(`${BENCHMARK_DERIVES} derives per bracket`);
+    expect(check.evidence).toMatch(/baseline/);
+
+    if (check.status === "inconclusive") {
+      expect(check.remediation ?? "").not.toBe("");
+      return;
+    }
+    const perDerive = Number(/cost ([\d.]+) ms per derive/.exec(check.evidence)?.[1]);
+    expect(perDerive, check.evidence).toBeGreaterThan(0);
+  });
+
+  it("never turns the report red just because it could not measure", async () => {
+    const report = await run();
+
+    if (checkOf(report, "pbkdf2_benchmark").status !== "inconclusive") return;
+    expect(report.ok).toBe(true);
   });
 
   it("fails when the config is unreadable, and says how to fix it", async () => {

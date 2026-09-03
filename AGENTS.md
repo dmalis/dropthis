@@ -274,8 +274,11 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   Stored as PBKDF2-SHA256 at policy `pbkdf2_iterations` (**25,000 by default, measured**:
   6.1 ms per derive on Free, the highest count inside the 8 ms unlock budget — 50,000 costs
   12.5 ms and workerd refuses 200,000 outright; `doctor`'s `pbkdf2_benchmark` re-measures
-  the deployed instance and the operator raises it with `config set`). Unlock = an HMAC
-  cookie signed over `{slug, nonce, expires_at}`: host-only, `Secure`, `HttpOnly`,
+  the deployed instance and the operator raises it with `config set` — a Worker freezes
+  `Date.now()` between I/O, so it times 8 derives inside a bracket closed by an R2 read,
+  subtracts the same bracket with no derives, takes the fastest of two, and reports
+  `inconclusive` rather than a number when that baseline is half the signal or more, #16).
+  Unlock = an HMAC cookie signed over `{slug, nonce, expires_at}`: host-only, `Secure`, `HttpOnly`,
   `SameSite=Lax`, `Path=/<slug>/`. `nonce` rotates only when effective access changes (new, generated or removed password;
   re-sending the current password is a no-op), so a real change invalidates every cookie. No attempt rate limiting in v1; `SECURITY.md`
   says so plainly. `password: null` removes it.
@@ -441,7 +444,8 @@ structured `connect` object (per-client MCP snippets and a ready-to-send message
 onboarding a person is one call. `doctor` is a named check registry (#29), instance key only:
 `hello_drop`, `mcp_initialize`, `policy_readable`, `cron_state`, `canonical_origin`,
 `pbkdf2_benchmark`, `admin_rotation_clean`; `doctor --list --json` lists ids, `doctor
---json` returns `{ok, checks: [{id, status, evidence, remediation}]}`. Account-level checks
+--json` returns `{ok, checks: [{id, status: pass|fail|skip|inconclusive, evidence,
+remediation}]}` (`inconclusive` never makes `ok` false). Account-level checks
 (`lifecycle_rules`, `kv_bound`, `domain_attached`) belong to `init --check`, which needs the
 Cloudflare token. `host_*` comes after v1.
 

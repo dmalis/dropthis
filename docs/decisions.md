@@ -965,3 +965,30 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     (e) **The unheld digest is `INVALID_INPUT`, not `NOT_FOUND`.** The drop was found; the
     entry the caller wrote is what is wrong, and the frozen catalogue's `NOT_FOUND` is about
     the target.
+
+97. **`pbkdf2_benchmark` measures across an I/O bracket, and may answer `inconclusive`
+    (issue #16, 2026-09-03).** The check timed one derive with `Date.now()` and reported
+    `0 ms — inside the 8 ms budget` on every deployed instance. A Worker freezes
+    `Date.now()` and `performance.now()` inside a request; the clock catches up only at an
+    I/O boundary. So the one target the check exists for was the one place it measured
+    nothing, and it said "pass" while doing it. Node and Miniflare both hid this: their
+    clocks run free. The rulings the spec left open:
+    (a) **Eight derives per bracket, best of two brackets, minus the fastest of three
+    zero-derive brackets.** Eight at 25,000 iterations is ~50 ms of signal against an R2
+    `head` that costs single-digit milliseconds, so the subtraction is a correction and not
+    the measurement. Two signal brackets rather than the spec's one: at 8 ms of budget a
+    single slow round trip is the difference between `pass` and a false `fail`, and taking
+    the fastest costs eight more derives, not a new mechanism. Both mins are the honest
+    floor, the same rule the old three-round check used.
+    (b) **A fifth check status, `inconclusive`, and it never makes `ok` false.** A busy
+    instance cannot separate the derive from its own I/O; reporting a number then would be
+    the original bug with more arithmetic behind it. `fail` was wrong because nothing is
+    broken, and `skip` was wrong because the check ran. The line is `baseline ≥ signal / 2`,
+    and the remediation is to run `doctor` again.
+    (c) **The I/O is `head` on `system/config.json`.** A key every instance has, one real
+    binding round trip, no write, nothing to clean up — and `doctor` already reads that key.
+    (d) **`evidence` carries the method, not just the number.** Per-derive ms, the derive
+    count, the bracket count and the subtracted baseline, because an operator is being asked
+    to raise `pbkdf2_iterations` on the strength of it. A `pass` that carries 0 ms is now a
+    contract-test failure against the deployed instance, which is where it had to be pinned:
+    the Node seam still measures the laptop.

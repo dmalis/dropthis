@@ -180,13 +180,30 @@ describe("doctor", () => {
     expect(after.total.count).toBe(before.total.count);
   });
 
-  it("measures PBKDF2 on the deployed isolate, inside the unlock budget", async () => {
+  /**
+   * The check that only this seam can prove. A Worker freezes `Date.now()`
+   * inside a request, so the old stopwatch around one derive reported 0 ms on
+   * every deployed instance and still said "pass" (issue #16). Miniflare and
+   * Node both hid it: their clocks run free.
+   *
+   * `inconclusive` is an allowed outcome — a busy instance cannot separate the
+   * derive from its own I/O — but a `pass` must carry a real per-derive cost,
+   * within 2x of the 6.1 ms measured at 25,000 iterations on the Free plan
+   * (docs/research/2026-09-03-free-plan-measurements.md).
+   */
+  it("measures PBKDF2 on the deployed isolate, and never passes with 0 ms", async () => {
     const report = (await (await api("/_api/v1/doctor")).json()) as {
       checks: Array<{ id: string; status: string; evidence: string }>;
     };
     const check = report.checks.find((entry) => entry.id === "pbkdf2_benchmark")!;
 
-    expect(check.status).toBe("pass");
+    expect(["pass", "inconclusive"], check.evidence).toContain(check.status);
     expect(check.evidence).toContain(String(INITIAL_POLICY.pbkdf2_iterations));
+    expect(check.evidence).toContain("baseline");
+    if (check.status !== "pass") return;
+
+    const perDerive = Number(/cost ([\d.]+) ms per derive/.exec(check.evidence)?.[1]);
+    expect(perDerive, check.evidence).toBeGreaterThan(0);
+    expect(perDerive, check.evidence).toBeLessThan(2 * 6.1);
   });
 });
