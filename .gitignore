@@ -5,3 +5,5 @@ dist/
 .env
 *.tgz
 .DS_Store
+.worktrees/
+.dev/
