@@ -8,6 +8,9 @@
   "compatibility_date": "2026-09-03",
   "workers_dev": true,
   "observability": { "enabled": true },
+  // Hourly and resumable: `system/prune-state.json` is written once per
+  // invocation, so a missed run is caught up rather than stranded.
+  "triggers": { "crons": ["0 * * * *"] },
   // The served skill (`/_skill.md`) is `skills/instance-skill.md`, bundled as text.
   "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "dropthis-drops" }],

@@ -10,8 +10,11 @@
  * purpose — the merge is what deletes them, and the parser must not throw away
  * the difference between "absent" and "explicitly null".
  *
- * `password` is issue #6, and `url` entries the staged path of issue #9; both
- * are refused by name rather than ignored.
+ * `password` takes the same three spellings as `publish` — `"generate"`, a
+ * chosen one of at least 8 characters, or `null` to remove it — and re-sending
+ * the password the drop already has is the no-op the schema cannot see but
+ * the operation honours. `url` entries are the staged path of issue #9 and are
+ * refused by name rather than ignored.
  */
 import { z } from "zod";
 import { ApiError } from "../errors.js";
@@ -21,6 +24,7 @@ import {
   IDEMPOTENCY_DESCRIPTION,
   META_DESCRIPTION,
   NOINDEX_DESCRIPTION,
+  PASSWORD_DESCRIPTION,
   TITLE_DESCRIPTION,
   checkFiles,
   checkMetaSize,
@@ -29,7 +33,7 @@ import {
   normalizeTitle,
 } from "./fields.js";
 
-const FIELDS = "files, title, meta, expires, noindex and idempotency_key";
+const FIELDS = "files, title, meta, password, expires, noindex and idempotency_key";
 
 export const updateSchema = z.strictObject({
   files: z.array(fileEntry).optional().describe(FILES_DESCRIPTION),
@@ -38,6 +42,10 @@ export const updateSchema = z.strictObject({
     .record(z.string(), z.unknown())
     .optional()
     .describe(`${META_DESCRIPTION} Merged at the top level; a key set to null is removed.`),
+  password: z
+    .union([z.string(), z.null()])
+    .optional()
+    .describe(`${PASSWORD_DESCRIPTION} null removes it; re-sending the current one changes nothing.`),
   expires: z.string().optional().describe(EXPIRES_DESCRIPTION),
   noindex: z.boolean().optional().describe(NOINDEX_DESCRIPTION),
   idempotency_key: z.string().min(1).optional().describe(IDEMPOTENCY_DESCRIPTION),

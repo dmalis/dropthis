@@ -194,6 +194,10 @@ async function renderConfig(names, configOut, kvId) {
     kv_namespaces: [{ binding: "OAUTH_KV", id: kvId }],
   };
   delete rendered.$schema;
+  // A dev instance drives the cron through `POST /_dev/cron`, so it needs no
+  // trigger — and the Free plan allows five cron triggers PER ACCOUNT, which
+  // throwaway dev Workers must not spend.
+  delete rendered.triggers;
   await mkdir(dirname(configOut), { recursive: true });
   await writeFile(configOut, `${JSON.stringify(rendered, null, 2)}\n`, "utf8");
   return rendered;

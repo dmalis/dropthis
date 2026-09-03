@@ -578,6 +578,47 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     other's fixtures. The contract project also runs `fileParallelism: false` — one
     instance, one bucket, one policy, so its test files are inherently serial.
 
+79. **Eight rulings the expiry/password/cron slice needed (issue #6).** All are choices the
+    spec left open.
+    (a) **The dev clock is a per-request `DEV-Clock` header, not the `DEV_CLOCK` variable.**
+    One contract run publishes, expires, revives and then walks the cron a day at a time; a
+    Worker variable cannot change without a redeploy. The variable stays as the fallback the
+    scheduled handler uses, since it has no request. The production build guard now refuses
+    `DEV_CLOCK`, `DEV-Clock` and `DEV-Fault` in the bundle.
+    (b) **The password nonce rotates only on an EFFECTIVE change**, and `resolvePassword` is
+    the only place allowed to decide that: a new, generated or removed password rotates it,
+    a caller re-sending the password the drop already has does not. Rotating the nonce is
+    revocation, and re-sending nothing must revoke nothing. Verification re-derives at the
+    RECORD's iteration count, not the instance's, so raising `pbkdf2_iterations` never locks
+    out a drop published before the change.
+    (c) **`password` is echoed in the response that SET it, chosen or generated**, per
+    AGENTS.md "appears once, only in the response that set or generated it" — never from
+    `get` or `list`. `"generate"` is a reserved word: the literal password `generate` cannot
+    be set, and the contract says so rather than adding an escape nobody would find.
+    (d) **The unlock cookie lasts 7 days, capped at the drop's own `expires_at`**, and the
+    expiry is inside the HMAC, so a visitor editing the cookie to extend it invalidates it.
+    A `POST` to a drop with no password is `404`, not `405`: an open drop must not advertise
+    an endpoint it does not have.
+    (e) **The cron sweeps the `expiring/` KEYS in one ordered walk, not one `list()` per
+    day.** The keys are `expiring/<yyyy-mm-dd>/<id>`, so R2's key order is date order and
+    empty days cost nothing; day-by-day would spend a whole budget listing empty days on an
+    instance that was quiet for a year and never reach the work. It is safe only because
+    `resolveExpiry` refuses a past expiry — no marker can ever appear behind the cursor.
+    (f) **The budget counts every R2 CALL, deletes included, and reserves one for the
+    checkpoint.** AGENTS.md notes a delete costs no money, but the ceiling that bites is the
+    Free plan's 50 subrequests per invocation. A run that spent its whole budget on work and
+    could not record where it got to would repeat that work every hour forever.
+    (g) **"Every 7th day the budget goes to the reconcile" means invocations reconcile until
+    the reconcile FINISHES**, then the day returns to sweeping — not twenty-four hours of
+    reconcile runs. A reconcile already under way always finishes before a sweep resumes.
+    (h) **A dev instance's rendered wrangler config drops `triggers`.** The repo template
+    carries the hourly `0 * * * *` trigger for production; the Free plan allows five cron
+    triggers per ACCOUNT, and throwaway dev Workers must not spend them — they drive the
+    cron through `POST /_dev/cron`, which calls the same function.
+    Bug found and fixed on the way: the viewer's `/:slug/*` matched every two-segment path,
+    so it answered `404` for paths it does not own and silently shadowed every route mounted
+    after it — `GET /_dev/…` was already dead on the base build. A non-slug first segment now
+    falls through with `next()`.
 80. **The MCP surface's rulings (issue #8).** Each is a choice the spec left open; the
     reason is beside it.
     (a) **The SDK's own `WebStandardStreamableHTTPServerTransport`, stateless, JSON answers;
