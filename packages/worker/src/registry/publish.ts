@@ -30,6 +30,7 @@ import {
 
 export {
   MAX_FILES_PER_CALL,
+  MAX_URL_ENTRIES,
   MAX_META_BYTES,
   MAX_TITLE_BYTES,
   type PublishFile,

@@ -49,6 +49,20 @@ describe("GET /_skill.md", () => {
     expect(text).not.toMatch(/\{\{|\}\}/);
   });
 
+  /**
+   * The two sentences that stop an agent from inlining a 200 KB photo: what a
+   * `url` entry costs it (nothing) and what base64 costs it (a token a byte).
+   * This is the ONLY place the skill teaches it; the other is FILES_DESCRIPTION.
+   */
+  it("tells the agent what a file entry costs it, with this instance's numbers", async () => {
+    const text = await (await skill()).text();
+    expect(text).toContain("{path, url}");
+    expect(text).toContain("one output token per byte");
+    expect(text).toContain(`${INITIAL_POLICY.max_unhashed_bytes} bytes`);
+    expect(text).toContain(`${INITIAL_POLICY.max_file_bytes} bytes`);
+    expect(text).toMatch(/128 px/);
+  });
+
   it("follows the policy, not the source: a changed limit is the served limit", async () => {
     bucket.seed(
       CONFIG_KEY,
