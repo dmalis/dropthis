@@ -1,9 +1,25 @@
 import { defineConfig } from "vitest/config";
 
+/**
+ * `.md` files import as their text, the way Wrangler's `Text` rule bundles
+ * them for the Worker — so `skills/instance-skill.md` is one source read by
+ * both the deployed `/_skill.md` route and the unit tests.
+ */
+const markdownAsText = {
+  name: "markdown-as-text",
+  enforce: "pre" as const,
+  transform(code: string, id: string) {
+    if (!id.endsWith(".md")) return null;
+    return { code: `export default ${JSON.stringify(code)};`, map: null };
+  },
+};
+
 export default defineConfig({
   test: {
     projects: [
       {
+        // Inline projects are their own Vite configs: the plugin goes on each.
+        plugins: [markdownAsText],
         test: {
           name: "unit",
           // The unit project runs FIRST and alone (groupOrder). Its installer
@@ -21,6 +37,7 @@ export default defineConfig({
         },
       },
       {
+        plugins: [markdownAsText],
         test: {
           name: "contract",
           /** After the unit project; see the note there. */

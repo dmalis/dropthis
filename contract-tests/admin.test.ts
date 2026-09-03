@@ -152,7 +152,7 @@ describe("doctor", () => {
     ]);
   });
 
-  it("runs green against the deployed instance, with the two skips named", async () => {
+  it("runs green against the deployed instance, with the one skip named", async () => {
     const response = await api("/_api/v1/doctor");
     expect(response.status, await response.clone().text()).toBe(200);
 
@@ -166,7 +166,10 @@ describe("doctor", () => {
     expect(report.ok).toBe(true);
 
     const skipped = report.checks.filter((check) => check.status === "skip").map((c) => c.id);
-    expect(skipped).toEqual(["mcp_initialize", "cron_state"]);
+    expect(skipped).toEqual(["cron_state"]);
+    const mcp = report.checks.find((check) => check.id === "mcp_initialize")!;
+    expect(mcp.status, mcp.evidence).toBe("pass");
+    expect(mcp.evidence).toContain("tools/list offers");
   });
 
   it("publishes and cleans up a real drop, leaving the instance as it found it", async () => {

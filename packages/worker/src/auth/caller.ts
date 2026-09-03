@@ -126,3 +126,13 @@ export function requireScope(caller: Caller, required: Scope): void {
 export function attribution(caller: Caller): CreatedBy {
   return { id: caller.id, label: caller.label };
 }
+
+/**
+ * The caller of `/_api/mcp` — the ONE function the MCP route asks. Today it
+ * is the bearer lookup above and nothing else; issue #12 adds the OAuth
+ * fallback behind it ("header if present, else OAuth", AGENTS.md "Auth")
+ * without the route or the tool layer learning a second identity.
+ */
+export function resolveMcpCaller(request: Request, bucket: Bucket): Promise<Caller> {
+  return resolveCaller(request, bucket);
+}

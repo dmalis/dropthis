@@ -98,11 +98,16 @@ describe("doctor", () => {
     expect(report.checks.filter((check) => check.status === "fail")).toEqual([]);
   });
 
+  it("proves its own MCP endpoint in-process: initialize, then a tool list", async () => {
+    const report = await run();
+
+    expect(checkOf(report, "mcp_initialize").status).toBe("pass");
+    expect(checkOf(report, "mcp_initialize").evidence).toMatch(/initialize answered dropthis .*; tools\/list offers 14 tools\./);
+  });
+
   it("skips the checks whose subject does not exist yet, and says why", async () => {
     const report = await run();
 
-    expect(checkOf(report, "mcp_initialize").status).toBe("skip");
-    expect(checkOf(report, "mcp_initialize").evidence).toContain("#8");
     expect(checkOf(report, "cron_state").status).toBe("skip");
     expect(checkOf(report, "cron_state").evidence).toContain("#6");
   });

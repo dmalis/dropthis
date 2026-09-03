@@ -41,7 +41,9 @@ const deleteSchema = z.strictObject({ slug: slugParam });
 
 const getSchema = z.strictObject({
   slug: slugParam,
-  files: boolParam.optional(),
+  files: boolParam
+    .optional()
+    .describe("Also return the text files' content inline (1 MB in total; the rest by download_url)."),
 });
 
 const downloadSchema = z.strictObject({
