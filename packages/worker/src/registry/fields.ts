@@ -72,11 +72,38 @@ const urlEntry = z.strictObject({
 });
 
 /**
- * A union of strict objects, which is how "exactly one of `text`, `base64` and
- * `url`" is expressed: an entry with two of them matches no branch, and so
- * does an entry with none.
+ * The fourth kind: keep the blob this drop ALREADY holds under that digest.
+ * No content field at all — `get` hands the agent a `sha256` per file, and
+ * sending it back is how "change one file, keep the other forty" costs the
+ * agent forty short strings instead of forty binaries (decision #95).
+ *
+ * `update` only: a drop that does not exist yet holds nothing, so `publish`
+ * refuses the kind by name.
  */
-export const fileEntry = z.union([textEntry, base64Entry, urlEntry]);
+const keepEntry = z.strictObject({
+  path: z.string().describe(PATH_DESCRIPTION),
+  sha256: z
+    .string()
+    .describe(
+      "The digest get returned for this file: keep the bytes this drop already has. " +
+        "Nothing is sent and nothing is stored. Update only.",
+    ),
+});
+
+/**
+ * A union of strict objects, which is how "exactly one of `text`, `base64`,
+ * `url` and a bare `sha256`" is expressed: an entry with two of them matches no
+ * branch, and so does an entry with none.
+ */
+export const fileEntry = z.union([textEntry, base64Entry, urlEntry, keepEntry]);
+
+/** A `{path, sha256}` entry — no `text`, no `base64`, no `url`. */
+export function isKeepEntry(entry: unknown): entry is { path: string; sha256: string } {
+  if (typeof entry !== "object" || entry === null) return false;
+  return (
+    "sha256" in entry && !("text" in entry) && !("base64" in entry) && !("url" in entry)
+  );
+}
 
 /**
  * The one place an agent is told what a file entry costs IT to send. The
@@ -91,7 +118,9 @@ export const FILES_DESCRIPTION =
   "fetches the bytes and they cost you no tokens — add sha256 and size when you know them. " +
   "Inline base64 costs you roughly one output token per byte, so keep it for small binaries " +
   "(a few KB) and shrink a photo to what the page actually needs — a sprite of 128 px or less, " +
-  "JPEG or WebP — before inlining it.";
+  "JPEG or WebP — before inlining it. " +
+  "On update only, a file the drop already has goes back as {path, sha256} — the digest get " +
+  "returned for it — and is kept untouched: send the changed files inline and the rest that way.";
 
 export type PublishFile = z.infer<typeof fileEntry>;
 
@@ -104,7 +133,7 @@ export function describeIssues(error: z.ZodError, fields: string): string {
     return `Unknown field${issue.keys.length > 1 ? "s" : ""} ${issue.keys.join(", ")}: this operation takes ${fields}.`;
   }
   if (issue.code === "invalid_union") {
-    return `Each entry of ${where} needs a path and exactly one of text, base64 or url.`;
+    return `Each entry of ${where} needs a path and exactly one of text, base64, url or (on update) a bare sha256.`;
   }
   return `${where}: ${issue.message}`;
 }
