@@ -8,16 +8,20 @@
  * build-guard.test.ts` pins exactly that.
  */
 import type { Env } from "../bindings.js";
-import type { FaultPoint } from "../operations/publish.js";
 
 export type DevHooks = {
   /** "Now" for expiry. Production has one answer and it is the clock. */
   now(env: Env): Date;
-  /** Where a publish should abort, to prove a retry converges. */
-  faultPoint(request: Request, env: Env): FaultPoint | undefined;
+  /**
+   * The raw `DEV-Fault` header: where THIS request should abort, so a test can
+   * prove the retry converges. Each operation names its own points and parses
+   * the value itself, so one seam covers publish, `user add` and whatever
+   * comes next.
+   */
+  fault(request: Request, env: Env): string | undefined;
 };
 
 export const PRODUCTION_HOOKS: DevHooks = {
   now: () => new Date(),
-  faultPoint: () => undefined,
+  fault: () => undefined,
 };

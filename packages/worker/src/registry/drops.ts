@@ -13,7 +13,7 @@ import { decodeRequestPath } from "../domain/url-path.js";
 import { isSlug } from "../domain/slug.js";
 import { ApiError } from "../errors.js";
 import { getDrop, loadDrop } from "../operations/get.js";
-import { publish } from "../operations/publish.js";
+import { parseFaultPoint, publish } from "../operations/publish.js";
 import { serveBlob } from "../serve.js";
 import { blobKey } from "../storage/keys.js";
 import { boolParam } from "./params.js";
@@ -66,7 +66,7 @@ export const publishOp: Operation<PublishInput> = {
       caller: attribution(ctx.caller),
       now: ctx.now,
       secret: ctx.secret(),
-      fault: ctx.hooks.faultPoint(ctx.request, ctx.env),
+      fault: parseFaultPoint(ctx.hooks.fault(ctx.request, ctx.env)),
     });
     return { value: result.drop, status: result.created ? 201 : 200 };
   },

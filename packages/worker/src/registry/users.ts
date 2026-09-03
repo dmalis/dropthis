@@ -8,7 +8,10 @@
 import { z } from "zod";
 import { parseKeyRecord } from "../auth/caller.js";
 import type { Bucket } from "../bindings.js";
-import { KEYS_PREFIX, keyRecordKey } from "../storage/keys.js";
+import { addUser, parseUserAddFault } from "../operations/user-add.js";
+import type { UserAddInput } from "../operations/user-add.js";
+import { removeUser } from "../operations/user-remove.js";
+import { KEYS_PREFIX } from "../storage/keys.js";
 import type { Operation } from "./types.js";
 
 export type UserSummary = {
@@ -19,6 +22,18 @@ export type UserSummary = {
 };
 
 const listSchema = z.strictObject({});
+
+/**
+ * `user add` takes a label and nothing else. The scope is not an input: every
+ * key it mints is a `user` key, and the instance's one admin credential is
+ * `init`'s business (`--rotate-admin-key`), never an HTTP call's.
+ */
+const addSchema = z.strictObject({
+  label: z.string(),
+  idempotency_key: z.string().min(1).optional(),
+});
+
+const removeSchema = z.strictObject({ label: z.string() });
 
 /**
  * Every key record, oldest first. This is one of the two `list()` calls the
@@ -63,4 +78,37 @@ export const userList: Operation<z.infer<typeof listSchema>> = {
   handler: async (_input, ctx) => ({ value: { users: await listUsers(ctx.bucket) } }),
 };
 
-export { keyRecordKey };
+export const userAdd: Operation<UserAddInput> = {
+  name: "user.add",
+  method: "POST",
+  path: "/users",
+  scope: "admin",
+  summary: "Add a person: mint their key once and return how to connect them.",
+  schema: addSchema,
+  status: 201,
+  handler: async (input, ctx) => ({
+    value: await addUser(input, {
+      bucket: ctx.bucket,
+      config: ctx.config,
+      callerId: ctx.caller.id,
+      now: ctx.now,
+      secret: ctx.secret(),
+      fault: parseUserAddFault(ctx.hooks.fault(ctx.request, ctx.env)),
+    }),
+  }),
+};
+
+export const userRemove: Operation<z.infer<typeof removeSchema>> = {
+  name: "user.remove",
+  method: "DELETE",
+  path: "/users/:label",
+  scope: "admin",
+  summary: "Remove a person: their key stops working immediately.",
+  schema: removeSchema,
+  params: ["label"],
+  status: 204,
+  handler: async (input, ctx) => {
+    await removeUser(input.label, ctx.bucket);
+    return { value: null };
+  },
+};

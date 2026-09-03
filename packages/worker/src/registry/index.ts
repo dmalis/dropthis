@@ -15,7 +15,7 @@ import {
   publishOp,
   updateOp,
 } from "./drops.js";
-import { userList } from "./users.js";
+import { userAdd, userList, userRemove } from "./users.js";
 import type { Operation } from "./types.js";
 
 export const OPERATIONS: Array<Operation<never>> = [
@@ -26,7 +26,9 @@ export const OPERATIONS: Array<Operation<never>> = [
   listOp,
   deleteOp,
   fileDownload,
+  userAdd,
   userList,
+  userRemove,
 ] as unknown as Array<Operation<never>>;
 
 export function operation(name: string): Operation<never> {
