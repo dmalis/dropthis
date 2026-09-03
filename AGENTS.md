@@ -593,3 +593,17 @@ decision entry in the same commit.
   (the v1 spec, committed by owner decision #65; code beats it on conflict).
 - No plan files or status notes in the repo. Decisions go in `docs/decisions.md` with a date
   and a reason; superseded entries are marked, not deleted.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `dmalis/dropthis`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles use their default names (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: the glossary is in `AGENTS.md`, decisions in `docs/decisions.md`. See `docs/agents/domain.md`.
