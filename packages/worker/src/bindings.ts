@@ -32,7 +32,13 @@ export type Bucket = R2BucketLike & {
   get(key: string, options?: { range?: R2Range }): Promise<R2ObjectBody | null>;
   head(key: string): Promise<(R2WriteResult & { key: string }) | null>;
   delete(keys: string | string[]): Promise<void>;
-  list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<R2Listing>;
+  list(options?: {
+    prefix?: string;
+    cursor?: string;
+    limit?: number;
+    /** Exclusive: listing starts at the first key AFTER this one. */
+    startAfter?: string;
+  }): Promise<R2Listing>;
 };
 
 export type Env = {

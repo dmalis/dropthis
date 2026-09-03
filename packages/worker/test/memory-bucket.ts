@@ -134,7 +134,10 @@ export function memoryBucket(): MemoryBucket {
     async list(options = {}): Promise<R2Listing> {
       log.push(`list ${options.prefix ?? ""}`);
       const prefix = options.prefix ?? "";
-      const all = [...store.keys()].filter((key) => key.startsWith(prefix)).sort();
+      const after = options.startAfter;
+      const all = [...store.keys()]
+        .filter((key) => key.startsWith(prefix) && (after === undefined || key > after))
+        .sort();
       const start = options.cursor === undefined ? 0 : Number(options.cursor);
       const limit = options.limit ?? 1000;
       const page = all.slice(start, start + limit);
