@@ -1,0 +1,24 @@
+{
+  "name": "dropthis-monorepo",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "contract-tests",
+    "test/fake-cloudflare"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=dropthis",
+    "deploy:dev": "node scripts/deploy-dev.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

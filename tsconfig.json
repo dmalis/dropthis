@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "contract-tests/**/*.ts",
+    "test/fake-cloudflare/**/*.ts",
+    "vitest.config.ts"
+  ]
+}
