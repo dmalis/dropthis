@@ -787,3 +787,46 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     record at request time, never from the grant, so a rotated or re-scoped key is
     never served stale. The grant's `userId` is the key id (the library keeps it in the
     clear for enumeration), so `OAUTH_KV` holds key ids and hashed tokens only.
+
+91. **`url` file entries, and saying out loud what inline base64 costs an agent (issue #15).**
+    The reason is a measured product failure, not a limit: on 2026-09-03 a claude.ai session
+    built a page around a product photo, tried to inline it as `{path, base64}`, and gave up —
+    a tool call's arguments are the agent's own generated tokens, so a 200 KB image is roughly
+    270,000 output tokens. It published the page with no image (dev8, drop `9ul4jschtk`). Two
+    changes fix that, and only two places re-teach it, so only two places changed:
+    `FILES_DESCRIPTION` in `registry/fields.ts` and the skill bullet in
+    `skills/instance-skill.md`. Both now say: text inline; anything already at a public
+    http(s) URL as `{path, url}`, which the instance fetches and which costs the agent
+    nothing; base64 only for small binaries, and a photo shrunk to what the page needs
+    (≤ 128 px, JPEG or WebP) before inlining. The rulings this slice needed:
+    (a) **A fetched body with no `Content-Length` is buffered, and capped at
+    `max_unhashed_bytes` even when the caller sent a digest.** Remote R2 refuses a body of
+    unknown length outright — `Provided readable stream must have a known length
+    (request/response body or readable half of FixedLengthStream)`, measured on dev15,
+    2026-09-03 — so the Worker must hold those bytes to give R2 a length, and holding them is
+    exactly what `max_unhashed_bytes` bounds. A response that declares its length streams
+    through untouched and is bounded by `max_file_bytes` alone. dropthis's own viewer sends no
+    `Content-Length`, so the buffered path is the common one for instance-to-instance fetches.
+    (b) **The target rules are literal-host rules, and they are the second layer, not the
+    first.** `checkPublicUrl` refuses a non-http(s) scheme, a port that is not 80 or 443,
+    credentials in the URL, `localhost`/`.localhost`/`.local`/`.internal`/
+    `metadata.google.internal`, and every private, loopback, link-local, carrier-NAT,
+    reserved or non-unicast IPv4 or IPv6 literal — including IPv4-mapped IPv6. A name that
+    RESOLVES to a private address cannot be caught in the Worker, which has no resolver;
+    `global_fetch_strictly_public` (already in `wrangler.jsonc` for CIMD, #90e) is that
+    boundary. This layer exists to give an agent a clear `FETCH_FAILED` for an obvious
+    mistake, and every redirect hop is re-validated by the same function.
+    (c) **The per-call counts are `INVALID_INPUT`, not `POLICY_VIOLATION`.** 20 `url` entries
+    and 45 fetches per call are the Free plan's external-subrequest budget, not an operator's
+    policy: `config get` cannot show them and `config set` cannot change them, so telling an
+    agent to read the instance's limits would be a lie. The file count stays
+    `POLICY_VIOLATION`.
+    (d) **A retry whose `url` answers different bytes is `IDEMPOTENCY_MISMATCH`.** #74 fixes
+    the manifest in the claim; a resumed attempt re-fetches only the blobs its own claim's
+    keys are missing, and the re-fetched manifest must equal the claim's. Otherwise the call
+    would store blobs no manifest names, or serve bytes the first attempt never saw.
+    (e) **A staged manifest entry may carry a `url`, and the instance fetches it at commit.**
+    Such a digest is never in `missing` and gets no signed PUT URL — it is not the client's to
+    upload — and the target is validated when the session opens, so a URL this instance will
+    never fetch fails before anything else is uploaded. The three staged routes stay
+    `restOnly` (#85).
