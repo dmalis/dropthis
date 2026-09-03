@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { hashKey } from "../src/auth/key.js";
 import type { Env } from "../src/bindings.js";
-import { CHECK_IDS } from "../src/operations/doctor.js";
+import { CHECK_IDS, CRON_LAG_DAYS } from "../src/operations/doctor.js";
 import { createApp } from "../src/index.js";
 import { INITIAL_POLICY } from "../src/policy/defaults.js";
-import { CONFIG_KEY, keyHashKey, keyRecordKey, userKey } from "../src/storage/keys.js";
+import { CONFIG_KEY, PRUNE_STATE_KEY, keyHashKey, keyRecordKey, userKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
 import type { MemoryBucket } from "./memory-bucket.js";
 
@@ -16,6 +16,9 @@ import type { MemoryBucket } from "./memory-bucket.js";
  * A check that cannot run yet is `skip`, never `pass`: an instance is not
  * proved healthy by a check that did not happen.
  */
+/** `doctor` runs on the real clock, so the checkpoint fixtures use it too. */
+const NOW = new Date();
+
 const ADMIN_KEY = "a".repeat(64);
 const USER_KEY = "b".repeat(64);
 
@@ -105,11 +108,47 @@ describe("doctor", () => {
     expect(checkOf(report, "mcp_initialize").evidence).toMatch(/initialize answered dropthis .*; tools\/list offers 14 tools\./);
   });
 
-  it("skips the checks whose subject does not exist yet, and says why", async () => {
-    const report = await run();
+  /**
+   * A cron that has stopped, or whose budget cannot keep up, shows as a
+   * checkpoint stuck in the past — the one symptom visible from inside the
+   * instance, and the reason the check exists.
+   */
+  describe("cron_state", () => {
+    it("passes on an instance whose cron has not run yet", async () => {
+      expect(checkOf(await run(), "cron_state").status).toBe("pass");
+    });
 
-    expect(checkOf(report, "cron_state").status).toBe("skip");
-    expect(checkOf(report, "cron_state").evidence).toContain("#6");
+    it("passes when the checkpoint is up to date", async () => {
+      bucket.seed(
+        PRUNE_STATE_KEY,
+        JSON.stringify({ oldest_pending_date: NOW.toISOString().slice(0, 10) }),
+      );
+      const check = checkOf(await run(), "cron_state");
+      expect(check.status).toBe("pass");
+      expect(check.remediation).toBeUndefined();
+    });
+
+    it("fails when the checkpoint is stranded days in the past", async () => {
+      const stale = new Date(NOW.getTime() - (CRON_LAG_DAYS + 3) * 86_400_000);
+      bucket.seed(
+        PRUNE_STATE_KEY,
+        JSON.stringify({ oldest_pending_date: stale.toISOString().slice(0, 10) }),
+      );
+      const report = await run();
+      const check = checkOf(report, "cron_state");
+
+      expect(check.status).toBe("fail");
+      expect(check.evidence).toContain(stale.toISOString().slice(0, 10));
+      expect(check.remediation).toContain("cron_ops_budget");
+      expect(report.ok).toBe(false);
+    });
+
+    it("fails on a checkpoint it cannot read, and says how to reset it", async () => {
+      bucket.seed(PRUNE_STATE_KEY, "not json");
+      const check = checkOf(await run(), "cron_state");
+      expect(check.status).toBe("fail");
+      expect(check.remediation).toContain(PRUNE_STATE_KEY);
+    });
   });
 
   it("proves the deploy with a real drop and leaves nothing behind", async () => {

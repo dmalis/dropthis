@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BASE_URL } from "./base-url.js";
-import { api } from "./client.js";
+import { api, apiJson } from "./client.js";
 
 /** Authenticated: an unknown route must 404, not 401. */
 const get = (path: string, init?: RequestInit) => api(path, init ?? {});
@@ -60,5 +60,27 @@ describe("unknown viewer paths", () => {
     expect(body).toContain("<title>Not found</title>");
     expect(body).toContain("Not found");
     expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+  });
+});
+
+/**
+ * The viewer owns `/<slug>/…` and must own nothing else. Its route pattern is
+ * `/:slug/*`, which matches every two-segment path in the instance — so a
+ * first segment that cannot be a slug has to fall THROUGH the viewer, not be
+ * answered by it. When it did not, the viewer silently swallowed every route
+ * mounted after it: the whole `/_dev` probe surface answered 404 HTML.
+ */
+describe("a path the viewer does not own", () => {
+  it("reaches a route mounted after the viewer, on GET", async () => {
+    const response = await api("/_dev/bench/pbkdf2?iterations=1000&rounds=1");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toMatch(/^application\/json/);
+  });
+
+  it("reaches a route mounted after the viewer, on POST", async () => {
+    const response = await apiJson("/_dev/r2/list", "POST", { prefix: "system/" });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { keys: string[] };
+    expect(body.keys).toContain("system/config.json");
   });
 });

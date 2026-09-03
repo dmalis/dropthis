@@ -43,8 +43,12 @@ describe("parseUpdateInput", () => {
     expect(message({ passwrd: "x" })).toContain("INVALID_INPUT");
   });
 
-  it("refuses password: it is not in this version of the operation", () => {
-    expect(message({ password: "hunter22" })).toContain("password");
+  it("takes password as a string, null, or absent — like publish", () => {
+    expect(parseUpdateInput({ password: "hunter22" }).password).toBe("hunter22");
+    expect(parseUpdateInput({ password: "generate" }).password).toBe("generate");
+    expect(parseUpdateInput({ password: null }).password).toBeNull();
+    expect(parseUpdateInput({})).not.toHaveProperty("password");
+    expect(message({ password: 42 })).toContain("password");
   });
 
   it("refuses an empty files array: use delete, not an empty drop", () => {

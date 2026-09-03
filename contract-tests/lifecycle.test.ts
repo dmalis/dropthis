@@ -290,10 +290,10 @@ describe("update: refusals", () => {
 
   it("names an unknown field instead of ignoring it", async () => {
     const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }] });
-    const error = await errorOf(await update(drop.slug as string, { password: "hunter22" }));
+    const error = await errorOf(await update(drop.slug as string, { passwrd: "hunter22" }));
     expect(error.status).toBe(400);
     expect(error.code).toBe("INVALID_INPUT");
-    expect(JSON.stringify(error.body)).toContain("password");
+    expect(JSON.stringify(error.body)).toContain("passwrd");
   });
 
   it("refuses an invalid path in a replacement file set", async () => {

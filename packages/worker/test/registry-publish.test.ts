@@ -30,12 +30,26 @@ describe("parsePublishInput", () => {
   });
 
   it("rejects an unknown top-level field — the schema is the contract", () => {
-    expect(codeOf(() => parsePublishInput({ ...ok, password: "hunter22" }))).toBe("INVALID_INPUT");
+    expect(codeOf(() => parsePublishInput({ ...ok, visibility: "public" }))).toBe("INVALID_INPUT");
     expect(codeOf(() => parsePublishInput({ ...ok, slug: "mine" }))).toBe("INVALID_INPUT");
   });
 
   it("names the unknown field so the agent can fix it", () => {
-    expect(() => parsePublishInput({ ...ok, password: "hunter22" })).toThrow(/password/);
+    expect(() => parsePublishInput({ ...ok, visibility: "public" })).toThrow(/visibility/);
+  });
+
+  /**
+   * `null` is a value the caller sends — "this drop has no password" — not an
+   * absent field, so the schema takes the union rather than making it
+   * optional-and-nullable. The length rule is not here: it lives in
+   * `domain/password.ts`, with the rest of what a password means.
+   */
+  it("takes the three spellings of password and nothing else", () => {
+    expect(parsePublishInput({ ...ok, password: "generate" }).password).toBe("generate");
+    expect(parsePublishInput({ ...ok, password: "a-chosen-one" }).password).toBe("a-chosen-one");
+    expect(parsePublishInput({ ...ok, password: null }).password).toBeNull();
+    expect(codeOf(() => parsePublishInput({ ...ok, password: 12 }))).toBe("INVALID_INPUT");
+    expect(codeOf(() => parsePublishInput({ ...ok, password: true }))).toBe("INVALID_INPUT");
   });
 
   it("rejects an unknown field inside a file entry", () => {

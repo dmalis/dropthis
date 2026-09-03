@@ -108,8 +108,10 @@ list/<inv-created-ms>-<slug>         listing pointer; the ms come from the drop 
 keys/<id>.json                       {id, label, scope, hash, created}; the admin key is one of these
 keyhash/<sha256(key)>                pointer → key id (the auth lookup)
 users/<normalized-label>             pointer → key id, claimed with If-None-Match: * → labels unique
-expiring/<yyyy-mm-dd>/<id>           marker for the daily cron, dated expires_at + grace;
-                                     one list per day, never a scan; a HINT — cron re-reads meta.json
+expiring/<yyyy-mm-dd>/<id>           marker for the hourly cron, dated expires_at + grace;
+                                     the cron walks these KEYS in order (R2 key order IS date
+                                     order), so empty days cost nothing and no day is ever
+                                     listed on its own; a HINT — cron re-reads meta.json
 requests/<hash>/claim, …/result     idempotency: two keys, each written ONCE (1 write/s per key).
                                      The claim fixes the identity {drop_id, slug, gen, generated
                                      password (encrypted)} BEFORE side effects, so retries converge;

@@ -4,11 +4,11 @@
  * as `main` and `DEV_ROUTES: "1"`; the production entry (`src/index.ts`) does
  * not import the module at all, so a production bundle cannot contain it.
  */
-import { createApp } from "./index.js";
+import { createApp, workerOf } from "./index.js";
 import { DEV_HOOKS } from "./dev/enabled-hooks.js";
 import { devRoutes } from "./dev/routes.js";
 
 const app = createApp(DEV_HOOKS);
-app.route("/_dev", devRoutes());
+app.route("/_dev", devRoutes(DEV_HOOKS));
 
-export default app;
+export default workerOf(app, DEV_HOOKS);
