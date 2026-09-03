@@ -1,9 +1,15 @@
 import Cloudflare from "cloudflare";
 import { BASE_URL, DEV_BUCKET, requireEnv } from "./base-url.js";
+import { INITIAL_POLICY } from "../packages/worker/src/policy/defaults.js";
 
 /**
- * Every contract run starts from an empty bucket and a reachable Worker.
- * The reset uses the same two dev credentials as `npm run deploy:dev`.
+ * Every contract run starts from an empty bucket, a seeded instance config and
+ * a reachable Worker. The reset uses the same two dev credentials as
+ * `npm run deploy:dev`.
+ *
+ * The config is written the way `init` writes it — through the R2 API, before
+ * the Worker is asked for anything — so the run exercises the real
+ * "policy comes from `system/config.json`" path rather than a fallback.
  */
 export default async function setup() {
   const accountId = requireEnv("CLOUDFLARE_ACCOUNT_ID");
@@ -21,6 +27,17 @@ export default async function setup() {
       bucket_name: DEV_BUCKET,
     });
   }
+
+  await client.r2.buckets.objects.upload(
+    "system/config.json",
+    JSON.stringify({
+      ...INITIAL_POLICY,
+      canonical_url: BASE_URL,
+      alias_origins: [],
+      instance_name: "dev",
+    }),
+    { account_id: accountId, bucket_name: DEV_BUCKET },
+  );
 
   try {
     await fetch(`${BASE_URL}/_api/v1/health`, { cache: "no-store" });

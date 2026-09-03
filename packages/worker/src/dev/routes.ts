@@ -202,6 +202,23 @@ export function devRoutes() {
     });
   });
 
+  /**
+   * The keys under a prefix. Seam 1 uses it to assert what a FAILED write left
+   * behind — "no meta.json, no slug pointer, only unreferenced blobs" is a
+   * claim about keys, and this is the only way to check it from outside.
+   */
+  dev.post("/r2/list", async (c) => {
+    const { prefix = "" } = await c.req.json<{ prefix?: string }>();
+    const keys: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const listing = await c.env.BUCKET.list(cursor === undefined ? { prefix } : { prefix, cursor });
+      for (const object of listing.objects) keys.push(object.key);
+      cursor = listing.truncated ? listing.cursor : undefined;
+    } while (cursor !== undefined);
+    return c.json({ prefix, keys });
+  });
+
   /** Empties the bucket so a contract run starts from nothing. */
   dev.post("/reset", async (c) => {
     let deleted = 0;
