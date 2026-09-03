@@ -52,8 +52,13 @@ names below are the MCP names; the REST routes are the same five operations.
     already lives on the web, use `url`.
   - The whole call must stay under **{{max_request_bytes}} bytes ({{max_request_mib}} MiB)**,
     this instance's `max_request_bytes`, or it is `PAYLOAD_TOO_LARGE`. A single call carries
-    at most {{max_files}} files. Anything larger goes through the `dropthis` CLI, which
-    streams files instead of inlining them.
+    at most {{max_files}} files.
+- **Three ways to move bytes, in this order.** Inline `{path, text}` for text you wrote, and
+  `{path, base64}` only for a few KB. `{path, url}` for anything already at a public http(s)
+  address — it costs you no tokens. `dropthis_upload` when the file is bigger than that and
+  **your environment can run `curl` and reach the internet**: send the manifest, `curl -sS -T
+  <file> '<put_url>'` for each hash in `missing`, then `dropthis_commit`. The `dropthis` CLI
+  does the same three steps for you. If none of the three applies, shrink the file.
 - **`update` replaces the whole file set.** Send every file the drop should have, not only
   the changed ones: `dropthis_get` with `files: true` returns the current text content, so
   read, change, write back. `meta` merges at the top level; a key set to `null` is removed.

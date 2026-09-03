@@ -64,6 +64,19 @@ describe("GET /_skill.md", () => {
     expect(text).toMatch(/128 px/);
   });
 
+  /**
+   * Issue #19: an agent that cannot inline a photo must be told the third
+   * way out — curl to a signed PUT URL — and told what it costs to try it.
+   */
+  it("names all three ways to move bytes, curl included", async () => {
+    const text = await (await skill()).text();
+    expect(text).toContain("dropthis_upload");
+    expect(text).toContain("curl -sS -T");
+    expect(text).toContain("dropthis_commit");
+    expect(text).toContain("### `dropthis_upload`");
+    expect(text).toContain("### `dropthis_commit`");
+  });
+
   it("follows the policy, not the source: a changed limit is the served limit", async () => {
     bucket.seed(
       CONFIG_KEY,
