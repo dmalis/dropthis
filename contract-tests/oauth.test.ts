@@ -189,11 +189,12 @@ async function oauthKv() {
       return found;
     },
     async value(name: string) {
-      // The SDK builds a path from the name; a grant key carries `:`.
-      const response = await client.kv.namespaces.values.get(encodeURIComponent(name), {
-        account_id: accountId,
-        namespace_id: id,
-      });
+      // A grant key carries `:`; the REST path wants it encoded exactly once.
+      const response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${id}/values/${encodeURIComponent(name)}`,
+        { headers: { authorization: `Bearer ${requireEnv("CLOUDFLARE_API_TOKEN")}` } },
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
       return response.text();
     },
   };
