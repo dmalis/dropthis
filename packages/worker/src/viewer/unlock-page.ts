@@ -10,13 +10,7 @@
  * file list is part of what the password protects.
  */
 
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+import { escapeHtml } from "./html.js";
 
 export type UnlockPageOptions = {
   /** Shown as the heading; the drop's own title, or its slug. */

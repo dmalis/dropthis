@@ -31,6 +31,7 @@ import { loadDrop } from "./operations/get.js";
 import type { LoadedDrop } from "./operations/get.js";
 import { VIEWER_CACHE_CONTROL, serveBlob } from "./serve.js";
 import { blobKey } from "./storage/keys.js";
+import { escapeHtml, htmlResponse } from "./viewer/html.js";
 import { unlockPage } from "./viewer/unlock-page.js";
 import {
   UNLOCK_COOKIE,
@@ -228,24 +229,6 @@ export function resolveViewerPath(meta: DropMeta, encoded: string): ViewerTarget
   if (path === null) return null;
   if (meta.manifest[path] !== undefined) return { kind: "file", path };
   return null;
-}
-
-function htmlResponse(body: string, status: number): Response {
-  return new Response(body, {
-    status,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": VIEWER_CACHE_CONTROL,
-    },
-  });
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 /**

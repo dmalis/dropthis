@@ -20,7 +20,10 @@ that must not see each other's drops get two instances.
 - A chosen password needs at least 8 characters and is stored as PBKDF2-SHA256 (salted, at
   the highest iteration count the plan's CPU budget allows). The unlock cookie is host-only,
   `Secure`, `HttpOnly`, `SameSite=Lax`, scoped to `/<slug>/`, and signed over a per-drop
-  nonce that rotates on every password change — changing the password logs everyone out.
+  nonce that rotates on every real password change — changing the password logs everyone
+  out. Re-sending the password a drop already has is a no-op and keeps the nonce, so a
+  settings update does not log visitors out for nothing. The cookie also carries its own
+  expiry (7 days, never past the drop's) inside the signature, so it cannot be extended.
 - **v1 has no attempt rate limiting** (the design stores no counters). A chosen password
   can be guessed by a patient attacker; a drop that must not be guessed uses a generated
   one. Rate limiting arrives when a real deployment needs it.

@@ -146,6 +146,28 @@ export async function newDropMeta(input: NewDropInput): Promise<DropMeta> {
   };
 }
 
+/**
+ * The `list/` pointer's customMetadata — everything `list` answers with, so a
+ * page of results is ONE `list()` and never a `meta.json` read per drop.
+ *
+ * R2 customMetadata is strings only and capped at 8 KB, so absence carries
+ * meaning: no `expires_at` is "never", no `has_password` is "open". That also
+ * makes the field additive — an entry written before it existed reads as an
+ * open drop, which is what it was.
+ */
+export function listMetadata(meta: DropMeta): Record<string, string> {
+  const customMetadata: Record<string, string> = {
+    id: meta.id,
+    updated: meta.updated,
+    created_by_id: meta.created_by.id,
+    created_by_label: meta.created_by.label,
+  };
+  if (meta.expires_at !== null) customMetadata.expires_at = meta.expires_at;
+  if (meta.title !== null) customMetadata.title = meta.title;
+  if (meta.access.password !== undefined) customMetadata.has_password = "1";
+  return customMetadata;
+}
+
 export function dropFiles(manifest: Manifest): DropFile[] {
   return Object.entries(manifest).map(([path, entry]) => ({
     path,

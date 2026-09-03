@@ -21,7 +21,7 @@
  */
 import type { Bucket } from "../bindings.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
-import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
+import { canonicalJson, listMetadata, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { expiringMarkerDate, ExpiryError, resolveExpiry } from "../domain/expiry.js";
 import { resolvePassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
@@ -351,14 +351,7 @@ async function commitMeta(bucket: Bucket, identity: Identity, meta: DropMeta): P
  * for a while — it never loses a drop.
  */
 async function writeProjections(bucket: Bucket, meta: DropMeta): Promise<void> {
-  const customMetadata: Record<string, string> = {
-    id: meta.id,
-    updated: meta.updated,
-    created_by_id: meta.created_by.id,
-    created_by_label: meta.created_by.label,
-  };
-  if (meta.expires_at !== null) customMetadata.expires_at = meta.expires_at;
-  if (meta.title !== null) customMetadata.title = meta.title;
+  const customMetadata = listMetadata(meta);
 
   await bucket.put(listKey(Date.parse(meta.created), meta.slug), "", { customMetadata });
 

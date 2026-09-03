@@ -342,12 +342,12 @@ describe("refusals", () => {
   it("rejects an unknown field, naming it", async () => {
     const response = await publish({
       files: [{ path: "a.txt", text: "x" }],
-      password: "hunter22",
+      visibility: "public",
     });
     const error = await errorOf(response);
     expect(error.status).toBe(400);
     expect(error.code).toBe("INVALID_INPUT");
-    expect(JSON.stringify(error.body)).toContain("password");
+    expect(JSON.stringify(error.body)).toContain("visibility");
   });
 
   it.each([

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalJson,
   dropFiles,
+  listMetadata,
   manifestGen,
   META_SCHEMA,
   newDropMeta,
@@ -202,5 +203,55 @@ describe("toDrop", () => {
     });
     expect(drop).not.toHaveProperty("files");
     expect(drop).not.toHaveProperty("meta");
+  });
+});
+
+/**
+ * `list` answers from these strings alone — one `list()` per page, never a
+ * `meta.json` read per drop — so every field the `Drop` shape needs on a
+ * listing has to be here.
+ */
+describe("the list pointer's metadata", () => {
+  const base = {
+    schema: 1,
+    id: "01ABC",
+    slug: "abcdefghij",
+    title: null as string | null,
+    meta: {},
+    access: {} as Record<string, unknown>,
+    current_gen: "gen",
+    manifest: {},
+    expires_at: null as string | null,
+    noindex: true,
+    created_by: { id: "admin", label: "admin" },
+    created: "2026-09-03T00:00:00Z",
+    updated: "2026-09-03T00:00:00Z",
+  };
+
+  it("carries what every listing row shows", () => {
+    expect(listMetadata(base)).toEqual({
+      id: "01ABC",
+      updated: "2026-09-03T00:00:00Z",
+      created_by_id: "admin",
+      created_by_label: "admin",
+    });
+  });
+
+  it("omits what is absent, so absence is the meaning", () => {
+    const full = listMetadata({
+      ...base,
+      title: "a report",
+      expires_at: "2026-10-03T00:00:00Z",
+      access: { password: { nonce: "n" } },
+    });
+    expect(full.title).toBe("a report");
+    expect(full.expires_at).toBe("2026-10-03T00:00:00Z");
+    expect(full.has_password).toBe("1");
+  });
+
+  it("marks an open drop by leaving has_password out, never by writing a 0", () => {
+    // An entry written before the field existed must read as the open drop it
+    // was, so the absent key — not a falsy string — is what "no password" is.
+    expect(listMetadata(base).has_password).toBeUndefined();
   });
 });

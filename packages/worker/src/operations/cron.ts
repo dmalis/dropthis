@@ -24,6 +24,7 @@
  */
 import type { Bucket } from "../bindings.js";
 import { GRACE_MS, dropState, expiringMarkerDate } from "../domain/expiry.js";
+import { listMetadata } from "../domain/meta.js";
 import type { DropMeta } from "../domain/meta.js";
 import {
   DROPS_PREFIX,
@@ -612,15 +613,7 @@ async function repairProjections(
   const entry = await bucket.head(key);
   if (entry === null || entry.customMetadata?.updated !== meta.updated) {
     if (!budget.take()) return false;
-    const customMetadata: Record<string, string> = {
-      id: meta.id,
-      updated: meta.updated,
-      created_by_id: meta.created_by.id,
-      created_by_label: meta.created_by.label,
-    };
-    if (meta.expires_at !== null) customMetadata.expires_at = meta.expires_at;
-    if (meta.title !== null) customMetadata.title = meta.title;
-    await bucket.put(key, "", { customMetadata });
+    await bucket.put(key, "", { customMetadata: listMetadata(meta) });
     report.repaired.list += 1;
   }
 
