@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { BASE_URL } from "./base-url.js";
+import { api } from "./client.js";
 
-const get = (path: string, init?: RequestInit) =>
-  fetch(`${BASE_URL}${path}`, { cache: "no-store", ...init });
+/** Authenticated: an unknown route must 404, not 401. */
+const get = (path: string, init?: RequestInit) => api(path, init ?? {});
 
 const NOT_FOUND_BODY = {
   error: {

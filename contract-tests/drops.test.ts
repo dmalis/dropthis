@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BASE_URL } from "./base-url.js";
+import { api, apiJson, errorOf } from "./client.js";
+import type { Json } from "./client.js";
 
 /**
  * The publish → serve → get slice, replayed against the deployed dev Worker.
@@ -11,17 +13,12 @@ import { BASE_URL } from "./base-url.js";
  * slice is built on conditional writes.
  */
 
-type Json = Record<string, unknown>;
-
-const api = (path: string, init?: RequestInit) =>
-  fetch(`${BASE_URL}${path}`, { cache: "no-store", ...init });
-
 const publish = (body: unknown, init?: RequestInit) =>
   api("/_api/v1/drops", {
+    ...init,
     method: "POST",
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
     body: JSON.stringify(body),
-    ...init,
   });
 
 async function publishOk(body: unknown, init?: RequestInit): Promise<Json> {
@@ -30,17 +27,8 @@ async function publishOk(body: unknown, init?: RequestInit): Promise<Json> {
   return (await response.json()) as Json;
 }
 
-async function errorOf(response: Response): Promise<{ status: number; code: string; body: Json }> {
-  const body = (await response.json()) as { error: { code: string } };
-  return { status: response.status, code: body.error.code, body: body as unknown as Json };
-}
-
 const devKeys = async (prefix: string): Promise<string[]> => {
-  const response = await api("/_dev/r2/list", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prefix }),
-  });
+  const response = await apiJson("/_dev/r2/list", "POST", { prefix });
   return ((await response.json()) as { keys: string[] }).keys;
 };
 
@@ -74,7 +62,9 @@ describe("publish a single text file", () => {
     expect(drop.url).toBe(`${BASE_URL}/${drop.slug as string}/`);
     expect(drop.title).toBe("Hello");
     expect(drop.meta).toEqual({ source: "contract-test", run: 1 });
-    expect(drop.created_by).toEqual({ id: "dev", label: "admin" });
+    // The real calling key, not a stub: the contract run authenticates with
+    // the admin key `global-setup.ts` wrote through the R2 API.
+    expect(drop.created_by).toEqual({ id: "admin", label: "admin" });
     expect(drop.noindex).toBe(true);
     expect(drop.has_password).toBe(false);
     expect(drop.state).toBe("live");
@@ -270,21 +260,30 @@ describe("get with files", () => {
 
   it("serves the download_url, with byte ranges", async () => {
     const drop = await publishOk({ files: [{ path: "pixel.png", base64: PNG_BASE64 }] });
-    const url = `${BASE_URL}/_api/v1/drops/${drop.slug as string}/files/pixel.png`;
+    // `download_url` is a bearer route, not a public one: the file body of a
+    // drop is reachable through the viewer, and this is the API's own copy.
+    const path = `/_api/v1/drops/${drop.slug as string}/files/pixel.png`;
 
-    const whole = await fetch(url, { cache: "no-store" });
+    const whole = await api(path);
     expect(whole.status).toBe(200);
     expect(whole.headers.get("content-type")).toBe("image/png");
     expect(whole.headers.get("accept-ranges")).toBe("bytes");
 
-    const ranged = await fetch(url, { headers: { Range: "bytes=0-7" }, cache: "no-store" });
+    const ranged = await api(path, { headers: { Range: "bytes=0-7" } });
     expect(ranged.status).toBe(206);
     expect(ranged.headers.get("content-range")).toBe("bytes 0-7/70");
     expect(new Uint8Array(await ranged.arrayBuffer()).length).toBe(8);
 
-    const past = await fetch(url, { headers: { Range: "bytes=999-" }, cache: "no-store" });
+    const past = await api(path, { headers: { Range: "bytes=999-" } });
     expect(past.status).toBe(416);
     expect(past.headers.get("content-range")).toBe("bytes */70");
+  });
+
+  it("refuses the download_url without a key", async () => {
+    const drop = await publishOk({ files: [{ path: "pixel.png", base64: PNG_BASE64 }] });
+    const path = `/_api/v1/drops/${drop.slug as string}/files/pixel.png`;
+
+    expect((await errorOf(await api(path, {}, ""))).code).toBe("UNAUTHENTICATED");
   });
 
   it("404s a file that is not in the manifest", async () => {
