@@ -44,6 +44,8 @@ export type R2ListOptions = {
   prefix?: string;
   cursor?: string;
   limit?: number;
+  /** Exclusive: listing starts at the first key AFTER this one. */
+  startAfter?: string;
   include?: Array<"httpMetadata" | "customMetadata">;
 };
 

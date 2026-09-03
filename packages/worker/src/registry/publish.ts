@@ -30,7 +30,7 @@ export {
 
 const FIELDS = "files, title, meta, expires, noindex and idempotency_key";
 
-const publishSchema = z.strictObject({
+export const publishSchema = z.strictObject({
   files: z.array(fileEntry),
   title: z.string().optional(),
   meta: z.record(z.string(), z.unknown()).optional(),

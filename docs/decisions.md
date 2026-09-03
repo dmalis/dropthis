@@ -538,3 +538,42 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     asserts what the bucket contains measure each other — `drops.test.ts`'s "leaves nothing
     served" check failed against slug pointers `lifecycle.test.ts` had just created. Serial
     files, one bucket reset per run.
+
+78. **Six rulings the keys slice needed (issue #7).** All are choices the spec left open;
+    each is recorded with what it cost to decide otherwise.
+    (a) **The registry declares the whole frozen route table, handlers or not.** `update`,
+    `list` and `delete` (issue #5) carry their frozen method, path, params and scope with
+    `schema: z.unknown()` and no handler; the router mounts only entries that have one, and
+    `registry-table.test.ts` asserts exactly which are still pending. The contract is one
+    document even while it is built by two branches.
+    (b) **`user add` takes `{label, idempotency_key?}` and mints `user` keys only.** No
+    `scope` field: a second admin credential is `init --rotate-admin-key`'s business, and
+    an HTTP call that could mint one would be a contract addition past frozen v1.
+    (c) **`config set` may not touch `canonical_url`, `alias_origins` or `instance_name`,
+    and validates the whole resulting policy.** Those three are `init`'s — a call that could
+    move the canonical origin could take an instance off its own domain. Whole-policy
+    validation is why lowering `expiry.max` under the current `expiry.default` is refused
+    rather than stored: a policy that forbids its own default fails every later publish.
+    New hard ceilings: `pbkdf2_iterations` 100,000 (workerd refuses 200,000, #73) and
+    `cron_ops_budget` 45 (Free allows 50 subrequests).
+    (d) **`usage` and `prune` ship the engine issue #6's cron will call.** #6 owns the
+    hourly trigger, `system/prune-state.json` and the reconcile; this slice owns the scan
+    and the deletion of `expired_final` drops, so the operator has the manual lever now and
+    the cron has one implementation to wire. `dry_run` defaults to **true**: an agent that
+    forgot the flag must not delete. The scan's cursor is the **last finished drop id**,
+    resumed with R2 `startAfter: drops/<id>0`, not an R2 page cursor — the ops budget runs
+    out in the middle of a page, and a page cursor would silently skip the rest of it.
+    (e) **A `doctor` check whose subject does not exist is `skip`.** `mcp_initialize` (#8)
+    and `cron_state` (#6) name their issue in the evidence. `canonical_origin` and
+    `policy_readable` judge the STORED `system/config.json`, never the resolved config: the
+    resolved reader falls back to the request's own host on purpose, so it looks correct
+    exactly when the stored value is missing. `pbkdf2_benchmark` reports the fastest of
+    three derives — one sample measures the machine's noise as much as the derive.
+    (f) **One dev instance per developer, not one shared one.**
+    `scripts/deploy-dev.mjs --instance <name>` (or `DROPTHIS_DEV_INSTANCE`) derives Worker,
+    bucket and KV from the name, and `contract-tests/base-url.ts` derives `BASE_URL` and
+    `DEV_BUCKET` the same way; the default `dev` keeps its existing config and secret paths
+    so its `HMAC_SECRET` is never re-minted. Forced by two agents sharing `dropthis-dev`:
+    each deploy answered the other's contract run and each run's bucket reset wiped the
+    other's fixtures. The contract project also runs `fileParallelism: false` — one
+    instance, one bucket, one policy, so its test files are inherently serial.

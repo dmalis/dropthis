@@ -20,10 +20,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Cloudflare from "cloudflare";
 
-const INSTANCE = "dev";
-const WORKER_NAME = `dropthis-${INSTANCE}`;
-const BUCKET_NAME = `dropthis-${INSTANCE}-drops`;
-const KV_TITLE = `dropthis-${INSTANCE}-oauth`;
+/**
+ * The instance this run deploys. It defaults to `dev`, and `--instance <name>`
+ * gives a second one its own Worker, bucket and KV namespace — every resource
+ * is derived from the name, exactly as `init --name` derives them. Two people
+ * working on the same repo at the same time each need their own seam: one
+ * shared dev Worker means one agent's deploy silently answers the other's
+ * contract run, and one shared bucket means one run's reset wipes the other's.
+ */
+const DEFAULT_INSTANCE = "dev";
 /** Cloudflare's own page sizes; the reconcile pages until a page is short. */
 const R2_PAGE_SIZE = 100;
 const KV_PAGE_SIZE = 100;
@@ -36,26 +41,50 @@ const templatePath = join(repoRoot, "packages", "worker", "wrangler.jsonc");
  * imports that module.
  */
 const workerMain = join(repoRoot, "packages", "worker", "src", "dev-entry.ts");
-const defaultConfigOut = join(repoRoot, ".dev", "wrangler.dev.jsonc");
-const defaultSecretsOut = join(repoRoot, ".dev", "secrets.json");
+const namesFor = (instance) => ({
+  instance,
+  worker: `dropthis-${instance}`,
+  bucket: `dropthis-${instance}-drops`,
+  kv: `dropthis-${instance}-oauth`,
+  // The default instance keeps the paths it has always used. Moving them would
+  // mint a fresh `HMAC_SECRET` for an instance that already has one, and every
+  // unlock cookie signed with the old one would stop verifying.
+  configOut:
+    instance === DEFAULT_INSTANCE
+      ? join(repoRoot, ".dev", "wrangler.dev.jsonc")
+      : join(repoRoot, ".dev", `wrangler.${instance}.jsonc`),
+  secretsOut:
+    instance === DEFAULT_INSTANCE
+      ? join(repoRoot, ".dev", "secrets.json")
+      : join(repoRoot, ".dev", `secrets.${instance}.json`),
+});
 
 function parseArgs(argv) {
   const args = {
     dryRun: false,
     deploy: true,
     apiBase: undefined,
-    configOut: defaultConfigOut,
-    secretsOut: defaultSecretsOut,
+    instance: process.env.DROPTHIS_DEV_INSTANCE || DEFAULT_INSTANCE,
+    configOut: undefined,
+    secretsOut: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--no-deploy") args.deploy = false;
     else if (arg === "--api-base") args.apiBase = argv[++i];
+    else if (arg === "--instance") args.instance = argv[++i];
     else if (arg === "--config-out") args.configOut = argv[++i];
     else if (arg === "--secrets-out") args.secretsOut = argv[++i];
     else die(`Unknown option: ${arg}`);
   }
+  if (typeof args.instance !== "string" || !/^[a-z0-9][a-z0-9-]{1,29}$/.test(args.instance)) {
+    die(`--instance must be 2-30 characters of a-z, 0-9 and -; got ${String(args.instance)}`);
+  }
+  const names = namesFor(args.instance);
+  args.names = names;
+  args.configOut ??= names.configOut;
+  args.secretsOut ??= names.secretsOut;
   if (args.dryRun) args.deploy = false;
   return args;
 }
@@ -154,14 +183,14 @@ async function ensureSecrets(secretsOut) {
   return { secrets, minted: true };
 }
 
-async function renderConfig(configOut, kvId) {
+async function renderConfig(names, configOut, kvId) {
   const template = JSON.parse(stripJsonComments(await readFile(templatePath, "utf8")));
   const rendered = {
     ...template,
-    name: WORKER_NAME,
+    name: names.worker,
     main: workerMain,
     vars: { DEV_ROUTES: "1" },
-    r2_buckets: [{ binding: "BUCKET", bucket_name: BUCKET_NAME }],
+    r2_buckets: [{ binding: "BUCKET", bucket_name: names.bucket }],
     kv_namespaces: [{ binding: "OAUTH_KV", id: kvId }],
   };
   delete rendered.$schema;
@@ -219,26 +248,26 @@ async function main() {
     die(`API token verification failed: ${error.message}`);
   }
 
-  let bucket = await findBucket(client, accountId, BUCKET_NAME);
-  if (bucket) log(`bucket ${BUCKET_NAME}: exists`);
-  else if (args.dryRun) log(`bucket ${BUCKET_NAME}: would create`);
+  let bucket = await findBucket(client, accountId, args.names.bucket);
+  if (bucket) log(`bucket ${args.names.bucket}: exists`);
+  else if (args.dryRun) log(`bucket ${args.names.bucket}: would create`);
   else {
-    bucket = await client.r2.buckets.create({ account_id: accountId, name: BUCKET_NAME });
-    log(`bucket ${BUCKET_NAME}: created`);
+    bucket = await client.r2.buckets.create({ account_id: accountId, name: args.names.bucket });
+    log(`bucket ${args.names.bucket}: created`);
   }
 
-  let namespace = await findNamespace(client, accountId, KV_TITLE);
-  if (namespace) log(`kv ${KV_TITLE}: exists (${namespace.id})`);
-  else if (args.dryRun) log(`kv ${KV_TITLE}: would create`);
+  let namespace = await findNamespace(client, accountId, args.names.kv);
+  if (namespace) log(`kv ${args.names.kv}: exists (${namespace.id})`);
+  else if (args.dryRun) log(`kv ${args.names.kv}: would create`);
   else {
-    namespace = await client.kv.namespaces.create({ account_id: accountId, title: KV_TITLE });
-    log(`kv ${KV_TITLE}: created (${namespace.id})`);
+    namespace = await client.kv.namespaces.create({ account_id: accountId, title: args.names.kv });
+    log(`kv ${args.names.kv}: created (${namespace.id})`);
   }
 
   const { subdomain } = await client.workers.subdomains.get({ account_id: accountId });
-  const url = `https://${WORKER_NAME}.${subdomain}.workers.dev`;
+  const url = `https://${args.names.worker}.${subdomain}.workers.dev`;
 
-  await renderConfig(args.configOut, namespace ? namespace.id : "pending-create");
+  await renderConfig(args.names, args.configOut, namespace ? namespace.id : "pending-create");
   log(`rendered ${args.configOut}`);
 
   const { minted } = await ensureSecrets(args.secretsOut);

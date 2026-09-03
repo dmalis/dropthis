@@ -25,7 +25,7 @@ import {
 
 const FIELDS = "files, title, meta, expires, noindex and idempotency_key";
 
-const updateSchema = z.strictObject({
+export const updateSchema = z.strictObject({
   files: z.array(fileEntry).optional(),
   title: z.string().nullable().optional(),
   meta: z.record(z.string(), z.unknown()).optional(),

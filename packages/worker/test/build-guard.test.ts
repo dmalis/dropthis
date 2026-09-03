@@ -52,6 +52,11 @@ describe("production bundle", () => {
   it("still contains the product's own routes", async () => {
     const bundle = await bundleProduction();
 
-    expect(bundle).toContain("/_api/v1/health");
+    // The routes are generated from the registry, so the bundle carries the
+    // prefix and each operation's path rather than one joined literal.
+    expect(bundle).toContain("/_api/v1");
+    expect(bundle).toContain("/health");
+    expect(bundle).toContain("/drops");
+    expect(bundle).toContain("/users");
   }, 120_000);
 });

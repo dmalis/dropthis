@@ -8,7 +8,6 @@
  * build-guard.test.ts` pins exactly that.
  */
 import type { Env } from "../bindings.js";
-import type { FaultPoint } from "../operations/publish.js";
 
 export type DevHooks = {
   /**
@@ -17,11 +16,16 @@ export type DevHooks = {
    * instant the expiry table names.
    */
   now(env: Env, request?: Request): Date;
-  /** Where a publish should abort, to prove a retry converges. */
-  faultPoint(request: Request, env: Env): FaultPoint | undefined;
+  /**
+   * The raw `DEV-Fault` header: where THIS request should abort, so a test can
+   * prove the retry converges. Each operation names its own points and parses
+   * the value itself, so one seam covers publish, `update`, `user add` and
+   * whatever comes next.
+   */
+  fault(request: Request, env: Env): string | undefined;
 };
 
 export const PRODUCTION_HOOKS: DevHooks = {
   now: () => new Date(),
-  faultPoint: () => undefined,
+  fault: () => undefined,
 };

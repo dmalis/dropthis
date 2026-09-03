@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { dropRoutes } from "./api/drops.js";
+import { apiRoutes } from "./api/router.js";
 import type { Env } from "./bindings.js";
 import { PRODUCTION_HOOKS } from "./dev/hooks.js";
 import type { DevHooks } from "./dev/hooks.js";
@@ -36,12 +36,9 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
     c.res.headers.set("X-Robots-Tag", "noindex, nofollow");
   });
 
-  // Unauthenticated liveness. `init` polls it while a deploy propagates, and it
-  // is the one open route of the after-v1 unclaimed bootstrap. Nothing else is
-  // disclosed here.
-  app.get("/_api/v1/health", (c) => c.json({ ok: true }));
-
-  app.route("/_api/v1", dropRoutes(hooks));
+  // Every REST route, generated from the operation registry. `health` is the
+  // one open route in it; everything else needs a key and a scope.
+  app.route("/_api/v1", apiRoutes(hooks));
 
   // The viewer is last: it owns every path that is not the control plane, and
   // `RESERVED_PREFIXES` plus the `_`-free slug alphabet keep the two apart.

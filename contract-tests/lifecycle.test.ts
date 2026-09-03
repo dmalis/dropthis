@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BASE_URL } from "./base-url.js";
+import { api, errorOf } from "./client.js";
+import type { Json } from "./client.js";
 
 /**
  * The full lifecycle — `update`, `delete`, `list` — replayed against the
@@ -10,11 +11,6 @@ import { BASE_URL } from "./base-url.js";
  * HTTP against real R2 because the whole slice is built on conditional writes,
  * and Miniflare has shipped reversed conditional-write logic.
  */
-
-type Json = Record<string, unknown>;
-
-const api = (path: string, init?: RequestInit) =>
-  fetch(`${BASE_URL}${path}`, { cache: "no-store", ...init });
 
 const publish = (body: unknown, init?: RequestInit) =>
   api("/_api/v1/drops", {
@@ -42,11 +38,6 @@ async function updateOk(slug: string, body: unknown, init?: RequestInit): Promis
   const response = await update(slug, body, init);
   expect(response.status, await response.clone().text()).toBe(200);
   return (await response.json()) as Json;
-}
-
-async function errorOf(response: Response): Promise<{ status: number; code: string; body: Json }> {
-  const body = (await response.json()) as { error: { code: string } };
-  return { status: response.status, code: body.error.code, body: body as unknown as Json };
 }
 
 const devKeys = async (prefix: string): Promise<string[]> => {
@@ -625,14 +616,21 @@ describe("list", () => {
       cursor = page.has_more ? page.cursor : null;
       expect(page.has_more === true).toBe(cursor !== null);
       pages += 1;
-      expect(pages, "the cursor must terminate").toBeLessThan(20);
+      // The instance is shared with the other contract files, so the listing
+      // holds their drops too; the cap proves the cursor TERMINATES, it is not
+      // a count of this test's own pages.
+      expect(pages, "the cursor must terminate").toBeLessThan(80);
     } while (cursor !== null);
 
     // Every drop of this run appears exactly once, newest first.
     const mine = seen.filter((slug) => slugs.includes(slug));
     expect(mine).toEqual(newestFirst);
     expect(new Set(seen).size).toBe(seen.length);
-  }, 120_000);
+    // Measured against the deployed dev instance: one publish is ~3.6 s and a
+    // 100-row page ~10 s (one head per row). 35 publishes plus the paging walk
+    // do not fit a smaller budget, and cutting the run would stop proving that
+    // paging crosses several pages in order.
+  }, 600_000);
 
   it("clamps limit to the frozen bounds", async () => {
     await publishOk({ files: [{ path: "a.txt", text: "x" }] });

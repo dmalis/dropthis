@@ -35,7 +35,19 @@ that must not see each other's drops get two instances.
 - Keys travel only as a bearer header or through the OAuth paste page — never in a URL.
 - Reserved path prefixes (`/_api`, `/_oauth`, `/_connect`, `/_skill.md`) cannot be shadowed
   by a slug; generated slugs never start with `_`.
-- Keys are stored hashed and never logged; the admin key is shown once at install.
+- Keys are stored hashed and never logged; the admin key is shown once at install. A key is
+  32 random bytes stored as `sha256(key)` and compared in constant time. There is no slow
+  KDF and no attempt rate limiting on keys: a 256-bit random key is not guessable, and the
+  Free plan's CPU budget makes stretching every request expensive. A key that leaks is
+  revoked, never recovered.
+- Every refusal to authenticate is the same `401 UNAUTHENTICATED` with the same message. A
+  caller is never told whether a key once existed, nor which of the two lookups failed.
+- `user remove` deletes the `keyhash/` pointer first, so access ends on that write; the key
+  record and the label claim follow, and every step tolerates a missing key so an
+  interrupted removal is finished by a rerun.
+- A `user` key reaches the five drop operations; the admin operations (`user`, `config`,
+  `usage`, `prune`, `doctor`) answer `403 FORBIDDEN_SCOPE` to it. There is no per-drop
+  ownership inside an instance: instance = team (see AGENTS.md, "Team model").
 - `files: [{path, url}]` makes the Worker fetch a URL. Only `http`/`https` on ports 80/443;
   loopback, link-local, private, cloud-metadata and redirect-to-private targets are
   rejected; redirects are followed manually (≤ 3) and re-checked; ≤ 20 URL files and ≤ 45

@@ -105,6 +105,49 @@ describe("deploy-dev reconcile by name", () => {
     expect(run.stdout.trim()).toBe("https://dropthis-dev.fake-subdomain.workers.dev");
   });
 
+  it("derives every resource from --instance, so two developers never share one seam", async () => {
+    const cf = await fake();
+    const out = await outPath();
+
+    const run = await runDeployDev(
+      [
+        "--no-deploy",
+        "--instance",
+        "dev7",
+        "--api-base",
+        cf.apiBase,
+        "--config-out",
+        out,
+        "--secrets-out",
+        `${out}.secrets.json`,
+      ],
+      { CLOUDFLARE_API_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account-id" },
+    );
+
+    expect(run.code, run.stderr).toBe(0);
+    expect(cf.state.buckets).toContain("dropthis-dev7-drops");
+    expect(cf.state.buckets).not.toContain("dropthis-dev-drops");
+    expect(cf.state.namespaces.map((n) => n.title)).toEqual(["dropthis-dev7-oauth"]);
+
+    const rendered = await readRendered(out);
+    expect(rendered.name).toBe("dropthis-dev7");
+    expect(rendered.r2_buckets).toEqual([
+      { binding: "BUCKET", bucket_name: "dropthis-dev7-drops" },
+    ]);
+    expect(run.stdout.trim()).toBe("https://dropthis-dev7.fake-subdomain.workers.dev");
+  });
+
+  it("refuses an instance name that would not make a legal resource name", async () => {
+    const cf = await fake();
+    const run = await runDeployDev(
+      ["--no-deploy", "--instance", "Dev 7", "--api-base", cf.apiBase],
+      { CLOUDFLARE_API_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account-id" },
+    );
+
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain("--instance");
+  });
+
   it("reuses both on a second run: no create calls, identical rendered config", async () => {
     const cf = await fake();
     const first = await outPath();
