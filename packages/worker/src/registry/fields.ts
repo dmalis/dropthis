@@ -18,15 +18,31 @@ export const MAX_META_BYTES = 16 * 1024;
 
 const encoder = new TextEncoder();
 
-const textEntry = z.strictObject({ path: z.string(), text: z.string() });
-/**
- * `sha256` is optional on a base64 entry: a client that already hashed the
- * bytes (the CLI always does) sends it, and the Worker refuses a mismatch as
- * `HASH_MISMATCH` instead of storing bytes the client did not mean to send.
- */
+/** One canonical sentence per field, shared by every surface that shows a schema. */
+export const PATH_DESCRIPTION =
+  "Relative path inside the drop, forward slashes: index.html, report.pdf, docs/a.html.";
+export const TITLE_DESCRIPTION =
+  "Short human name of the drop (200 bytes max), shown in lists and on the password page. Always set it.";
+export const META_DESCRIPTION =
+  "Your own JSON notes on the drop (16 KB max): what it is, where the data came from, who it was sent to. Returned by get, never shown to visitors.";
+export const EXPIRES_DESCRIPTION =
+  'When the link stops working: "7d", "2026-12-31", an RFC 3339 instant, or "never".';
+export const NOINDEX_DESCRIPTION = "Tell search engines to stay away (default true).";
+export const IDEMPOTENCY_DESCRIPTION =
+  "A key you choose; a retry with the same key and payload returns the same result instead of acting twice.";
+
+const textEntry = z.strictObject({
+  path: z.string().describe(PATH_DESCRIPTION),
+  text: z.string().describe("The file's text (UTF-8). For text-typed files only."),
+});
 const base64Entry = z.strictObject({
-  path: z.string(),
-  base64: z.string(),
+  path: z.string().describe(PATH_DESCRIPTION),
+  base64: z.string().describe("The file's bytes, base64-encoded. For binaries."),
+  /**
+   * Optional: a client that already hashed the bytes (the CLI always does)
+   * sends it, and the Worker refuses a mismatch as `HASH_MISMATCH` instead of
+   * storing bytes the client did not mean to send.
+   */
   sha256: z.string().optional(),
 });
 
@@ -36,6 +52,9 @@ const base64Entry = z.strictObject({
  * with neither.
  */
 export const fileEntry = z.union([textEntry, base64Entry]);
+
+export const FILES_DESCRIPTION =
+  "The files, each {path, text} or {path, base64}, exactly one of the two. On update, the WHOLE set.";
 
 export type PublishFile = z.infer<typeof fileEntry>;
 

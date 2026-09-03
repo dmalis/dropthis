@@ -165,7 +165,7 @@ function specFor(op: Operation<never>): CommandSpec {
       flag: kebab(name),
       kind: field.kind,
       nullable: field.nullable,
-      description: describe(op.name, name, field),
+      description: describe(op.name, name, field, schema),
     });
   }
 
@@ -182,22 +182,26 @@ function specFor(op: Operation<never>): CommandSpec {
   return { words, op, args, flags, steps: PAGED.has(op.name) };
 }
 
-/** One line per flag, written for an agent reading `--help`. */
-function describe(opName: string, field: string, kind: Field): string {
-  const known: Record<string, string> = {
-    title: "Short human-readable title (≤ 200 bytes).",
-    meta: "JSON object the agent owns; update merges at the top level, null removes a key.",
-    expires: '"7d", "2026-12-31", an RFC 3339 instant, or "never".',
-    noindex: "Send X-Robots-Tag: noindex (on by default).",
-    idempotency_key: "Retries with the same key return the same result.",
-    files: "Also return each text file's content.",
-    limit: "Page size, 1–1000.",
-    cursor: "Continue from a previous page or scan.",
-    q: "Substring of the title to filter by (within the page).",
-    dry_run: "Report what would be deleted; --no-dry-run deletes.",
-  };
-  const base = known[field] ?? `${field} (${kind.kind})`;
+/**
+ * One line per flag, written for an agent reading `--help` — and it is the
+ * registry's own sentence. The schema already carries the description the MCP
+ * tool and `/_skill.md` show (`registry/fields.ts`); a second list here would
+ * be the drift the registry exists to prevent, so the only text this file adds
+ * is the `--no-<flag>` clause, which is CLI grammar and exists nowhere else.
+ */
+function describe(opName: string, field: string, kind: Field, schema: z.ZodType): string {
+  const base = descriptionOf(schema) ?? `${field} (${kind.kind})`;
   return kind.nullable && opName === "update" ? `${base} --no-${kebab(field)} clears it.` : base;
+}
+
+/** The description, through the wrappers a field may be built from. */
+function descriptionOf(schema: z.ZodType): string | undefined {
+  const described = schema.description;
+  if (described !== undefined) return described;
+  const def = defOf(schema);
+  if (def.type === "pipe" && def.in !== undefined) return descriptionOf(def.in);
+  if (def.innerType !== undefined) return descriptionOf(def.innerType);
+  return undefined;
 }
 
 let cached: CommandSpec[] | undefined;

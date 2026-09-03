@@ -77,6 +77,24 @@ describe("commandSurface", () => {
     expect(commandSurface().some((spec) => spec.words.join(" ") === "doctor checks")).toBe(false);
   });
 
+  it("takes every flag's help line from the registry schema, not a second list", () => {
+    for (const spec of commandSurface()) {
+      const shape = (spec.op.schema as unknown as { shape?: Record<string, { description?: string }> }).shape;
+      if (shape === undefined) continue;
+      for (const flag of spec.flags) {
+        const described = shape[flag.field]?.description;
+        if (described === undefined) continue;
+        expect(flag.description.startsWith(described), `${spec.words.join(" ")} --${flag.flag}`).toBe(true);
+      }
+    }
+  });
+
+  it("describes update's clearable fields with the flag that clears them", () => {
+    const title = byWords("update").flags.find((f) => f.flag === "title");
+    expect(title?.description).toContain("Short human name of the drop");
+    expect(title?.description).toContain("--no-title clears it.");
+  });
+
   it("streams step events only where the operation pages", () => {
     expect(commandSurface().filter((spec) => spec.steps).map((spec) => spec.words.join(" "))).toEqual([
       "usage",

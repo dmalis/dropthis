@@ -126,7 +126,9 @@ Same five drop operations as MCP tools (`dropthis_publish`, `dropthis_update`,
 `dropthis_get`, `dropthis_list`, `dropthis_delete`; admin: `dropthis_user_*`,
 `dropthis_config_*`, `dropthis_usage`, `dropthis_prune`, `dropthis_doctor`) and as REST
 under `/_api/v1`. In MCP, files travel inline in the tool call (`{path, text}` or
-`{path, base64}`) or by `{path, url}`; the CLI streams large folders itself.
+`{path, base64}`) or by `{path, url}`; the CLI streams large folders itself. `dropthis_get`,
+`dropthis_update` and `dropthis_delete` take `target` — the drop's URL or its slug — and a
+URL from another instance is `WRONG_INSTANCE`.
 
 Credentials: `CLOUDFLARE_API_TOKEN` for `init`; `DROPTHIS_URL` + `DROPTHIS_KEY` for
 everything else, `doctor` included (or `--instance <name>` from `instances.json`). `--json`

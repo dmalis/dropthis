@@ -3,13 +3,16 @@
  *
  * One entry per operation: its name, its place on the wire, the scope it
  * needs, one zod schema for its input and one handler. The REST router is
- * generated from these entries; the MCP tool list (issue #8) and the CLI
+ * generated from these entries; the MCP tool list (`mcp/tools.ts`) and the CLI
  * (issue #9) read the same entries, so the three surfaces cannot drift —
  * adding an operation is adding one entry, never three.
  *
  * The handler never sees HTTP. It takes the parsed input and a context, and
  * returns the object the surface will render — or, for a file body, a
  * `Response` the router passes through untouched.
+ *
+ * What an operation SAYS to an agent — its MCP title, description and
+ * annotations — lives beside it in `registry/tools.ts`, keyed by name.
  */
 import type { z } from "zod";
 import type { Scope } from "../auth/key.js";
@@ -39,6 +42,11 @@ export type OperationContext = {
   request: Request;
   /** `HMAC_SECRET`, resolved on demand so a route that does not sign is not blocked. */
   secret(): string;
+  /**
+   * This Worker, called in-process: the request never leaves the isolate and
+   * needs no binding. `doctor` uses it to prove its own MCP endpoint answers.
+   */
+  self(request: Request): Promise<Response>;
 };
 
 export type Operation<I = never> = {
@@ -48,7 +56,7 @@ export type Operation<I = never> = {
   /** The path under `/_api/v1`, in Hono's grammar (`:slug`, `*`). */
   path: string;
   scope: OperationScope;
-  /** One sentence, written for an agent. It becomes the MCP tool description. */
+  /** One sentence, written for an agent: the CLI's help line and the docs' table row. */
   summary: string;
   schema: z.ZodType<I>;
   /** Rules the schema cannot express (byte budgets, cross-field checks). */
@@ -66,8 +74,8 @@ export type Operation<I = never> = {
   handler?: (input: I, context: OperationContext) => Promise<OperationResult | Response>;
   /**
    * REST-only: a raw file body, or the staged-upload path the CLI alone uses —
-   * nothing an MCP tool returns or an agent is told about. Issue #8 skips
-   * these when it generates the tool list.
+   * nothing an MCP tool returns or an agent is told about. `mcp/tools.ts`
+   * skips these when it generates the tool list.
    */
   restOnly?: boolean;
   /**

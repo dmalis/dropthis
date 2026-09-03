@@ -22,9 +22,14 @@ export const MAX_LIST_LIMIT = 1000;
 const FIELDS = "cursor, limit and q";
 
 export const listSchema = z.strictObject({
-  limit: intParam.default(DEFAULT_LIST_LIMIT),
-  cursor: z.string().optional(),
-  q: z.string().default(""),
+  limit: intParam
+    .default(DEFAULT_LIST_LIMIT)
+    .describe(`Rows per page, 1 to ${MAX_LIST_LIMIT} (default ${DEFAULT_LIST_LIMIT}).`),
+  cursor: z.string().optional().describe("The cursor of the previous page, to continue from it."),
+  q: z
+    .string()
+    .default("")
+    .describe("A case-insensitive substring of the title, matched within the page."),
 });
 
 export type ListInput = z.infer<typeof listSchema>;

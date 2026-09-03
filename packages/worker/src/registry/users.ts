@@ -12,6 +12,7 @@ import { addUser, parseUserAddFault } from "../operations/user-add.js";
 import type { UserAddInput } from "../operations/user-add.js";
 import { removeUser } from "../operations/user-remove.js";
 import { KEYS_PREFIX } from "../storage/keys.js";
+import { IDEMPOTENCY_DESCRIPTION } from "./fields.js";
 import type { Operation } from "./types.js";
 
 export type UserSummary = {
@@ -29,11 +30,13 @@ const listSchema = z.strictObject({});
  * `init`'s business (`--rotate-admin-key`), never an HTTP call's.
  */
 const addSchema = z.strictObject({
-  label: z.string(),
-  idempotency_key: z.string().min(1).optional(),
+  label: z.string().describe("The person's name; unique per instance after normalisation."),
+  idempotency_key: z.string().min(1).optional().describe(IDEMPOTENCY_DESCRIPTION),
 });
 
-const removeSchema = z.strictObject({ label: z.string() });
+const removeSchema = z.strictObject({
+  label: z.string().describe("The label of the key to revoke, as `user list` shows it."),
+});
 
 /**
  * Every key record, oldest first. This is one of the two `list()` calls the

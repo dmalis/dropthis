@@ -578,7 +578,62 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     other's fixtures. The contract project also runs `fileParallelism: false` — one
     instance, one bucket, one policy, so its test files are inherently serial.
 
-85. **The CLI and staged-upload slice's rulings (issue #9).** Entries #79–#84 are reserved
+80. **The MCP surface's rulings (issue #8).** Each is a choice the spec left open; the
+    reason is beside it.
+    (a) **The SDK's own `WebStandardStreamableHTTPServerTransport`, stateless, JSON answers;
+    `@hono/mcp` dropped from the stack.** `@hono/mcp` 0.3.2 is a thin Hono wrapper over the
+    same transport that also ships an OAuth router (peers `pkce-challenge`,
+    `hono-rate-limiter`) this product does not want — #12 uses `workers-oauth-provider`. One
+    server and one transport per request, because a Worker keeps nothing between requests;
+    `GET` and `DELETE` on `/_api/mcp` are `405` with `Allow: POST`, JSON-RPC shaped:
+    transport-level refusals keep the transport's shape, the catalogue governs what TOOLS
+    return.
+    (b) **The low-level `Server`, with its own `tools/list` and `tools/call` handlers, not
+    `McpServer.registerTool`.** The high-level API validates arguments first and answers a
+    bad one with a JSON-RPC `-32602` — a second error shape. Here every refusal a tool can
+    produce, an unknown tool name included, is the catalogue object in-band (`isError: true`,
+    the same `{error: {…}}` REST sends, in `structuredContent` and as the single text item).
+    (c) **`target` in place of the slug path parameter on `get`, `update` and `delete`.** The
+    one translation between REST and MCP: the tool takes the drop's URL or its slug, and
+    `domain/target.ts` resolves it against the canonical and alias origins before the
+    operation runs (`WRONG_INSTANCE` otherwise) — spec-v1's "resolved by the CLI/MCP layer".
+    Everything else is the operation's own zod schema rendered with `z.toJSONSchema`; the two
+    coercing params render as plain `boolean`/`integer`.
+    (d) **Two channels, one object.** `structuredContent` is the object REST returns; the
+    text item is one load-bearing line (`Published: <url>`) followed by the same JSON. A
+    generated password that lived only in structured content would be lost on a text-only
+    client, and claude.ai hides the text channel — so both carry everything. The `204`
+    operations (`delete`, `user remove`) answer with the line alone and no
+    `structuredContent`.
+    (e) **Tool text is product surface, in one place, pinned.** `registry/tools.ts` holds
+    title, trigger clause, body and annotations per operation; `test/mcp-surface.test.ts`
+    hashes name + description + annotations per tool and asserts the trigger clause word for
+    word, so wording drifts only in a commit that moves the pin. A sentence about an input is
+    emitted only when the schema has that input (`{{password}}` in the body is substituted or
+    cut) — the archived product described a `password` that was not there and agents got
+    422s for months. On this base `password` is issue #6's, so the sentence is absent; the
+    pin moves in the commit that merges #6. `/_skill.md` renders its tool sections from the
+    same entries.
+    (f) **Annotations, explicit tri-state on every tool.** Destructive: `delete`,
+    `user remove`, `prune` only. `update` is not destructive — it changes the drop to the
+    state the caller asked for and the URL survives; the `files` replacement rule is SHOUTED
+    in its description instead. `openWorldHint` is false everywhere until `url` file entries
+    (#9) fetch a caller's URL. `publish` is not idempotent (only with a key); the rest are.
+    (g) **`/_skill.md` is open and rendered per request.** The template is
+    `skills/instance-skill.md`, bundled as a text module (Wrangler `Text` rule; a five-line
+    vitest plugin does the same for tests) so there is one source and no build step; the
+    values are the instance's live policy and canonical origin, never the source defaults.
+    (h) **`doctor`'s `mcp_initialize` calls the Worker in-process.** `OperationContext.self`
+    is the app's own fetch handler, so the check posts `initialize` and `tools/list` to
+    `/_api/mcp` with the credential the `doctor` call carried and proves the real route: auth,
+    transport, tool list. Not over the network (a Worker cannot reliably fetch its own
+    hostname) and not a self service binding (one more thing `init` would have to render).
+    (i) **The `401` on `/_api/mcp` names `resource_metadata` on the REQUEST origin.** Auth
+    runs before the config read (a stranger's request costs no bucket read), so the canonical
+    origin is not yet known; the spike's header shape is reproduced exactly. #12, which serves
+    the discovery document, may move it to the canonical origin with the alias redirect rule.
+
+85. **The CLI and staged-upload slice's rulings (issue #9).** Entries #79 and #81–#84 are reserved
     for the slices running in parallel.
     (a) **Settings ride on the commit, not on the session.** The slice spec put them on
     `POST /uploads`; AGENTS.md and docs/spec-v1.md put them on `commit`. The commit is the
@@ -630,4 +685,12 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     output and reset sockets, and its localhost servers starved the installer tests' fake
     Cloudflare when they shared workers. The offline instance is the real Worker app on
     `@hono/node-server` over the memory bucket (`test/fake-cloudflare/src/instance.ts`).
+    (l) **After #8 merged, a CLI flag's help line is the registry schema's own
+    description.** #8 put one canonical sentence per field on the zod schema, which the MCP
+    tool and `/_skill.md` render; the CLI had its own list of the same sentences. The list is
+    gone — `surface.ts` reads `schema.description` through the optional/nullable/pipe
+    wrappers, and the only text the CLI still writes itself is the `--no-<flag> clears it.`
+    clause, which is CLI grammar and exists nowhere else. `toolOf` also refuses a `signed`
+    operation now, not only a `public` one: MCP has no meaning for the staged blob PUT's
+    scope.
 
