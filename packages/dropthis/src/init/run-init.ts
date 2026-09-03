@@ -27,6 +27,9 @@ export type InitStep = { id: string; status: InitStepStatus; detail?: string };
  */
 export type DeployOutcome = { url?: string } | void;
 
+/** Something only a person with a browser can clear. */
+export type InitWall = { id: "r2_subscription"; url: string };
+
 export type RunInitOptions = {
   /** apiToken required; accountId is optional — pinAccount resolves it when absent. */
   creds: CloudflareCreds;
@@ -46,6 +49,12 @@ export type RunInitOptions = {
   /** When given, the run saves the instance to `instances.json` under it. */
   env?: Env;
   poll?: PollOptions;
+  /**
+   * A human-only wall (decision #67): the installer opens the exact dashboard
+   * page and waits. `retry` re-checks, `stop` ends the run. Absent means
+   * non-interactive: the wall is reported with the same URL and nothing waits.
+   */
+  onWall?: (wall: InitWall) => Promise<"retry" | "stop">;
   /** `--jsonl`: one event per step, as it completes. */
   onStep?: (step: InitStep) => void;
   deploy: (
@@ -119,9 +128,17 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   const accountId = pinned.accountId;
   push({ id: "account", status: "ok", detail: accountId });
 
-  const r2Sub = await checkR2Subscription(client, accountId);
-  if (!r2Sub.ok) {
-    push({ id: "r2_subscription", status: "error", detail: r2Sub.dashboardUrl });
+  const r2 = await clearWall(
+    { id: "r2_subscription", url: `https://dash.cloudflare.com/${accountId}/r2` },
+    () => checkR2Subscription(client, accountId).then((check) => check.ok),
+    options.onWall,
+  );
+  if (!r2.ok) {
+    push({
+      id: "r2_subscription",
+      status: "error",
+      detail: `R2 is not enabled on this account. Enable it at ${r2.url}, then run init again.`,
+    });
     return failure();
   }
   push({ id: "r2_subscription", status: "ok" });
@@ -323,6 +340,29 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     ...(report === undefined ? {} : { doctor: report }),
     ...(instancesFile === undefined ? {} : { instancesFile }),
   };
+}
+
+/**
+ * A wall an operator has to clear in a browser. With a handler the installer
+ * opens the page, waits for the handler, and re-checks — bounded, because a
+ * loop with no end is the one failure mode an unattended run cannot report.
+ * With no handler it fails at once and names the same page.
+ */
+const WALL_ATTEMPTS = 20;
+
+async function clearWall(
+  wall: InitWall,
+  check: () => Promise<boolean>,
+  onWall: ((wall: InitWall) => Promise<"retry" | "stop">) | undefined,
+): Promise<{ ok: boolean; url: string }> {
+  if (await check()) return { ok: true, url: wall.url };
+  if (onWall === undefined) return { ok: false, url: wall.url };
+
+  for (let attempt = 0; attempt < WALL_ATTEMPTS; attempt += 1) {
+    if ((await onWall(wall)) === "stop") return { ok: false, url: wall.url };
+    if (await check()) return { ok: true, url: wall.url };
+  }
+  return { ok: false, url: wall.url };
 }
 
 /** Is the hostname already attached to THIS Worker? Then a record at it is ours. */

@@ -257,3 +257,60 @@ describe("runInit — --rotate-admin-key", () => {
     expect((await call(rotated.adminKey!)).status).toBe(200);
   });
 });
+
+describe("runInit — guided preflight (decision #67)", () => {
+  it("opens the R2 page, waits, and resumes once the operator enables it", async () => {
+    const cf = await fake({ r2SubscriptionEnabled: false });
+    const { deploy } = stubDeploy(cf, teardown);
+    const walls: Array<{ id: string; url: string }> = [];
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      poll: FAST_POLL,
+      onWall: async (wall) => {
+        walls.push(wall);
+        // What a human does at the page the installer opened.
+        cf.state.r2SubscriptionEnabled = true;
+        return "retry";
+      },
+    });
+
+    expect(walls).toEqual([{ id: "r2_subscription", url: `https://dash.cloudflare.com/${ACCOUNT}/r2` }]);
+    expect(result.ok).toBe(true);
+    expect(step(result.steps, "r2_subscription")?.status).toBe("ok");
+  });
+
+  it("stops with the same URL when nobody is there to clear the wall", async () => {
+    const cf = await fake({ r2SubscriptionEnabled: false });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "r2_subscription")?.status).toBe("error");
+    expect(step(result.steps, "r2_subscription")?.detail).toContain("/r2");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("gives up rather than looping forever when the wall never clears", async () => {
+    const cf = await fake({ r2SubscriptionEnabled: false });
+    const { deploy } = stubDeploy(cf, teardown);
+    let asked = 0;
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      poll: FAST_POLL,
+      onWall: async () => {
+        asked += 1;
+        return asked < 10 ? "retry" : "stop";
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(asked).toBeLessThanOrEqual(10);
+  });
+});
