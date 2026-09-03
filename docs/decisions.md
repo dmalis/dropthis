@@ -893,3 +893,34 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     upload — and the target is validated when the session opens, so a URL this instance will
     never fetch fails before anything else is uploaded. The three staged routes stay
     `restOnly` (#85).
+
+95. **Keep-by-hash file entries on `update` (issue #17).** Same shape of failure as #92, one
+    step further along: on 2026-09-03 a claude.ai session had to re-type every base64 sprite
+    of a game into the tool call to change 40 lines of CSS, because `files` replaces the whole
+    set. So the file-entry union gains a fourth strict branch, `{path, sha256}`: keep the blob
+    this drop already holds under that digest. `get` already returns `sha256` per file, so the
+    round trip is `get` → change one file → `update` with that file inline and every other as
+    `{path, sha256}`. Nothing is sent, fetched, hashed or written; the new manifest points at
+    what is already there. The rulings the spec left open:
+    (a) **A keep at the SAME path carries the recorded `size` AND `content_type` over; a keep
+    under a NEW path is typed from the frozen extension table.** The two differ for a file
+    whose extension is unknown or absent — `{path: "README", text: …}` is stored `text/plain`,
+    while `contentTypeForPath("README")` is `application/octet-stream` — so re-typing a kept
+    file from its path would silently change what a visitor is served. The manifest is the
+    record; a keep reads it.
+    (b) **`publish` refuses the kind by name, at parse time.** A drop being created holds
+    nothing, so resolving a keep against an empty manifest would answer "this drop holds no
+    file with that sha256" — true but useless. The union stays one shared schema (four
+    branches, one `FILES_DESCRIPTION`) and the refusal names the path and says the kind is an
+    update entry.
+    (c) **Blobs stay per drop; there is no cross-drop keep.** `drops/<id>/blobs/<sha256>` is
+    the layout, and a digest another drop holds is not held here. The refusal names both the
+    path and the hash so an agent working from a stale `get` sees which file went wrong.
+    (d) **On the staged path a keep is a manifest entry with no `size`.** The client cannot
+    know a size it never had, and `{path, sha256}` is then literally the same entry on both
+    paths. It needs `target`: a session that creates a drop refuses it exactly as `publish`
+    does, and a size-less entry that also names a `url` is two kinds in one entry. One
+    `resolveKeep` serves both paths, so inline and staged cannot drift on what "keep" means.
+    (e) **The unheld digest is `INVALID_INPUT`, not `NOT_FOUND`.** The drop was found; the
+    entry the caller wrote is what is wrong, and the frozen catalogue's `NOT_FOUND` is about
+    the target.
