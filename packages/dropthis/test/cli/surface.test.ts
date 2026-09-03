@@ -46,6 +46,7 @@ describe("commandSurface", () => {
       "password:string",
       "expires:string",
       "noindex:boolean",
+      "slug:string",
       "idempotency-key:string",
       "password-stdin:boolean",
     ]);
