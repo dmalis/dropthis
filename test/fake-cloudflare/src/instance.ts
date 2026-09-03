@@ -17,15 +17,23 @@ import type { Env } from "../../../packages/worker/src/bindings.js";
 import { DEV_HOOKS } from "../../../packages/worker/src/dev/enabled-hooks.js";
 import { createApp } from "../../../packages/worker/src/index.js";
 import { INITIAL_POLICY } from "../../../packages/worker/src/policy/defaults.js";
-import { CONFIG_KEY, keyHashKey, keyRecordKey } from "../../../packages/worker/src/storage/keys.js";
+import { CONFIG_KEY, keyHashKey, keyRecordKey, userKey } from "../../../packages/worker/src/storage/keys.js";
 import { memoryBucket } from "../../../packages/worker/test/memory-bucket.js";
 import type { MemoryBucket } from "../../../packages/worker/test/memory-bucket.js";
 
 export type FakeInstanceOptions = {
-  adminKey: string;
+  /** Omit when the bucket already carries key records (see `objects`). */
+  adminKey?: string;
   userKey?: string;
   policy?: Partial<Record<keyof typeof INITIAL_POLICY, unknown>>;
   broken?: boolean;
+  /**
+   * Raw objects to seed the bucket with, key -> body. This is how a test hands
+   * the instance a bucket the INSTALLER wrote through the Cloudflare API: the
+   * two fakes keep separate stores, so proving "the rotated-away key is
+   * refused" means serving the installer's bucket from the instance.
+   */
+  objects?: Iterable<[string, Uint8Array | string]>;
 };
 
 export type FakeInstance = {
@@ -45,8 +53,16 @@ export async function startFakeInstance(options: FakeInstanceOptions): Promise<F
       keyRecordKey(id),
       JSON.stringify({ id, label, scope, hash, created: "2026-09-03T00:00:00Z" }),
     );
+    // The label claim `user add` and the installer both write. Without it the
+    // instance is one a real `init` could never have produced, and
+    // `doctor`'s admin_rotation_clean reads a missing record as a broken
+    // instance — a green check here would then mean nothing.
+    bucket.seed(userKey(label), JSON.stringify({ id }));
   };
-  await seedKey(options.adminKey, "admin", "admin", "admin");
+  if (options.adminKey !== undefined) await seedKey(options.adminKey, "admin", "admin", "admin");
+  for (const [key, body] of options.objects ?? []) {
+    bucket.seed(key, typeof body === "string" ? body : new TextDecoder().decode(body));
+  }
   if (options.userKey !== undefined) await seedKey(options.userKey, "id-anna", "anna", "user");
 
   const app = options.broken === true ? brokenApp() : createApp(DEV_HOOKS);

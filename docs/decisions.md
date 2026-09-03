@@ -787,3 +787,44 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     record at request time, never from the grant, so a rotated or re-scoped key is
     never served stale. The grant's `userId` is the key id (the library keeps it in the
     clear for enumeration), so `OAUTH_KV` holds key ids and hashed tokens only.
+
+91. **The installer slice's rulings (issue #10).** Each is a choice the spec left open; the
+    code and its tests are the record, this entry is the reason.
+    (a) **`HMAC_SECRET` is shipped only when the deployed Worker has none.** `init` reads
+    the script's secret NAMES through the Cloudflare API before every deploy and passes
+    `--secrets-file` only if `HMAC_SECRET` is absent. Re-minting it on a rerun would
+    silently invalidate three things at once: every unlock cookie, every signed staged-upload
+    URL, and every stored idempotency result (they are AES-GCM under a key derived from it).
+    None of those failures names its cause, and none is recoverable. A rerun is the normal
+    self-heal, so it must be the safest operation the installer has.
+    (b) **A rotation clears `users/admin`'s `previous` in the same run**, right after the
+    two deletes, instead of leaving it for a later writer. The measured R2 rule (#76) is
+    about writes IN FLIGHT at once — five sequential writes at full speed all succeed — and
+    leaving `previous` set would make `doctor`'s `admin_rotation_clean` fail on the very
+    `init` run that rotated. The documented repair still holds: a crash before the clear
+    leaves `previous` set and the next run finishes it before minting anything.
+    (c) **`--domain` is validated before the reconcile, attached after the deploy.** The
+    read-only half (longest zone suffix on label boundaries, same account, no existing DNS
+    record) costs nothing and runs first, so a hostname in someone else's zone leaves the
+    operator with no bucket, no KV and no Worker. The attach itself needs the script to
+    exist. If it fails, `system/config.json` is rewritten back to the `workers.dev` origin,
+    so the instance never advertises a host it does not answer on.
+    (d) **`deploy()` returns `{url?}`.** The real deploy returns nothing — the URL comes
+    from the account's own `workers.dev` subdomain, never from wrangler's stdout (#67) — and
+    the test deploy returns the localhost URL of the real Worker app it started, so `health`
+    and `doctor` are proved against the product offline.
+    (e) **Two env variables are the installer's test seam**, the way `DEV_ROUTES` is the
+    Worker's: `DROPTHIS_WRANGLER` (which wrangler to spawn) and `DROPTHIS_INIT_PROBE_URL`
+    (where the instance really is). The probe override is ignored unless
+    `CLOUDFLARE_BASE_URL` is also set, so a real install's health-and-doctor proof can never
+    be pointed somewhere else.
+    (f) **`init` writes the Worker's own `INITIAL_POLICY`,** not a second copy. The
+    installer had one, and it had already gone stale — `pbkdf2_iterations: 5000` and
+    `max_request_bytes: 2 MiB` against the measured 25,000 and 4 MiB (#73). An instance
+    installed with a policy its own Worker disagrees with is exactly the failure
+    `policy_readable` would still have called green.
+    (g) **The repo root is found by walking up to `packages/worker/wrangler.jsonc`,** not by
+    counting `..` from `import.meta.url`: four levels are right from `src/` and three from
+    the bundled `dist/cli.cjs`, and the bundle is what an operator runs. Bundling the built
+    Worker into the package is the first-public-release milestone; until then `init` deploys
+    from this repository and says so when it cannot find it.

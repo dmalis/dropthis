@@ -15,7 +15,8 @@
     "@clack/prompts": "1.7.0",
     "@vercel/detect-agent": "1.2.5",
     "cloudflare": "7.1.0",
-    "commander": "15.0.0"
+    "commander": "15.0.0",
+    "wrangler": "4.128.0"
   },
   "devDependencies": {
     "@dropthis/fake-cloudflare": "0.1.0",

@@ -1,17 +1,6 @@
 import type Cloudflare from "cloudflare";
+import { INITIAL_POLICY } from "../../../worker/src/policy/defaults.js";
 import { putObjectJson } from "./r2-objects.js";
-
-/** spec-v1.md "Instance policy": frozen initial values, safe on the Free plan. */
-const FROZEN_DEFAULTS = {
-  expiry: { default: "30d", max: "365d", allow_never: true },
-  password: { default: null, required: false },
-  noindex: { default: true, forced: false },
-  max_file_bytes: 104_857_600,
-  max_request_bytes: 2_097_152,
-  auto_index: "list",
-  pbkdf2_iterations: 5000,
-  cron_ops_budget: 40,
-} as const;
 
 export type InstanceIdentity = {
   instanceName: string;
@@ -19,7 +8,16 @@ export type InstanceIdentity = {
   aliasOrigins: string[];
 };
 
-/** Writes `system/config.json`: the frozen defaults plus this instance's identity. */
+/**
+ * Writes `system/config.json`: this instance's identity plus the policy the
+ * Worker itself calls initial.
+ *
+ * The values come from `packages/worker/src/policy/defaults.ts` and are never
+ * restated here. Two of them are measured against the Free plan (decision
+ * #73), and a second copy in the installer is a copy that goes stale: an
+ * instance would then be installed with a policy its own Worker disagrees
+ * with, and `doctor`'s `policy_readable` would still call it green.
+ */
 export async function writeInstanceConfig(
   client: Cloudflare,
   accountId: string,
@@ -30,6 +28,6 @@ export async function writeInstanceConfig(
     instance_name: identity.instanceName,
     canonical_url: identity.canonicalUrl,
     alias_origins: identity.aliasOrigins,
-    ...FROZEN_DEFAULTS,
+    ...INITIAL_POLICY,
   });
 }

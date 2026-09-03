@@ -9,6 +9,8 @@ import type { Readable, Writable } from "node:stream";
 import { commandSurface } from "./surface.js";
 import type { ArgSpec, CommandSpec, FlagSpec } from "./surface.js";
 import type { Globals, Invocation } from "./run.js";
+import type { InitInput } from "./init-command.js";
+import { CLIENTS } from "./connect-command.js";
 
 export type ProgramIo = {
   stdin: Readable & { isTTY?: boolean };
@@ -19,6 +21,10 @@ export type ProgramIo = {
 export type Handlers = {
   command(invocation: Invocation): Promise<void>;
   commands(globals: Globals): Promise<void>;
+  /** Hand-mounted: these run before an instance exists, or read its file. */
+  init(input: InitInput, globals: Globals): Promise<void>;
+  connect(client: string, globals: Globals): Promise<void>;
+  authHeader(globals: Globals): Promise<void>;
 };
 
 const GLOBAL_FLAGS: Array<[string, string]> = [
@@ -112,6 +118,8 @@ export function buildProgram(version: string, io: ProgramIo, handlers: Handlers)
 
   for (const spec of commandSurface()) mount(program, spec, handlers);
 
+  mountInstanceLifecycle(program, handlers);
+
   withGlobals(program.command("commands").description("List every command, with its arguments and options.")).action(
     async function (this: Command) {
       await handlers.commands(globalsOf(this));
@@ -119,6 +127,53 @@ export function buildProgram(version: string, io: ProgramIo, handlers: Handlers)
   );
 
   return program;
+}
+
+/**
+ * `init`, `connect` and `auth-header` are not registry operations: `init` runs
+ * before an instance exists and speaks to Cloudflare with the operator's own
+ * token, and the other two read the instances file. AGENTS.md keeps instance
+ * lifecycle in the CLI only, so they are declared here by hand.
+ */
+function mountInstanceLifecycle(program: Command, handlers: Handlers): void {
+  const init = program
+    .command("init")
+    .description("Create or repair this account's dropthis instance, then prove it works.")
+    .option("--name <name>", "The instance name; every resource is derived from it. Default: main.")
+    .option("--account-id <id>", "Which Cloudflare account to deploy into, when the token sees several.")
+    .option("--domain <hostname>", "Serve the instance at this hostname; its zone must be in the account.")
+    .option("--dry-run", "Preflight and the reconcile plan only. Nothing is created and nothing is deployed.")
+    .option("--check", "Run the account-level checks (lifecycle rules, KV binding, domain) and stop.")
+    .option("--rotate-admin-key", "Mint a new admin key and revoke the current one.");
+  withGlobals(init).action(async function (this: Command) {
+    const opts = this.opts<Record<string, unknown>>();
+    await handlers.init(
+      {
+        ...(typeof opts.name === "string" ? { name: opts.name } : {}),
+        ...(typeof opts.accountId === "string" ? { accountId: opts.accountId } : {}),
+        ...(typeof opts.domain === "string" ? { domain: opts.domain } : {}),
+        dryRun: opts.dryRun === true,
+        check: opts.check === true,
+        rotateAdminKey: opts.rotateAdminKey === true,
+      },
+      globalsOf(this),
+    );
+  });
+
+  const connect = program
+    .command("connect")
+    .description("Register this instance with one MCP client, without putting the key in a file.")
+    .requiredOption(`--client <client>`, `One of: ${CLIENTS.join(", ")}.`);
+  withGlobals(connect).action(async function (this: Command) {
+    await handlers.connect(String(this.opts<Record<string, unknown>>().client), globalsOf(this));
+  });
+
+  const authHeader = program
+    .command("auth-header")
+    .description("Print this instance's Authorization header. Used by the Claude Code headersHelper.");
+  withGlobals(authHeader).action(async function (this: Command) {
+    await handlers.authHeader(globalsOf(this));
+  });
 }
 
 export { CommanderError };
