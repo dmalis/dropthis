@@ -20,27 +20,27 @@
  * the id the first attempt chose, not a fresh one.
  */
 import type { Bucket } from "../bindings.js";
-import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
-import { canonicalJson, listMetadata, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
-import { expiringMarkerDate, ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import type { CreatedBy, Drop, DropMeta } from "../domain/meta.js";
+import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
+import { ExpiryError, resolveExpiry } from "../domain/expiry.js";
 import { resolvePassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig, ResolvedPolicy } from "../instance-config.js";
 import type { PublishInput } from "../registry/publish.js";
-import {
-  blobKey,
-  expiringKey,
-  idempotencyHash,
-  listKey,
-  metaKey,
-  newDropId,
-  requestClaimKey,
-  requestResultKey,
-  slugKey,
-} from "../storage/keys.js";
+import { blobKey, idempotencyHash, metaKey, newDropId, slugKey } from "../storage/keys.js";
 import { claimKey, createPut, putBlob } from "../storage/r2.js";
-import { decryptResult, encryptResult } from "../storage/result-crypto.js";
+import type { ClaimRecord } from "./idempotency.js";
+import {
+  openPassword,
+  putClaim,
+  putResult,
+  readClaim,
+  readResult,
+  requireSamePayload,
+  sealPassword,
+} from "./idempotency.js";
+import { writeProjections } from "./projections.js";
 import { resolveInlineFiles } from "./resolve-content.js";
 
 /**
@@ -48,7 +48,14 @@ import { resolveInlineFiles } from "./resolve-content.js";
  * `DEV_ROUTES=1` exactly like the `/_dev` probes, but chosen per request
  * (header `DEV-Fault`) so one deployment covers every step.
  */
-export const FAULT_POINTS = ["blobs", "claim", "slug", "meta", "projections"] as const;
+export const FAULT_POINTS = [
+  "blobs",
+  "claim",
+  "slug",
+  "meta",
+  "projections",
+  "cleanup",
+] as const;
 export type FaultPoint = (typeof FAULT_POINTS)[number];
 
 export function parseFaultPoint(value: string | undefined | null): FaultPoint | undefined {
@@ -68,35 +75,6 @@ export type PublishContext = {
 /** The identity a call commits to before it writes anything reachable. */
 type Identity = { dropId: string; slug: string; slugClaimedHere: boolean };
 
-type ClaimRecord = {
-  payload_hash: string;
-  drop_id: string;
-  slug: string;
-  gen: string;
-  manifest: Manifest;
-  state_hash: string;
-  created: string;
-  /**
-   * The RESOLVED expiry, not the caller's spelling. "30d" means a different
-   * instant on every attempt, so re-resolving it on a retry would produce a
-   * different desired state and turn a converging retry into UPDATE_CONFLICT.
-   * The claim fixes every clock-derived value, not just the id and the slug.
-   */
-  expires_at: string | null;
-  /**
-   * The stored `access` this call decided on — salt, hash and nonce included.
-   * A generated password is random, so a retry that re-derived one would write
-   * a different `meta.json` and conflict with the attempt it is retrying.
-   */
-  access: Record<string, unknown>;
-  /**
-   * The password itself, AES-GCM sealed, so the ONE response that carries it
-   * can be rebuilt by a retry that finds the claim but no stored result. It is
-   * a live secret, and the bucket is not the place to keep one in clear.
-   */
-  password_enc?: string;
-};
-
 export type PublishResult = { drop: Drop; created: boolean };
 
 export async function publish(input: PublishInput, ctx: PublishContext): Promise<PublishResult> {
@@ -113,12 +91,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
   // contains.
   let claim = hash === undefined ? null : await readClaim(bucket, hash);
   if (claim !== null) {
-    if (claim.payload_hash !== payloadHash) {
-      throw new ApiError(
-        "IDEMPOTENCY_MISMATCH",
-        "This idempotency_key was used for a different payload.",
-      );
-    }
+    requireSamePayload(claim, payloadHash);
     const replayed = await readResult(bucket, hash!, ctx.secret);
     if (replayed !== null) return { drop: replayed, created: false };
   }
@@ -190,22 +163,15 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       created: desired.created,
       expires_at: desired.expires_at,
       access: desired.access,
-      ...(password === undefined
-        ? {}
-        : { password_enc: await encryptResult(ctx.secret, password) }),
+      ...(await sealPassword(ctx.secret, password)),
     };
-    const claimed = await claimKey(bucket, requestClaimKey(hash), JSON.stringify(record));
+    const claimed = await putClaim(bucket, hash, record);
     if (!claimed.claimed) {
       // A concurrent retry won the claim. Adopt its identity; the blobs written
       // under ours are unreferenced and the reconcile removes them.
       claim = await readClaim(bucket, hash);
       if (claim === null) throw new ApiError("INTERNAL", "The idempotency claim vanished mid-write.");
-      if (claim.payload_hash !== payloadHash) {
-        throw new ApiError(
-          "IDEMPOTENCY_MISMATCH",
-          "This idempotency_key was used for a different payload.",
-        );
-      }
+      requireSamePayload(claim, payloadHash);
       const replayed = await readResult(bucket, hash, ctx.secret);
       if (replayed !== null) return { drop: replayed, created: false };
       identity = { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false };
@@ -239,13 +205,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
   if (password !== undefined) drop.password = password;
 
   // (6) the result, sealed, so a lost response is recoverable exactly once.
-  if (hash !== undefined) {
-    await bucket.put(
-      requestResultKey(hash),
-      await encryptResult(ctx.secret, JSON.stringify(drop)),
-      { onlyIf: { etagDoesNotMatch: "*" } },
-    );
-  }
+  if (hash !== undefined) await putResult(bucket, hash, ctx.secret, drop);
 
   return { drop, created: true };
 }
@@ -266,28 +226,6 @@ function resolveExpiryOrFail(value: string, policy: ResolvedPolicy, now: Date): 
  */
 function hashPayload(input: PublishInput): Promise<string> {
   return sha256Hex(canonicalJson(input));
-}
-
-/** The claim's sealed password, for a retry that has to rebuild the response. */
-async function openPassword(claim: ClaimRecord, secret: string): Promise<string | undefined> {
-  if (claim.password_enc === undefined) return undefined;
-  return decryptResult(secret, claim.password_enc);
-}
-
-async function readClaim(bucket: Bucket, hash: string): Promise<ClaimRecord | null> {
-  const object = await bucket.get(requestClaimKey(hash));
-  if (object === null) return null;
-  try {
-    return JSON.parse(await object.text()) as ClaimRecord;
-  } catch {
-    return null;
-  }
-}
-
-async function readResult(bucket: Bucket, hash: string, secret: string): Promise<Drop | null> {
-  const object = await bucket.get(requestResultKey(hash));
-  if (object === null) return null;
-  return JSON.parse(await decryptResult(secret, await object.text())) as Drop;
 }
 
 async function writeBlobs(
@@ -343,21 +281,6 @@ async function commitMeta(bucket: Bucket, identity: Identity, meta: DropMeta): P
   }
   if (identity.slugClaimedHere) await bucket.delete(slugKey(identity.slug));
   throw new ApiError("UPDATE_CONFLICT", "Another write reached this drop first.");
-}
-
-/**
- * `list/` and `expiring/` are projections of `meta.json`, never truth. Both are
- * repaired on read and by the reconcile, so a failure here loses a listing row
- * for a while — it never loses a drop.
- */
-async function writeProjections(bucket: Bucket, meta: DropMeta): Promise<void> {
-  const customMetadata = listMetadata(meta);
-
-  await bucket.put(listKey(Date.parse(meta.created), meta.slug), "", { customMetadata });
-
-  if (meta.expires_at !== null) {
-    await bucket.put(expiringKey(expiringMarkerDate(meta.expires_at), meta.id), "");
-  }
 }
 
 function fault(ctx: PublishContext, point: FaultPoint): void {

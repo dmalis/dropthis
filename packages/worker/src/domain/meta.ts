@@ -146,28 +146,6 @@ export async function newDropMeta(input: NewDropInput): Promise<DropMeta> {
   };
 }
 
-/**
- * The `list/` pointer's customMetadata — everything `list` answers with, so a
- * page of results is ONE `list()` and never a `meta.json` read per drop.
- *
- * R2 customMetadata is strings only and capped at 8 KB, so absence carries
- * meaning: no `expires_at` is "never", no `has_password` is "open". That also
- * makes the field additive — an entry written before it existed reads as an
- * open drop, which is what it was.
- */
-export function listMetadata(meta: DropMeta): Record<string, string> {
-  const customMetadata: Record<string, string> = {
-    id: meta.id,
-    updated: meta.updated,
-    created_by_id: meta.created_by.id,
-    created_by_label: meta.created_by.label,
-  };
-  if (meta.expires_at !== null) customMetadata.expires_at = meta.expires_at;
-  if (meta.title !== null) customMetadata.title = meta.title;
-  if (meta.access.password !== undefined) customMetadata.has_password = "1";
-  return customMetadata;
-}
-
 export function dropFiles(manifest: Manifest): DropFile[] {
   return Object.entries(manifest).map(([path, entry]) => ({
     path,
@@ -201,4 +179,26 @@ export function toDrop(meta: DropMeta, options: ToDropOptions): Drop {
     ...(options.files === false ? {} : { files: dropFiles(meta.manifest) }),
   };
   return drop;
+}
+
+/**
+ * `update({meta})` — a top-level merge in which `null` deletes a key
+ * (docs/spec-v1.md, "`update` semantics").
+ *
+ * Top-level is the whole rule: a nested object is replaced, not merged, so an
+ * agent can always tell what it will get. `null` deletes only where it appears
+ * as a top-level value; inside an object or an array it is ordinary JSON and is
+ * stored as it is — `meta` holds any JSON, because the archived product
+ * accepted only strings and agents got 422s for it.
+ */
+export function mergeAgentMeta(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete merged[key];
+    else merged[key] = value;
+  }
+  return merged;
 }

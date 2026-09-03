@@ -17,15 +17,10 @@
  * engine both will call, and the manual lever an operator has meanwhile.
  */
 import type { Bucket } from "../bindings.js";
-import { dropState, expiringMarkerDate } from "../domain/expiry.js";
+import { dropState } from "../domain/expiry.js";
 import type { DropMeta } from "../domain/meta.js";
-import {
-  DROPS_PREFIX,
-  UPLOADS_PREFIX,
-  expiringKey,
-  listKey,
-  slugKey,
-} from "../storage/keys.js";
+import { expiringKeyOf, listKeyOf } from "./projections.js";
+import { DROPS_PREFIX, UPLOADS_PREFIX, slugKey } from "../storage/keys.js";
 
 export type Bucketed = { count: number; bytes: number };
 
@@ -91,14 +86,13 @@ export async function prune(options: ScanOptions & { dryRun: boolean }): Promise
 
   if (!options.dryRun) {
     for (const drop of expired) {
-      const keys = [
-        ...drop.objects,
-        slugKey(drop.meta.slug),
-        listKey(Date.parse(drop.meta.created), drop.meta.slug),
-      ];
-      if (drop.meta.expires_at !== null) {
-        keys.push(expiringKey(expiringMarkerDate(drop.meta.expires_at), drop.meta.id));
-      }
+      // The two projection keys come from the one place that computes them, so
+      // a change to the listing key's shape cannot leave `prune` deleting a key
+      // that no longer exists (it did — the key's ms moved from `created` to
+      // the drop id in issue #5, and this file kept the old form).
+      const keys = [...drop.objects, slugKey(drop.meta.slug), listKeyOf(drop.meta)];
+      const marker = expiringKeyOf(drop.meta);
+      if (marker !== null) keys.push(marker);
       await options.bucket.delete(keys);
       deleted.drops += 1;
       deleted.objects += keys.length;

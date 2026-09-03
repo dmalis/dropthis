@@ -28,6 +28,7 @@ import {
 } from "../storage/keys.js";
 import type { InstanceConfig } from "../instance-config.js";
 import { INITIAL_POLICY } from "../policy/defaults.js";
+import { deleteDrop } from "./delete.js";
 import { publish } from "./publish.js";
 
 export const CHECK_IDS = [
@@ -216,8 +217,6 @@ async function helloDrop(ctx: DoctorContext): Promise<CheckResult> {
     if (meta === null) throw new Error("meta.json was not written");
     const parsed = JSON.parse(await meta.text()) as {
       manifest: Record<string, { sha256: string }>;
-      created: string;
-      expires_at: string | null;
     };
 
     const entry = parsed.manifest["hello.txt"];
@@ -227,7 +226,10 @@ async function helloDrop(ctx: DoctorContext): Promise<CheckResult> {
     const served = await blob.text();
     if (served !== body) throw new Error("the bytes read back differ from the bytes published");
 
-    await removeHello(ctx.bucket, dropId, slug, parsed);
+    // The real `delete`, not a second implementation of it: a check that
+    // cleaned up its own way would stop proving the delete path works, and
+    // would drift from it (it did — issue #5 moved the listing key).
+    await deleteDrop(ctx.bucket, slug);
 
     return {
       id: "hello_drop",
@@ -243,20 +245,6 @@ async function helloDrop(ctx: DoctorContext): Promise<CheckResult> {
       remediation: "Check the bucket binding and redeploy this instance.",
     };
   }
-}
-
-async function removeHello(
-  bucket: Bucket,
-  dropId: string,
-  slug: string,
-  meta: { manifest: Record<string, { sha256: string }>; created: string; expires_at: string | null },
-): Promise<void> {
-  const keys = [metaKey(dropId), slugKey(slug), listKey(Date.parse(meta.created), slug)];
-  for (const entry of Object.values(meta.manifest)) keys.push(blobKey(dropId, entry.sha256));
-  if (meta.expires_at !== null) {
-    keys.push(expiringKey(expiringMarkerDate(meta.expires_at), dropId));
-  }
-  await bucket.delete(keys);
 }
 
 /** A failed hello drop still must not leave a drop serving on the instance. */

@@ -3,28 +3,41 @@
  *
  * Each entry is the whole definition of an operation: where it sits on the
  * wire, the scope it needs, the schema its input must satisfy and the handler
- * that does the work. `update`, `list` and `delete` are declared with their
- * frozen route and scope but no handler — issue #5 owns their schemas and
- * their behaviour, and wiring them is one line each.
+ * that does the work. The five drop operations of AGENTS.md's operation table
+ * are all here; the router mounts them and nothing else.
+ *
+ * A path parameter is folded into the same input object as the body, so the
+ * schemas that read one declare it (`slug`). It is validated FIRST, before the
+ * body: a call aimed at a slug that cannot exist is `NOT_FOUND` whatever it
+ * carries.
  */
 import { z } from "zod";
 import { attribution } from "../auth/caller.js";
 import { decodeRequestPath } from "../domain/url-path.js";
 import { isSlug } from "../domain/slug.js";
 import { ApiError } from "../errors.js";
+import { deleteDrop } from "../operations/delete.js";
 import { getDrop, loadDrop } from "../operations/get.js";
+import { listDrops } from "../operations/list.js";
 import { parseFaultPoint, publish } from "../operations/publish.js";
+import { updateDrop } from "../operations/update.js";
 import { serveBlob } from "../serve.js";
 import { blobKey } from "../storage/keys.js";
+import { listSchema, parseListInput } from "./list.js";
+import type { ListInput } from "./list.js";
 import { boolParam } from "./params.js";
 import { parsePublishInput, publishSchema } from "./publish.js";
 import type { PublishInput } from "./publish.js";
+import { parseUpdateInput, updateSchema } from "./update.js";
 import type { Operation } from "./types.js";
 
-/** Declared but not implemented here; issue #5 supplies schema and handler. */
-const PENDING = z.unknown();
-
 const slugParam = z.string();
+
+const updateRequestSchema = updateSchema.extend({ slug: slugParam });
+
+type UpdateRequest = z.infer<typeof updateRequestSchema>;
+
+const deleteSchema = z.strictObject({ slug: slugParam });
 
 const getSchema = z.strictObject({
   slug: slugParam,
@@ -72,14 +85,31 @@ export const publishOp: Operation<PublishInput> = {
   },
 };
 
-export const updateOp: Operation<unknown> = {
+export const updateOp: Operation<UpdateRequest> = {
   name: "update",
   method: "PATCH",
   path: "/drops/:slug",
   scope: "user",
   summary: "Change only the fields given; files replace the whole set.",
-  schema: PENDING,
+  schema: updateRequestSchema,
+  parse: (raw) => {
+    const { slug, ...body } = (raw ?? {}) as Record<string, unknown>;
+    return { slug: requireSlug(typeof slug === "string" ? slug : ""), ...parseUpdateInput(body) };
+  },
   params: ["slug"],
+  handler: async (input, ctx) => {
+    const { slug, ...body } = input;
+    return {
+      value: await updateDrop(slug, body, {
+        bucket: ctx.bucket,
+        config: ctx.config,
+        caller: attribution(ctx.caller),
+        now: ctx.now,
+        secret: ctx.secret(),
+        fault: parseFaultPoint(ctx.hooks.fault(ctx.request, ctx.env)),
+      }),
+    };
+  },
 };
 
 export const getOp: Operation<z.infer<typeof getSchema>> = {
@@ -101,25 +131,37 @@ export const getOp: Operation<z.infer<typeof getSchema>> = {
   }),
 };
 
-export const listOp: Operation<unknown> = {
+export const listOp: Operation<ListInput> = {
   name: "list",
   method: "GET",
   path: "/drops",
   scope: "user",
   summary: "One page of this instance's drops, newest first.",
-  schema: PENDING,
+  schema: listSchema,
+  parse: parseListInput,
   query: ["cursor", "limit", "q"],
+  handler: async (input, ctx) => ({
+    value: await listDrops(input, { bucket: ctx.bucket, config: ctx.config, now: ctx.now }),
+  }),
 };
 
-export const deleteOp: Operation<unknown> = {
+export const deleteOp: Operation<z.infer<typeof deleteSchema>> = {
   name: "delete",
   method: "DELETE",
   path: "/drops/:slug",
   scope: "user",
   summary: "Delete a drop and its files immediately.",
-  schema: PENDING,
+  schema: deleteSchema,
   params: ["slug"],
   status: 204,
+  // `204` whether or not the drop was there, and whether or not the target
+  // could ever have been a slug: an agent that never saw the first response
+  // must be able to send the call again without telling "gone" from
+  // "was never here".
+  handler: async (input, ctx) => {
+    if (isSlug(input.slug)) await deleteDrop(ctx.bucket, input.slug);
+    return { value: null };
+  },
 };
 
 export const fileDownload: Operation<z.infer<typeof downloadSchema>> = {

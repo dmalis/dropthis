@@ -92,11 +92,18 @@ slugs/<slug>                         pointer → id, claimed with If-None-Match:
                                      exists; every lookup is a direct GET of this key. A staged
                                      publish marks it {pending_upload, expires}; the reconcile
                                      removes a meta-less pointer only when no live session owns it
-list/<inv-created-ms>-<slug>         listing pointer; customMetadata (strings only) {id, updated,
-                                     expires_at, title, created_by_id, created_by_label,
-                                     has_password ("1", absent = none)}; state is
-                                     derived at list time. R2 lists keys in order, so ONE list()
-                                     over this prefix is newest-first with a cursor
+list/<inv-created-ms>-<slug>         listing pointer; the ms come from the drop id (a ULID), not
+                                     from `created` — `created` is RFC 3339 at SECOND precision, so
+                                     a batch published inside one second would sort by its random
+                                     slug. customMetadata (strings only) {id, created, updated,
+                                     expires_at, title, noindex, has_password, created_by_id,
+                                     created_by_label} — every field of the listing row, so a page
+                                     costs ONE list() and no meta.json reads; state is derived at
+                                     list time. R2 lists keys in order, so ONE list() over this
+                                     prefix is newest-first with a cursor. A pointer is deleted by
+                                     a reader only on PROOF its record is gone (it names an id and
+                                     the id has no meta.json); one this reader cannot interpret is
+                                     skipped, never destroyed
 keys/<id>.json                       {id, label, scope, hash, created}; the admin key is one of these
 keyhash/<sha256(key)>                pointer → key id (the auth lookup)
 users/<normalized-label>             pointer → key id, claimed with If-None-Match: * → labels unique
@@ -589,8 +596,10 @@ decision entry in the same commit.
   the claude.ai spike and the two milestone runs. No CI before the first public release.
 - One monorepo: `packages/worker` (the deployed Worker), `packages/dropthis` (the one npm
   package: installer, CLI, stdio MCP, bundles the built Worker for `init`), `skills/`,
-  `contract-tests/`, `test/fake-cloudflare/`. Commits go straight to `main`; no branches,
-  PRs or worktrees unless asked.
+  `contract-tests/`, `test/fake-cloudflare/`. Every change is made in a worktree at
+  `.worktrees/<issue-or-name>/` on its own branch and lands on `main` by fast-forward merge;
+  the main checkout receives merges and nothing else. No PRs and no CI before the first
+  public release.
 - `wrangler.jsonc`, never TOML. The repo file has bindings by name and no IDs (button path);
   `init` renders the per-instance config with the reconciled ids and deploys from that.
 - Secrets are never printed to logs and never re-revealed by a rerun. A missing key file

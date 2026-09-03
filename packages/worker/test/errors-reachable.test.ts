@@ -20,7 +20,6 @@ const srcRoot = fileURLToPath(new URL("../src", import.meta.url));
 
 /** Codes the current Worker cannot raise, and the slice that will raise them. */
 const NOT_YET_RAISED: Partial<Record<ErrorCode, string>> = {
-  EXPIRED_NEEDS_EXPIRES: "issue #5: reviving a drop inside its grace window with `update`",
   FETCH_FAILED: "issue #9: `url` file entries the Worker fetches",
   UPLOAD_EXPIRED: "issue #9: staged upload sessions",
   NAME_TAKEN: "issue #10: the CLI installer, which names instances",

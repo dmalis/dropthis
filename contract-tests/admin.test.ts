@@ -68,17 +68,33 @@ describe("config", () => {
 });
 
 describe("usage and prune", () => {
-  it("counts a drop it just published", async () => {
-    const before = (await (await api("/_api/v1/usage")).json()) as {
-      states: { live: { count: number; bytes: number } };
-      total: { count: number };
-      incomplete: boolean;
-    };
+  // The scan is BUDGETED (`cron_ops_budget`, 40 by default) and walks `drops/`
+  // oldest first, so a new drop is the last thing it would reach. Once the
+  // instance holds more drops than the budget, the count saturates and
+  // `incomplete` is true — that is the contract, not a bug, and it is what a
+  // shared bucket makes happen. Both branches are asserted.
+  it("counts a drop it just published, or says it ran out of budget", async () => {
+    const usageNow = async () =>
+      (await (await api("/_api/v1/usage")).json()) as {
+        states: { live: { count: number; bytes: number } };
+        total: { count: number };
+        incomplete: boolean;
+        cursor?: string | null;
+      };
+
+    const before = await usageNow();
 
     await apiJson("/_api/v1/drops", "POST", { files: [{ path: "u.txt", text: "usage" }] });
 
-    const after = (await (await api("/_api/v1/usage")).json()) as typeof before;
+    const after = await usageNow();
 
+    if (after.incomplete) {
+      expect(after.cursor, "an incomplete scan must hand back where to resume").toBeTruthy();
+      expect(after.total.count).toBeGreaterThan(0);
+      return;
+    }
+
+    expect(before.incomplete, "a complete scan cannot follow an incomplete one").toBe(false);
     expect(after.total.count).toBe(before.total.count + 1);
     expect(after.states.live.count).toBe(before.states.live.count + 1);
     expect(after.states.live.bytes).toBeGreaterThan(before.states.live.bytes);

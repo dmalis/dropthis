@@ -11,19 +11,16 @@ import type { Env } from "../bindings.js";
 
 export type DevHooks = {
   /**
-   * "Now" for expiry. Production has one answer and it is the clock.
-   *
-   * The dev build takes it from the REQUEST, not from a deployment variable: a
-   * contract run has to publish, expire, revive and then walk the cron forward
-   * a day at a time, and a Worker variable cannot change without a redeploy.
-   * `request` is absent for the scheduled handler, which has no request.
+   * "Now" for expiry. Production has one answer and it is the clock; the dev
+   * build may read the request, so a single deployment can answer for any
+   * instant the expiry table names.
    */
   now(env: Env, request?: Request): Date;
   /**
    * The raw `DEV-Fault` header: where THIS request should abort, so a test can
    * prove the retry converges. Each operation names its own points and parses
-   * the value itself, so one seam covers publish, `user add` and whatever
-   * comes next.
+   * the value itself, so one seam covers publish, `update`, `user add` and
+   * whatever comes next.
    */
   fault(request: Request, env: Env): string | undefined;
 };

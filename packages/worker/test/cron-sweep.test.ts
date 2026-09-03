@@ -3,7 +3,7 @@ import { GRACE_MS, expiringMarkerDate } from "../src/domain/expiry.js";
 import type { DropMeta } from "../src/domain/meta.js";
 import { runCron, readCronState, PRUNE_STATE_KEY } from "../src/operations/cron.js";
 import type { CronState } from "../src/operations/cron.js";
-import { blobKey, expiringKey, listKey, metaKey, slugKey } from "../src/storage/keys.js";
+import { blobKey, expiringKey, listKeyForDrop, metaKey, slugKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
 import type { MemoryBucket } from "./memory-bucket.js";
 
@@ -35,7 +35,7 @@ function seedDrop(
   bucket.seed(metaKey(meta.id), JSON.stringify(meta));
   bucket.seed(blobKey(meta.id, `sha-${meta.id}`), "abc");
   bucket.seed(slugKey(meta.slug), meta.id);
-  bucket.seed(listKey(Date.parse(created), meta.slug), "", { id: meta.id, updated: meta.updated });
+  bucket.seed(listKeyForDrop(meta.id, meta.slug), "", { id: meta.id, updated: meta.updated });
   if (meta.expires_at !== null) {
     bucket.seed(expiringKey(expiringMarkerDate(meta.expires_at), meta.id), "");
   }

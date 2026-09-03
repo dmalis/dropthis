@@ -24,7 +24,7 @@
  */
 import type { Bucket } from "../bindings.js";
 import { GRACE_MS, dropState, expiringMarkerDate } from "../domain/expiry.js";
-import { listMetadata } from "../domain/meta.js";
+import { listEntryMetadata } from "../domain/projections.js";
 import type { DropMeta } from "../domain/meta.js";
 import {
   DROPS_PREFIX,
@@ -33,10 +33,10 @@ import {
   PRUNE_STATE_KEY,
   SLUGS_PREFIX,
   expiringKey,
-  listKey,
   metaKey,
   slugKey,
 } from "../storage/keys.js";
+import { listKeyOf } from "./projections.js";
 
 export { PRUNE_STATE_KEY };
 
@@ -402,7 +402,7 @@ async function deleteDrop(
   const keys = [
     ...owned,
     slugKey(meta.slug),
-    listKey(Date.parse(meta.created), meta.slug),
+    listKeyOf(meta),
     markerKey,
   ];
   await bucket.delete(keys);
@@ -608,12 +608,12 @@ async function repairProjections(
   budget: Budget,
   report: CronReport,
 ): Promise<boolean> {
-  const key = listKey(Date.parse(meta.created), meta.slug);
+  const key = listKeyOf(meta);
   if (!budget.take()) return false;
   const entry = await bucket.head(key);
   if (entry === null || entry.customMetadata?.updated !== meta.updated) {
     if (!budget.take()) return false;
-    await bucket.put(key, "", { customMetadata: listMetadata(meta) });
+    await bucket.put(key, "", { customMetadata: listEntryMetadata(meta) });
     report.repaired.list += 1;
   }
 

@@ -172,10 +172,10 @@ export type PasswordChange =
 /**
  * What a call's `password` field means for this drop.
  *
- * `undefined` is "the caller said nothing": on a create the instance default
- * fills it, on an update it changes nothing (policy defaults never apply to an
- * update — docs/spec-v1.md, "`update` semantics"), which is why `current` being
- * present is what tells the two apart.
+ * `undefined` is "the caller said nothing", and only `publish` asks with it:
+ * the instance default fills it. `update` never calls this for an absent
+ * field, because policy defaults never apply to an update (docs/spec-v1.md,
+ * "`update` semantics") — an open drop updated without `password` stays open.
  */
 export async function resolvePassword(
   current: PasswordRecord | undefined,

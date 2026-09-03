@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { GRACE_MS, expiringMarkerDate } from "../src/domain/expiry.js";
 import { prune, usage } from "../src/operations/usage.js";
-import { expiringKey, listKey, slugKey } from "../src/storage/keys.js";
+import { expiringKey, listKeyForDrop, slugKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
 import type { MemoryBucket } from "./memory-bucket.js";
 
@@ -46,7 +46,7 @@ function seedDrop(
   };
   bucket.seed(`drops/${id}/meta.json`, JSON.stringify(meta));
   bucket.seed(slugKey(slug), id);
-  bucket.seed(listKey(Date.parse(CREATED), slug), "");
+  bucket.seed(listKeyForDrop(id, slug), "");
   if (expiresAt !== null) bucket.seed(expiringKey(expiringMarkerDate(expiresAt), id), "");
 }
 

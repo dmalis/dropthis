@@ -7,7 +7,7 @@ import {
   readCronState,
   runCron,
 } from "../src/operations/cron.js";
-import { PRUNE_STATE_KEY, blobKey, expiringKey, listKey, metaKey, slugKey } from "../src/storage/keys.js";
+import { PRUNE_STATE_KEY, blobKey, expiringKey, listKeyForDrop, metaKey, slugKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
 import type { MemoryBucket } from "./memory-bucket.js";
 
@@ -165,7 +165,7 @@ describe("pointers with nothing behind them", () => {
 
   it("removes a listing entry and an expiring marker whose drop is gone", async () => {
     const bucket = memoryBucket();
-    bucket.seed(listKey(T0, "zzzzzzzzzz"), "", { id: "GONE", updated: rfc(T0) });
+    bucket.seed(listKeyForDrop("GONE", "zzzzzzzzzz"), "", { id: "GONE", updated: rfc(T0) });
     bucket.seed(expiringKey("2031-04-01", "GONE"), "");
     reconcileDueState(bucket);
 
@@ -187,13 +187,13 @@ describe("projections that went missing", () => {
     const report = await reconcileNow(bucket);
 
     expect(report.repaired.list).toBe(1);
-    expect(bucket.keys("list/")).toEqual([listKey(Date.parse(meta.created), "aaaaaaaaaa")]);
+    expect(bucket.keys("list/")).toEqual([listKeyForDrop(meta.id, "aaaaaaaaaa")]);
   });
 
   it("rewrites a listing entry that is out of date", async () => {
     const bucket = memoryBucket();
     const meta = seedMeta(bucket, "A", "aaaaaaaaaa", []);
-    bucket.seed(listKey(Date.parse(meta.created), "aaaaaaaaaa"), "", {
+    bucket.seed(listKeyForDrop(meta.id, "aaaaaaaaaa"), "", {
       id: "A",
       updated: "2020-01-01T00:00:00Z",
     });
@@ -206,7 +206,7 @@ describe("projections that went missing", () => {
   it("rewrites a missing expiring marker", async () => {
     const bucket = memoryBucket();
     const meta = seedMeta(bucket, "A", "aaaaaaaaaa", []);
-    bucket.seed(listKey(Date.parse(meta.created), "aaaaaaaaaa"), "", {
+    bucket.seed(listKeyForDrop(meta.id, "aaaaaaaaaa"), "", {
       id: "A",
       updated: meta.updated,
     });
@@ -223,7 +223,7 @@ describe("projections that went missing", () => {
   it("repairs nothing when everything is already in place", async () => {
     const bucket = memoryBucket();
     const meta = seedMeta(bucket, "A", "aaaaaaaaaa", []);
-    bucket.seed(listKey(Date.parse(meta.created), "aaaaaaaaaa"), "", {
+    bucket.seed(listKeyForDrop(meta.id, "aaaaaaaaaa"), "", {
       id: "A",
       updated: meta.updated,
     });

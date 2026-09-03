@@ -71,7 +71,15 @@ export function devRoutes(hooks: DevHooks) {
   dev.post("/r2/head", async (c) => {
     const { key } = await c.req.json<{ key: string }>();
     const object = await c.env.BUCKET.head(key);
-    return object === null ? c.json({ found: false }) : c.json({ found: true, size: object.size });
+    if (object === null) return c.json({ found: false });
+    // `uploaded` is how seam 1 proves a write did NOT happen: an unchanged file
+    // that was re-uploaded would carry a newer instant.
+    return c.json({
+      found: true,
+      size: object.size ?? null,
+      uploaded: object.uploaded?.toISOString() ?? null,
+      customMetadata: object.customMetadata ?? null,
+    });
   });
 
   /**
@@ -245,10 +253,9 @@ export function devRoutes(hooks: DevHooks) {
   });
 
   /**
-   * Deletes named keys, so a test can BREAK the bucket on purpose — a missing
-   * `list/` entry, an orphaned pointer — and then assert that the reconcile
-   * puts it right. There is no product operation that can do this, and a
-   * repair nobody can trigger is a repair nobody has tested.
+   * Deletes exact keys. Seam 1 uses it to MANUFACTURE the states the write
+   * order is designed to survive — an orphaned `list/` pointer, a lost listing
+   * row — which no ordinary call can produce on purpose.
    */
   dev.post("/r2/delete", async (c) => {
     const { keys } = await c.req.json<{ keys: string[] }>();
