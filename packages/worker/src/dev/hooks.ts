@@ -10,8 +10,15 @@
 import type { Env } from "../bindings.js";
 
 export type DevHooks = {
-  /** "Now" for expiry. Production has one answer and it is the clock. */
-  now(env: Env): Date;
+  /**
+   * "Now" for expiry. Production has one answer and it is the clock.
+   *
+   * The dev build takes it from the REQUEST, not from a deployment variable: a
+   * contract run has to publish, expire, revive and then walk the cron forward
+   * a day at a time, and a Worker variable cannot change without a redeploy.
+   * `request` is absent for the scheduled handler, which has no request.
+   */
+  now(env: Env, request?: Request): Date;
   /**
    * The raw `DEV-Fault` header: where THIS request should abort, so a test can
    * prove the retry converges. Each operation names its own points and parses

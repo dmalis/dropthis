@@ -75,7 +75,7 @@ async function run(
     bucket: c.env.BUCKET,
     config,
     caller,
-    now: hooks.now(c.env),
+    now: hooks.now(c.env, c.req.raw),
     hooks,
     request: c.req.raw,
     secret: () => requireSecret(c.env),

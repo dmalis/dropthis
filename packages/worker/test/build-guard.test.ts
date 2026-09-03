@@ -44,6 +44,14 @@ describe("production bundle", () => {
     expect(bundle).not.toContain("/bench/pbkdf2");
     expect(bundle).not.toContain("DEV_ROUTES");
     expect(bundle).not.toContain("r2/burst");
+
+    // The two things the dev build may bend — what time it is and where a
+    // write aborts — reach it only through `dev/enabled-hooks.ts`, which the
+    // production entry never imports. A production Worker whose clock a header
+    // could move would serve an expired drop on request.
+    expect(bundle).not.toContain("DEV_CLOCK");
+    expect(bundle).not.toContain("DEV-Clock");
+    expect(bundle).not.toContain("DEV-Fault");
   }, 120_000);
 
   it("still contains the product's own routes", async () => {
