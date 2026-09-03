@@ -1,19 +1,23 @@
 import manifest from "../package.json";
+import { main } from "./cli/main.js";
 
 /**
  * The one `dropthis` binary: installer, client and stdio MCP proxy live here.
- * It currently knows one thing — its own version — and says so plainly for
- * everything else, because an agent must never be left guessing what ran.
+ * Every command is generated from the operation registry (`src/cli/`); the
+ * installer (`src/init/`) joins when issue #10 wires it.
  */
-export function run(argv: string[]): number {
-  if (argv.length === 1 && argv[0] === "--version") {
-    process.stdout.write(`${manifest.version}\n`);
-    return 0;
-  }
-  process.stderr.write(
-    `dropthis: this build only supports \`dropthis --version\`.\n`,
-  );
-  return 1;
-}
-
-process.exitCode = run(process.argv.slice(2));
+main(process.argv.slice(2), manifest.version, {
+  env: process.env,
+  cwd: process.cwd(),
+  stdin: process.stdin,
+  stdout: process.stdout,
+  stderr: process.stderr,
+}).then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (error: unknown) => {
+    process.stderr.write(`dropthis: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  },
+);

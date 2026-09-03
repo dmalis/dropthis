@@ -1,49 +1,85 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { beforeAll, describe, expect, it } from "vitest";
+import { cleanEnv, oneJsonDocument, packageRoot, runCli } from "./cli-harness.js";
 
-const execFileAsync = promisify(execFile);
-const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-const bin = join(packageRoot, "dist", "cli.cjs");
-
-async function runCli(args: string[]) {
-  try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [bin, ...args]);
-    return { stdout, stderr, code: 0 };
-  } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string; code?: number };
-    return { stdout: failure.stdout ?? "", stderr: failure.stderr ?? "", code: failure.code ?? -1 };
-  }
-}
-
+/**
+ * The binary's own contract, with no instance behind it: version, help,
+ * `commands --json`, and what a bad invocation looks like.
+ */
 let version: string;
+let env: Record<string, string>;
 
 beforeAll(async () => {
-  await execFileAsync("npm", ["run", "--silent", "build"], { cwd: packageRoot });
   const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as {
     version: string;
   };
   version = manifest.version;
+  env = await cleanEnv();
 }, 120_000);
 
 describe("dropthis --version", () => {
   it("prints the package version on stdout and exits 0", async () => {
-    const run = await runCli(["--version"]);
+    const run = await runCli(["--version"], { env });
     expect(run.code).toBe(0);
     expect(run.stdout.trim()).toBe(version);
   });
 });
 
-describe("dropthis with an argv it does not know", () => {
-  it.each([["publish"], ["--help"], []])("exits 1 for %j with one stderr line", async (...args) => {
-    const argv = args.flat();
-    const run = await runCli(argv);
+describe("dropthis --help", () => {
+  it("lists the AGENTS.md grammar and exits 0", async () => {
+    const run = await runCli(["--help"], { env });
+    expect(run.code).toBe(0);
+    for (const word of ["publish", "update", "get", "list", "delete", "user", "config", "usage", "prune", "doctor", "commands"]) {
+      expect(run.stdout).toContain(word);
+    }
+  });
+
+  it("with no command prints the help to stderr and exits 1", async () => {
+    const run = await runCli([], { env });
     expect(run.code).toBe(1);
     expect(run.stdout).toBe("");
-    expect(run.stderr.trim().split("\n")).toHaveLength(1);
-    expect(run.stderr.trim().length).toBeGreaterThan(0);
+    expect(run.stderr).toContain("Usage: dropthis");
+  });
+});
+
+describe("dropthis commands --json", () => {
+  it("lists every command with its arguments and options as one document", async () => {
+    const run = await runCli(["commands", "--json"], { env });
+    expect(run.code).toBe(0);
+    const surface = oneJsonDocument(run.stdout) as Array<Record<string, unknown>>;
+    expect(surface.map((entry) => entry.command)).toEqual([
+      "publish", "update", "get", "list", "delete", "user add", "user list", "user remove",
+      "config get", "config set", "usage", "prune", "doctor",
+    ]);
+    const publish = surface[0]!;
+    expect(publish.arguments).toEqual([{ name: "paths", kind: "files", required: true, variadic: true }]);
+    expect((publish.options as Array<{ flag: string }>).map((o) => o.flag)).toEqual([
+      "--title", "--meta", "--expires", "--noindex", "--idempotency-key",
+    ]);
+    expect(surface.find((entry) => entry.command === "prune")!.steps).toBe(true);
+  });
+
+  it("no flag anywhere accepts a key", async () => {
+    const run = await runCli(["commands", "--json"], { env });
+    const surface = oneJsonDocument(run.stdout) as Array<{ options: Array<{ flag: string }> }>;
+    const flags = surface.flatMap((entry) => entry.options.map((o) => o.flag));
+    expect(flags.some((flag) => /key$/.test(flag) && flag !== "--idempotency-key")).toBe(false);
+    expect(flags.some((flag) => /token|secret|password/.test(flag))).toBe(false);
+  });
+});
+
+describe("a bad invocation", () => {
+  it("unknown command → exit 1, one stderr message, nothing on stdout", async () => {
+    const run = await runCli(["frobnicate"], { env });
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("frobnicate");
+  });
+
+  it("missing argument → exit 1 before any credential is read", async () => {
+    const run = await runCli(["get"], { env });
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain("target");
   });
 });

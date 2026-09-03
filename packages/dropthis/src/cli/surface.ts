@@ -1,0 +1,231 @@
+/**
+ * The CLI surface, generated from the operation registry (AGENTS.md,
+ * "Operation registry" and "CLI conventions").
+ *
+ * Every operation's zod schema is read once and turned into a command spec:
+ * path parameters become positional arguments, `files` becomes the paths on
+ * the command line, every other field becomes a flag typed from its schema.
+ * There is no per-command parser to drift from the REST body — a field added
+ * to a registry schema is a flag the next build has.
+ *
+ * Three things are not operations and are mapped by name: `health` and the
+ * raw download are not commands; the staged-upload path is how `publish` and
+ * `update` move large files, never a command of its own; `doctor.checks` is
+ * `doctor --list`.
+ */
+import type { z } from "zod";
+import { OPERATIONS } from "../../../worker/src/registry/index.js";
+import type { Operation } from "../../../worker/src/registry/index.js";
+import { CliError } from "./errors.js";
+
+export type FieldKind = "string" | "boolean" | "integer" | "json" | "files";
+
+export type FlagSpec = {
+  field: string;
+  /** The kebab-case flag name without the dashes. */
+  flag: string;
+  kind: Exclude<FieldKind, "files">;
+  /** `--no-<flag>` sends `null` (clears the field). */
+  nullable: boolean;
+  description: string;
+};
+
+export type ArgKind = "string" | "target" | "files" | "json";
+
+export type ArgSpec = {
+  /** The input field the value lands in; `*` means "the whole input". */
+  field: string;
+  name: string;
+  kind: ArgKind;
+  variadic: boolean;
+  required: boolean;
+};
+
+export type CommandSpec = {
+  words: string[];
+  op: Operation<never>;
+  args: ArgSpec[];
+  flags: FlagSpec[];
+  /** The operation pages with a cursor: `--jsonl` streams one object per call. */
+  steps: boolean;
+};
+
+/** Operations that are not commands, and why (in the module comment). */
+const NOT_COMMANDS = new Set(["health", "file_download", "upload.create", "upload.put", "upload.commit", "doctor.checks"]);
+
+/** Path parameters that take a slug OR a drop URL of this instance. */
+const TARGET_PARAMS = new Set(["slug"]);
+
+/** Body fields the grammar puts first: `user add <label>`. */
+const POSITIONAL_FIELDS = new Set(["label"]);
+
+const PAGED = new Set(["usage", "prune"]);
+
+type Def = {
+  type: string;
+  shape?: Record<string, z.ZodType>;
+  innerType?: z.ZodType;
+  options?: z.ZodType[];
+  in?: z.ZodType;
+  element?: z.ZodType;
+};
+
+const defOf = (schema: z.ZodType): Def => (schema as unknown as { _zod: { def: Def } })._zod.def;
+
+type Field = { kind: FieldKind; nullable: boolean };
+
+/**
+ * A field's kind from its schema, looking through `optional`, `nullable` and
+ * `default`. A union is a coercion pair from `registry/params.ts` — boolean or
+ * integer — recognised by the plain member; anything structured is JSON.
+ */
+function classify(schema: z.ZodType, name: string): Field {
+  let def = defOf(schema);
+  let nullable = false;
+  for (;;) {
+    if (def.type === "optional" || def.type === "default" || def.type === "nonoptional") {
+      def = defOf(def.innerType!);
+      continue;
+    }
+    if (def.type === "nullable") {
+      nullable = true;
+      def = defOf(def.innerType!);
+      continue;
+    }
+    break;
+  }
+  if (name === "files" && def.type === "array") return { kind: "files", nullable };
+  switch (def.type) {
+    case "string":
+    case "literal":
+    case "enum":
+      return { kind: "string", nullable };
+    case "boolean":
+      return { kind: "boolean", nullable };
+    case "number":
+    case "int":
+      return { kind: "integer", nullable };
+    case "union": {
+      const kinds = new Set(def.options!.map((option) => classify(option, name).kind));
+      if (kinds.has("boolean")) return { kind: "boolean", nullable };
+      if (kinds.has("integer")) return { kind: "integer", nullable };
+      return { kind: "string", nullable };
+    }
+    case "pipe":
+      return classify(def.in!, name);
+    default:
+      return { kind: "json", nullable };
+  }
+}
+
+const kebab = (name: string) => name.replace(/_/g, "-");
+
+function specFor(op: Operation<never>): CommandSpec {
+  const words = op.name === "doctor" ? ["doctor"] : op.name.split(".");
+  const args: ArgSpec[] = [];
+  const flags: FlagSpec[] = [];
+  const def = defOf(op.schema as unknown as z.ZodType);
+
+  if (def.type !== "object") {
+    // A free-form input (`config set`'s policy patch) is one JSON argument.
+    args.push({ field: "*", name: "json", kind: "json", variadic: false, required: true });
+    return { words, op, args, flags, steps: PAGED.has(op.name) };
+  }
+
+  const params = new Set(op.params ?? []);
+  for (const name of op.params ?? []) {
+    args.push({
+      field: name,
+      name: TARGET_PARAMS.has(name) ? "target" : name,
+      kind: TARGET_PARAMS.has(name) ? "target" : "string",
+      variadic: false,
+      required: true,
+    });
+  }
+
+  for (const [name, schema] of Object.entries(def.shape ?? {})) {
+    if (params.has(name)) continue;
+    if (POSITIONAL_FIELDS.has(name)) {
+      args.push({ field: name, name, kind: "string", variadic: false, required: true });
+      continue;
+    }
+    const field = classify(schema, name);
+    if (field.kind === "files") {
+      args.push({
+        field: "files",
+        name: "paths",
+        kind: "files",
+        variadic: true,
+        required: defOf(schema).type !== "optional",
+      });
+      continue;
+    }
+    flags.push({
+      field: name,
+      flag: kebab(name),
+      kind: field.kind,
+      nullable: field.nullable,
+      description: describe(op.name, name, field),
+    });
+  }
+
+  if (op.name === "doctor") {
+    flags.push({
+      field: "list",
+      flag: "list",
+      kind: "boolean",
+      nullable: false,
+      description: "List the checks instead of running them.",
+    });
+  }
+
+  return { words, op, args, flags, steps: PAGED.has(op.name) };
+}
+
+/** One line per flag, written for an agent reading `--help`. */
+function describe(opName: string, field: string, kind: Field): string {
+  const known: Record<string, string> = {
+    title: "Short human-readable title (≤ 200 bytes).",
+    meta: "JSON object the agent owns; update merges at the top level, null removes a key.",
+    expires: '"7d", "2026-12-31", an RFC 3339 instant, or "never".',
+    noindex: "Send X-Robots-Tag: noindex (on by default).",
+    idempotency_key: "Retries with the same key return the same result.",
+    files: "Also return each text file's content.",
+    limit: "Page size, 1–1000.",
+    cursor: "Continue from a previous page or scan.",
+    q: "Substring of the title to filter by (within the page).",
+    dry_run: "Report what would be deleted; --no-dry-run deletes.",
+  };
+  const base = known[field] ?? `${field} (${kind.kind})`;
+  return kind.nullable && opName === "update" ? `${base} --no-${kebab(field)} clears it.` : base;
+}
+
+let cached: CommandSpec[] | undefined;
+
+export function commandSurface(): CommandSpec[] {
+  cached ??= OPERATIONS.filter((op) => !NOT_COMMANDS.has(op.name)).map(specFor);
+  return cached;
+}
+
+/** A raw flag value, typed as the schema says. */
+export function coerceFlag(spec: Pick<FlagSpec, "flag" | "kind">, raw: unknown): unknown {
+  switch (spec.kind) {
+    case "integer": {
+      if (typeof raw === "number") return raw;
+      if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
+        throw new CliError("INVALID_INPUT", `--${spec.flag} must be a whole number; got ${JSON.stringify(raw)}.`);
+      }
+      return Number(raw);
+    }
+    case "json": {
+      if (typeof raw !== "string") return raw;
+      try {
+        return JSON.parse(raw) as unknown;
+      } catch {
+        throw new CliError("INVALID_INPUT", `--${spec.flag} must be valid JSON; got ${JSON.stringify(raw)}.`);
+      }
+    }
+    default:
+      return raw;
+  }
+}

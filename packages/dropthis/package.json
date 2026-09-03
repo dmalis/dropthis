@@ -2,13 +2,20 @@
   "name": "dropthis",
   "version": "0.1.0",
   "type": "module",
-  "bin": { "dropthis": "dist/cli.cjs" },
-  "files": ["dist"],
+  "bin": {
+    "dropthis": "dist/cli.cjs"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup"
   },
   "dependencies": {
-    "cloudflare": "7.1.0"
+    "@clack/prompts": "1.7.0",
+    "@vercel/detect-agent": "1.2.5",
+    "cloudflare": "7.1.0",
+    "commander": "15.0.0"
   },
   "devDependencies": {
     "@dropthis/fake-cloudflare": "0.1.0",
