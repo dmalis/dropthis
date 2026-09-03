@@ -12,6 +12,8 @@
   "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
   "observability": { "enabled": true },
+  // The served skill (`/_skill.md`) is `skills/instance-skill.md`, bundled as text.
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "dropthis-drops" }],
   "kv_namespaces": [{ "binding": "OAUTH_KV" }]
 }

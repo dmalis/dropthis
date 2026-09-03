@@ -190,8 +190,9 @@ async function oauthKv() {
     },
     async value(name: string) {
       // The SDK builds a path from the name; a grant key carries `:`.
-      const response = await client.kv.namespaces.values.get(id, encodeURIComponent(name), {
+      const response = await client.kv.namespaces.values.get(encodeURIComponent(name), {
         account_id: accountId,
+        namespace_id: id,
       });
       return response.text();
     },

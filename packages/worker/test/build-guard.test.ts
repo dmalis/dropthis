@@ -61,5 +61,8 @@ describe("production bundle", () => {
     expect(bundle).toContain("/users");
     expect(bundle).toContain("/_oauth/authorize");
     expect(bundle).toContain("/_api/mcp");
+    // The served skill ships as a text module beside the bundle (the `Text`
+    // rule); the bundle imports it by name.
+    expect(bundle).toContain("instance-skill.md");
   }, 120_000);
 });

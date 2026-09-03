@@ -1,12 +1,14 @@
 import { Hono } from "hono";
+import { mcpRoutes } from "./api/mcp.js";
 import { apiRoutes } from "./api/router.js";
 import type { Env } from "./bindings.js";
 import { PRODUCTION_HOOKS } from "./dev/hooks.js";
 import type { DevHooks } from "./dev/hooks.js";
-import { ApiError, errorBody } from "./errors.js";
+import { errorBody } from "./errors.js";
+import { loadInstanceConfig } from "./instance-config.js";
 import { oauthRoutes } from "./oauth/routes.js";
-import type { McpHandler } from "./oauth/provider.js";
 import { isReservedPath } from "./reserved.js";
+import { renderSkill } from "./skill.js";
 import { viewerRoutes } from "./viewer.js";
 
 const NOT_FOUND_PAGE = `<!doctype html>
@@ -23,22 +25,13 @@ const NOT_FOUND_PAGE = `<!doctype html>
 `;
 
 /**
- * The MCP surface until issue #8 lands: the auth seam in front of it is
- * complete, the surface behind it is not.
- */
-const MCP_NOT_MOUNTED: McpHandler = async () => {
-  throw new ApiError("INTERNAL", "The MCP surface is not mounted in this build (issue #8).");
-};
-
-/**
  * The whole Worker.
  *
  * `hooks` is the only way the dev build differs from production: it bends the
  * clock and can abort a publish mid-write. Production calls this with nothing,
  * so no dev variable is ever named in the code a production bundle contains.
- * `mcp` is the MCP surface, reached only with a resolved caller.
  */
-export function createApp(hooks: DevHooks = PRODUCTION_HOOKS, mcp: McpHandler = MCP_NOT_MOUNTED) {
+export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
   const app = new Hono<{ Bindings: Env }>();
 
   // Every response, without exception: drops are not for search engines.
@@ -47,13 +40,31 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS, mcp: McpHandler = 
     c.res.headers.set("X-Robots-Tag", "noindex, nofollow");
   });
 
+  // The Worker calling itself, in-process: no network hop, no binding to
+  // render. `doctor` proves the MCP endpoint through it.
+  const self = (request: Request, env: Env) => Promise.resolve(app.fetch(request, env));
+
   // Every REST route, generated from the operation registry. `health` is the
   // one open route in it; everything else needs a key and a scope.
-  app.route("/_api/v1", apiRoutes(hooks));
+  app.route("/_api/v1", apiRoutes(hooks, self));
 
-  // `/_api/mcp` (bearer first, OAuth otherwise), the `/_oauth/*` endpoints
-  // and the discovery documents. One file owns that wiring.
-  app.route("/", oauthRoutes(hooks, mcp));
+  // The same operations as MCP tools, one stateless server per request.
+  // Bearer header if present, else an OAuth token (`oauth/caller.ts`).
+  app.route("/_api/mcp", mcpRoutes(hooks, self));
+
+  // The `/_oauth/*` endpoints and the discovery documents. One file owns
+  // that wiring.
+  app.route("/", oauthRoutes(hooks));
+
+  // The instance's own skill, open: it holds no secret, and one URL is how an
+  // agent onboards. Rendered per request from the live policy.
+  app.get("/_skill.md", async (c) => {
+    const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
+    return c.text(renderSkill(config), 200, {
+      "content-type": "text/markdown; charset=utf-8",
+      "cache-control": "no-cache, must-revalidate",
+    });
+  });
 
   // The viewer is last: it owns every path that is not the control plane, and
   // `RESERVED_PREFIXES` plus the `_`-free slug alphabet keep the two apart.

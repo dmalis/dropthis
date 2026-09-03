@@ -1,11 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hashKey } from "../src/auth/key.js";
-import type { Caller } from "../src/auth/caller.js";
 import { DEV_HOOKS } from "../src/dev/enabled-hooks.js";
 import { PRODUCTION_HOOKS } from "../src/dev/hooks.js";
 import { createApp } from "../src/index.js";
-import type { McpHandler } from "../src/oauth/provider.js";
 import { RESERVED_PREFIXES } from "../src/reserved.js";
 import { CONFIG_KEY, keyHashKey, keyRecordKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
@@ -16,7 +14,7 @@ import type { MemoryKv } from "./memory-kv.js";
 /**
  * The OAuth half of "one key, two presentations" (AGENTS.md, "Auth"), driven
  * end to end in memory: the provider runs under Node against a fake KV, the
- * MCP surface is a fake that echoes who called, and every assertion is about
+ * real MCP surface answers behind it, and every assertion is about
  * the CONTRACT — one paste-key form, a token that is an alias for a key, a
  * connection that never expires on its own, and a revocation that lands on
  * the very next request. The same dance replays against the deployed dev
@@ -48,15 +46,8 @@ type Env = {
 let bucket: MemoryBucket;
 let kv: MemoryKv;
 let env: Env;
-let seen: Caller[];
 let app: ReturnType<typeof createApp>;
 const realFetch = globalThis.fetch;
-
-/** The MCP surface, faked: it answers with the caller the seam resolved. */
-const echoMcp: McpHandler = async (_request, context) => {
-  seen.push(context.caller);
-  return Response.json({ caller: context.caller, instance: context.config.instanceName });
-};
 
 async function seedKey(key: string, id: string, label: string, scope: "admin" | "user") {
   const hash = await hashKey(key);
@@ -70,7 +61,6 @@ async function seedKey(key: string, id: string, label: string, scope: "admin" | 
 beforeEach(async () => {
   bucket = memoryBucket();
   kv = memoryKv();
-  seen = [];
   env = { BUCKET: bucket, OAUTH_KV: kv, HMAC_SECRET: "s".repeat(32) };
   bucket.seed(
     CONFIG_KEY,
@@ -78,7 +68,7 @@ beforeEach(async () => {
   );
   await seedKey(USER_KEY, "id-anna", "anna", "user");
   await seedKey(ADMIN_KEY, "admin", "admin", "admin");
-  app = createApp(PRODUCTION_HOOKS, echoMcp);
+  app = createApp(PRODUCTION_HOOKS);
 });
 
 afterEach(() => {
@@ -166,7 +156,7 @@ async function connect(key: string, clientId?: string) {
   return { clientId: id, code, location, ...tokens };
 }
 
-const mcp = (auth?: string) =>
+const mcp = (auth?: string, method = "tools/list", params: unknown = {}) =>
   call("/_api/mcp", {
     method: "POST",
     headers: {
@@ -174,8 +164,31 @@ const mcp = (auth?: string) =>
       accept: "application/json, text/event-stream",
       ...(auth === undefined ? {} : { authorization: auth }),
     },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
+
+/** The tool names a caller sees — the MCP surface's own answer to "who are you". */
+async function toolNames(auth: string): Promise<string[]> {
+  const response = await mcp(auth);
+  expect(response.status, await response.clone().text()).toBe(200);
+  const body = (await response.json()) as { result: { tools: Array<{ name: string }> } };
+  return body.result.tools.map((tool) => tool.name).sort();
+}
+
+/** Who the surface attributes a publish to — the caller's identity, proven by a write. */
+async function publishedBy(auth: string): Promise<{ id: string; label: string }> {
+  const response = await mcp(auth, "tools/call", {
+    name: "dropthis_publish",
+    arguments: { title: "who am I", files: [{ path: "a.txt", text: "hi" }] },
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+  const body = (await response.json()) as {
+    result: { structuredContent: { created_by: { id: string; label: string } } };
+  };
+  return body.result.structuredContent.created_by;
+}
+
+const USER_TOOLS = ["dropthis_delete", "dropthis_get", "dropthis_list", "dropthis_publish", "dropthis_update"];
 
 const UNAUTHENTICATED_BODY = {
   error: {
@@ -227,7 +240,6 @@ describe("discovery, on the canonical origin", () => {
     );
     expect(response.headers.get("content-type")).toContain("application/json");
     expect(await response.json()).toEqual(UNAUTHENTICATED_BODY);
-    expect(seen).toEqual([]);
   });
 
   it.each(["/_oauth/authorize?x=1", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/_api/mcp"])(
@@ -354,16 +366,14 @@ describe("tokens", () => {
 
   it("resolves a token to the key's caller on /_api/mcp, scope from the record", async () => {
     const user = await connect(USER_KEY);
-    const asUser = await mcp(`Bearer ${user.access_token}`);
-    expect(asUser.status, await asUser.clone().text()).toBe(200);
-    expect(await asUser.json()).toEqual({
-      caller: { id: "id-anna", label: "anna", scope: "user" },
-      instance: "main",
-    });
+    expect(await toolNames(`Bearer ${user.access_token}`)).toEqual(USER_TOOLS);
+    expect(await publishedBy(`Bearer ${user.access_token}`)).toEqual({ id: "id-anna", label: "anna" });
 
     const admin = await connect(ADMIN_KEY);
-    const asAdmin = await mcp(`Bearer ${admin.access_token}`);
-    expect(await asAdmin.json()).toMatchObject({ caller: { id: "admin", scope: "admin" } });
+    const adminTools = await toolNames(`Bearer ${admin.access_token}`);
+    expect(adminTools).toEqual(expect.arrayContaining(USER_TOOLS));
+    expect(adminTools.length).toBeGreaterThan(USER_TOOLS.length);
+    expect(await publishedBy(`Bearer ${admin.access_token}`)).toEqual({ id: "admin", label: "admin" });
   });
 
   it("refreshes silently into a working token", async () => {
@@ -405,9 +415,7 @@ describe("tokens", () => {
 describe("the bearer header on /_api/mcp", () => {
   it("wins when it holds a raw key, without touching KV", async () => {
     const before = kv.puts.length;
-    const response = await mcp(`Bearer ${ADMIN_KEY}`);
-    expect(response.status, await response.clone().text()).toBe(200);
-    expect(await response.json()).toMatchObject({ caller: { id: "admin", scope: "admin" } });
+    expect(await publishedBy(`Bearer ${ADMIN_KEY}`)).toEqual({ id: "admin", label: "admin" });
     expect(kv.puts.length).toBe(before);
   });
 
@@ -415,7 +423,6 @@ describe("the bearer header on /_api/mcp", () => {
     const response = await mcp("Bearer not-a-key-and-not-a-token");
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual(UNAUTHENTICATED_BODY);
-    expect(seen).toEqual([]);
   });
 });
 
@@ -448,8 +455,7 @@ describe("Client ID Metadata Documents", () => {
     const fetched = serveMetadata(metadata([REDIRECT]));
     const tokens = await connect(USER_KEY, CLIENT_ID);
     expect(fetched).toContain(CLIENT_ID);
-    const response = await mcp(`Bearer ${tokens.access_token}`);
-    expect(await response.json()).toMatchObject({ caller: { id: "id-anna" } });
+    expect(await publishedBy(`Bearer ${tokens.access_token}`)).toEqual({ id: "id-anna", label: "anna" });
   });
 
   it("refuses a redirect the document does not list, locally", async () => {
@@ -498,8 +504,8 @@ describe("the dev build's access-token TTL", () => {
     };
 
     const base = env;
-    expect(await withHeader(createApp(DEV_HOOKS, echoMcp), { ...base, DEV_ROUTES: "1" })()).toBe(60);
-    expect(await withHeader(createApp(DEV_HOOKS, echoMcp), { ...base })()).toBe(3600);
-    expect(await withHeader(createApp(PRODUCTION_HOOKS, echoMcp), { ...base, DEV_ROUTES: "1" })()).toBe(3600);
+    expect(await withHeader(createApp(DEV_HOOKS), { ...base, DEV_ROUTES: "1" })()).toBe(60);
+    expect(await withHeader(createApp(DEV_HOOKS), { ...base })()).toBe(3600);
+    expect(await withHeader(createApp(PRODUCTION_HOOKS), { ...base, DEV_ROUTES: "1" })()).toBe(3600);
   });
 });
