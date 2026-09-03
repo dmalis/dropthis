@@ -14,8 +14,25 @@ import { INITIAL_POLICY } from "./policy/defaults.js";
 import type { InstancePolicy } from "./policy/defaults.js";
 import { CONFIG_KEY } from "./storage/keys.js";
 
+/**
+ * The policy as a DEPLOYED instance holds it: the same shape as the frozen
+ * initial values, but with ordinary types — an installed instance's numbers are
+ * whatever `config set` last wrote, not the literals in the source.
+ */
+export type ResolvedPolicy = {
+  expiry: { default: string; max: string; allow_never: boolean };
+  password: { default: string | null; required: boolean };
+  noindex: { default: boolean; forced: boolean };
+  max_file_bytes: number;
+  max_request_bytes: number;
+  max_unhashed_bytes: number;
+  auto_index: string;
+  pbkdf2_iterations: number;
+  cron_ops_budget: number;
+};
+
 export type InstanceConfig = {
-  policy: InstancePolicy;
+  policy: ResolvedPolicy;
   canonicalUrl: string;
   aliasOrigins: string[];
   instanceName: string;
@@ -51,7 +68,7 @@ export async function loadInstanceConfig(bucket: Bucket, requestUrl: string): Pr
   }
 
   return {
-    policy: { ...INITIAL_POLICY, ...stripUnknownPolicy(stored) },
+    policy: { ...INITIAL_POLICY, ...stripUnknownPolicy(stored) } as ResolvedPolicy,
     canonicalUrl:
       typeof stored.canonical_url === "string" && stored.canonical_url.length > 0
         ? stored.canonical_url.replace(/\/+$/, "")

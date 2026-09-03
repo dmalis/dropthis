@@ -1,7 +1,11 @@
 import { Hono } from "hono";
+import { dropRoutes } from "./api/drops.js";
 import type { Env } from "./bindings.js";
+import { PRODUCTION_HOOKS } from "./dev/hooks.js";
+import type { DevHooks } from "./dev/hooks.js";
 import { errorBody } from "./errors.js";
 import { isReservedPath } from "./reserved.js";
+import { viewerRoutes } from "./viewer.js";
 
 const NOT_FOUND_PAGE = `<!doctype html>
 <html lang="en">
@@ -16,26 +20,43 @@ const NOT_FOUND_PAGE = `<!doctype html>
 </html>
 `;
 
-const app = new Hono<{ Bindings: Env }>();
+/**
+ * The whole Worker.
+ *
+ * `hooks` is the only way the dev build differs from production: it bends the
+ * clock and can abort a publish mid-write. Production calls this with nothing,
+ * so no dev variable is ever named in the code a production bundle contains.
+ */
+export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
+  const app = new Hono<{ Bindings: Env }>();
 
-// Every response, without exception: drops are not for search engines.
-app.use("*", async (c, next) => {
-  await next();
-  c.res.headers.set("X-Robots-Tag", "noindex, nofollow");
-});
+  // Every response, without exception: drops are not for search engines.
+  app.use("*", async (c, next) => {
+    await next();
+    c.res.headers.set("X-Robots-Tag", "noindex, nofollow");
+  });
 
-// Unauthenticated liveness. `init` polls it while a deploy propagates, and it
-// is the one open route of the after-v1 unclaimed bootstrap. Nothing else is
-// disclosed here.
-app.get("/_api/v1/health", (c) => c.json({ ok: true }));
+  // Unauthenticated liveness. `init` polls it while a deploy propagates, and it
+  // is the one open route of the after-v1 unclaimed bootstrap. Nothing else is
+  // disclosed here.
+  app.get("/_api/v1/health", (c) => c.json({ ok: true }));
 
-// A path under a reserved prefix belongs to the control plane, so its 404 is
-// the machine-readable one; anything else is a viewer path and gets the page.
-app.notFound((c) => {
-  if (isReservedPath(new URL(c.req.url).pathname)) {
-    return c.json(errorBody("NOT_FOUND", "No such route."), 404);
-  }
-  return c.html(NOT_FOUND_PAGE, 404);
-});
+  app.route("/_api/v1", dropRoutes(hooks));
 
-export default app;
+  // The viewer is last: it owns every path that is not the control plane, and
+  // `RESERVED_PREFIXES` plus the `_`-free slug alphabet keep the two apart.
+  app.route("/", viewerRoutes(hooks));
+
+  // A path under a reserved prefix belongs to the control plane, so its 404 is
+  // the machine-readable one; anything else is a viewer path and gets the page.
+  app.notFound((c) => {
+    if (isReservedPath(new URL(c.req.url).pathname)) {
+      return c.json(errorBody("NOT_FOUND", "No such route."), 404);
+    }
+    return c.html(NOT_FOUND_PAGE, 404);
+  });
+
+  return app;
+}
+
+export default createApp();

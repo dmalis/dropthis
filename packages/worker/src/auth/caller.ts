@@ -18,3 +18,12 @@ export const DEV_ADMIN: Caller = { id: "dev", label: "admin", scope: "admin" };
 export function resolveCaller(_request: Request, _env: Env): Caller {
   return DEV_ADMIN;
 }
+
+/**
+ * What gets written into a drop as `created_by` — the id and the label, never
+ * the scope. Attribution is a snapshot of who made it, not a permission record:
+ * scopes change, and a drop must not carry a stale one forever.
+ */
+export function attribution(caller: Caller): CreatedBy {
+  return { id: caller.id, label: caller.label };
+}

@@ -107,6 +107,12 @@ export type NewDropInput = {
   noindex: boolean;
   createdBy: CreatedBy;
   now: Date;
+  /**
+   * The drop's birth instant, when it is already fixed — an idempotent retry
+   * reuses the first attempt's `created` so that its `state_hash` and its
+   * `list/` key come out identical.
+   */
+  created?: string;
 };
 
 /**
@@ -115,7 +121,7 @@ export type NewDropInput = {
  * same document twice.
  */
 export async function newDropMeta(input: NewDropInput): Promise<DropMeta> {
-  const created = `${input.now.toISOString().slice(0, 19)}Z`;
+  const created = input.created ?? `${input.now.toISOString().slice(0, 19)}Z`;
   return {
     schema: META_SCHEMA,
     id: input.id,
