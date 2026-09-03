@@ -174,7 +174,7 @@ finish its task.
     (done when):** `npx dropthis init --json` on the author's account → Claude Code lists the
     tools → publish a folder → the URL loads with `X-Robots-Tag` and a 30-day expiry → `get`
     returns title/settings → `list` shows it → `delete` gives 404; plus one `--password
-    generate` publish and one single-file PDF drop. Instance `damjan.dropthis.app`.
+    generate` publish and one single-file PDF drop. Instance `damian.dropthis.app`.
     **Milestone 2 (done when):** the author's agent runs `user add anna` → returns a key and
     a ready-to-send message → a Byrokko colleague, from that message alone, adds the claude.ai
     connector, pastes the key, publishes a page and opens the URL, the author watching but not
@@ -374,7 +374,7 @@ finish its task.
 ## Follow-up grilling, 2026-09-03
 
 66. **Topology, marketing, self-hosting, demo — settled in a follow-up grilling.**
-    (a) `dropthis.app` root = marketing; every instance is one subdomain (`damjan.`,
+    (a) `dropthis.app` root = marketing; every instance is one subdomain (`damian.`,
     `byrokko.`, future managed clients `<client>.dropthis.app`) — the Vercel-style split,
     and #28 keeps drops off any cookie-bearing domain. (b) "Self-hostable" is defined as
     the current design: your own Cloudflare account, `npx dropthis init`, no central
