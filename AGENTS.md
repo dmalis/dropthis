@@ -170,8 +170,9 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   it. Browsers get `Cache-Control: no-cache, must-revalidate`, so an update or an expiry is
   visible on the next request.
 - **One call uploads a drop.** `publish` and `update` take `files: [{path, text} | {path,
-  base64} | {path, url, sha256?, size?}]` — exactly one of the three per entry, never
-  guessed from the bytes. A `url` entry with a digest streams to R2 (R2 verifies, no Worker
+  base64, sha256?} | {path, url, sha256?, size?}]` — exactly one of the three per entry, never
+  guessed from the bytes. A base64 entry may carry its own digest; a mismatch is
+  `HASH_MISMATCH` and nothing is stored (the CLI always sends it, #85). A `url` entry with a digest streams to R2 (R2 verifies, no Worker
   CPU, up to `max_file_bytes`); without one the Worker must hash in-stream, so it is capped
   by `max_unhashed_bytes` (2 MB default) — the CLI always sends digests. Limits come from the Free subrequest budget (50 external, 1,000 internal; R2
   binding calls are internal): ≤ 500 files per call; `url` entries ≤ 20 per call and
@@ -191,13 +192,23 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   ceiling — the measurement shuffles sizes to keep the two apart. `url` and staged
   entries stream to R2 with R2 verifying the hash and cost almost no CPU. `/_skill.md`
   prints the current value and says: text inline, files by `url`. Above it **the CLI — the only staged-path client in v1** — uses
-  `POST /_api/v1/uploads` (manifest → `upload_id`, drop id and slug allocated, missing
-  hashes, HMAC-signed 1-hour PUT URLs) → streamed `PUT` per missing blob **straight to
-  `drops/<id>/blobs/<sha256>`** with size + sha256 verified → `POST
-  /_api/v1/uploads/<id>/commit` (carries the settings like `publish`/`update`; fenced by the
-  session's payload hash; verifies the blobs exist, then the write order above; replays the
-  stored result on repeat). Nothing is ever copied. MCP and REST publish callers never see
-  it.
+  `POST /_api/v1/uploads` (`{target?, manifest: [{path, size, sha256}], idempotency_key?}`
+  → `{upload_id, drop_id, slug, missing, put_urls, expires}`: drop id and slug allocated
+  and the slug claimed now — pointer body = the id, `customMetadata {pending_upload,
+  expires}` — or, with `target`, the drop's `meta.json` etag fixed; content types from the
+  frozen table; a rerun under the same key returns the same session with a fresh `missing`)
+  → streamed `PUT` per missing blob **straight to `drops/<id>/blobs/<sha256>`** through an
+  HMAC-signed 1-hour URL that is the PUT's only credential (registry scope `signed`,
+  `rawBody`), `Content-Length` checked against the manifest and the digest verified by R2 —
+  either wrong is `HASH_MISMATCH` and the key stays absent → `POST
+  /_api/v1/uploads/<id>/commit` (carries the settings — `title?, meta?, expires?, noindex?`
+  — exactly as `publish`/`update` take them; fenced by the write-once `commit` claim that
+  fixes `payload_hash`, `state_hash`, `created` and `expires_at` (#74); verifies every blob
+  exists, naming the missing hashes as `INVALID_INPUT`; then steps (4)–(7) of the write
+  order, an update CASing against the session's etag; replays the sealed `result` on
+  repeat; a different payload is `IDEMPOTENCY_MISMATCH`, another key `FORBIDDEN_SCOPE`,
+  a session past its day or unknown `UPLOAD_EXPIRED`). Nothing is ever copied. All three
+  routes are `restOnly`: MCP and REST publish callers never see them (#85).
 - **R2 write rate.** Measured against remote R2 (`docs/research/2026-09-03-free-plan-measurements.md`):
   writes to one key that are **in flight at once** are refused with
   `Reduce your concurrent request rate for the same object. (10058)` — roughly half of ten
@@ -441,22 +452,37 @@ servers connected.
 - **Two credentials, two env names, env beats file:** `CLOUDFLARE_API_TOKEN` (+
   `CLOUDFLARE_ACCOUNT_ID`) for `init` only (automation; an interactive human may
   browser-login instead, #67); `DROPTHIS_URL` + `DROPTHIS_KEY` for everything
-  else, `doctor` included. `init` writes `~/.config/dropthis/instances.json` (`name → {url, key}`);
-  one instance is the default, `--instance <name>` / `DROPTHIS_INSTANCE` selects, the env
-  pair overrides all of it (CI, n8n). An unknown instance name errors with the known names.
+  else, `doctor` included. `init` writes `~/.config/dropthis/instances.json`
+  (`{default?: name, instances: {name: {url, key}}}`, under `$XDG_CONFIG_HOME` when set);
+  `default` names the instance used when nothing selects one — an only instance is the
+  default by itself — and `--instance <name>` / `DROPTHIS_INSTANCE` select, the env pair
+  overrides all of it (CI, n8n) and must be complete (one half alone is an error naming
+  the other). An unknown instance name errors with the known names; no credentials at all
+  exits 4 naming both variables. A drop URL given as a target must be on the configured
+  instance's origin, else `WRONG_INSTANCE` (the CLI knows no aliases, #85).
 - **`connect [--instance x] --client claude-code|cursor|codex|claude-ai --json`** applies
   the per-client registration with the key in neither argv nor any config file: Claude Code
   gets a `headersHelper` (`dropthis auth-header --instance x` reads `instances.json`);
   Cursor and Codex get a reference to `DROPTHIS_KEY_<NAME>` plus the one-line export to add
   to the shell profile; claude.ai gets the connector URL and the paste-key message.
-- **Non-interactive by default** when stdin is not a TTY or an agent is detected (Vercel's
-  `@vercel/detect-agent` pattern); `--yes` is the explicit form; never a prompt an agent can
-  hang on. Secrets via env or stdin, never flags.
+- **Non-interactive by default** when stdin or stdout is not a TTY or an agent is detected
+  (Vercel's `@vercel/detect-agent` pattern); `--yes` is the explicit form; never a prompt an
+  agent can hang on — a non-interactive run proceeds as if every question were answered
+  yes. The only prompts are `delete` and `prune --no-dry-run`; they write to stderr, and
+  "no", Ctrl-C or SIGINT exit 2. `DROPTHIS_INTERACTIVE=1|0` forces prompts on or off (as
+  `GH_FORCE_TTY`), which is how the prompt path is tested through a pipe. Secrets via env or
+  stdin, never flags. Boolean flags map 1:1 to the schema and are never inverted by the
+  CLI: `prune` is a dry run unless `--no-dry-run` (#78d holds on every surface).
 - **Output contract:** `--json` = exactly one deterministic JSON document, always (for
   `init`, a result object with a `steps[]` array); `--jsonl` streams live step events where
-  a command has them (`init`, `prune`); stdout carries the result (on `publish`, only the
-  URL), stderr everything else; exit codes documented: `0` ok, `1` failure, `2` cancelled,
-  `4` auth required (as `gh`). `dropthis commands --json` lists the surface.
+  a command has them (`init`; `usage` and `prune`, which follow the scan cursor to the end,
+  one object per call, and end with the summed report `--json` prints; elsewhere it equals
+  `--json`); stdout carries the result (on `publish` and `update`, only the URL; on `delete`,
+  nothing — `--json` gives `{slug, deleted: true}`), stderr everything else; errors are the
+  frozen object on stderr, as JSON under `--json`; exit codes documented: `0` ok, `1`
+  failure, `2` cancelled, `4` auth required (as `gh`). `dropthis commands --json` lists the
+  surface: every command with its arguments and typed options, generated from the registry
+  (`user add <label>` and `config set <json>` are the two positional body fields).
 - **`npx dropthis@latest` only on the one-shot `init` line**; pinned afterwards.
 
 ### Installer principles (learned from 15 Cloudflare-hosted projects, `docs/research/`)
