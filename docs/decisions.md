@@ -1004,3 +1004,20 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     (e) **The unheld digest is `INVALID_INPUT`, not `NOT_FOUND`.** The drop was found; the
     entry the caller wrote is what is wrong, and the frozen catalogue's `NOT_FOUND` is about
     the target.
+
+96. **`/_connect` is a real page (issue #21).** `user add` has always returned
+    `connect.connect_page` and a message that says "How to connect (any client): …/_connect",
+    and `/_connect` was reserved but unbuilt — so the first step of onboarding a colleague was
+    a dead link. The page is built now, and it is rendered from the same `connectFor()` payload
+    the agent gets, so the human instructions and the machine object cannot drift: one MCP URL,
+    one REST base, one `/_skill.md` link, four client sections. It holds no key and needs no
+    script. A key travels in its own message; a page URL gets forwarded, pasted into chat and
+    screenshotted, and a snippet with a key in it ends up committed — so the snippets reference
+    `DROPTHIS_KEY_<NAME>` or the CLI's header helper, exactly as the object does. Being static
+    and secret-free is why it can be open, like `/_skill.md`. It names the canonical origin
+    only: a GET on an alias is 301'd there, and that redirect moved out of `oauth/routes.ts`
+    into `canonical.ts` so the two control-plane GETs share one rule. `/_connect` is one exact
+    path, never a prefix — anything under it is still the control plane's 404, which the
+    reserved-collision test pins. The alternative on the issue, dropping `connect_page` from
+    the payload until a page existed, was refused: the object is the onboarding, and removing
+    the one line a person can follow to keep the payload honest is the wrong direction.

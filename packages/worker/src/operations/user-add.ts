@@ -203,7 +203,6 @@ function render(stored: Stored, ctx: UserAddContext): AddedUser {
   const connect = connectFor({
     canonicalUrl: ctx.config.canonicalUrl,
     instanceName: ctx.config.instanceName,
-    label: stored.record.label,
   });
   return {
     user: {

@@ -10,7 +10,6 @@ import { connectFor, keyEnvVar, onboardingMessage } from "../src/registry/connec
 const CONNECT = connectFor({
   canonicalUrl: "https://drops.example.com",
   instanceName: "acme",
-  label: "anna",
 });
 
 describe("keyEnvVar", () => {

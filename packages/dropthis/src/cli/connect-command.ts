@@ -36,7 +36,7 @@ export async function runConnectCommand(client: ClientName, globals: Globals, io
     file: await readInstancesFile(io.env),
   });
   const instanceName = credentials.instance ?? "main";
-  const connect = connectFor({ canonicalUrl: credentials.url, instanceName, label: "you" });
+  const connect = connectFor({ canonicalUrl: credentials.url, instanceName });
   const mode = modeOf(globals);
 
   const applied = client === "claude-code" ? await writeMcpJson(io.cwd, connect) : undefined;
