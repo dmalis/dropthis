@@ -457,6 +457,17 @@ finish its task.
     not dynamic client registration — the OAuth slice (#12) must support CIMD first-class
     (keep DCR enabled for other clients). Throwaway Worker + KV deleted after the run.
 
+73. **Measured Free-plan values replace the provisional ones (issue #3).**
+    `max_request_bytes` = 4 MiB (4,194,304; 10/10 shuffled passes at 254 ms median, with 6
+    and 8 MiB also passing — 4 MiB keeps two measured steps of headroom).
+    `pbkdf2_iterations` = 25,000 (6.1 ms/derive; 50,000 costs 12.5 ms, over the 8 ms
+    budget). Method + transcripts: docs/research/2026-09-03-free-plan-measurements.md.
+    Corrections the measurements forced: the "Free = 10 ms CPU per request" premise is
+    stale (allowance refills; the kill is load-dependent error 1102), R2 same-key
+    contention returns code 10058 and only bites CONCURRENT writers (serial full-speed
+    writes all succeed), and the dev account is proved Workers Free (code 100328 refusing
+    cpu_ms limits). Numbers live in packages/worker/src/policy/defaults.ts, pinned by test.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry
