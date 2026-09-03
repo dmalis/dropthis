@@ -11,8 +11,12 @@ import type { Env } from "../bindings.js";
 import type { FaultPoint } from "../operations/publish.js";
 
 export type DevHooks = {
-  /** "Now" for expiry. Production has one answer and it is the clock. */
-  now(env: Env): Date;
+  /**
+   * "Now" for expiry. Production has one answer and it is the clock; the dev
+   * build may read the request, so a single deployment can answer for any
+   * instant the expiry table names.
+   */
+  now(env: Env, request?: Request): Date;
   /** Where a publish should abort, to prove a retry converges. */
   faultPoint(request: Request, env: Env): FaultPoint | undefined;
 };

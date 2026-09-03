@@ -504,3 +504,37 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     staged commit as well: **anything the first attempt read from the clock belongs to the
     claim.** Proven by `contract-tests/drops.test.ts`, which aborts after each of blobs,
     claim, slug, meta and projections and asserts the retry converges on one drop.
+
+75. **The lifecycle slice's four rulings (issue #5).** (a) **The `list/` key takes its
+    milliseconds from the drop id, not from `created`.** `created` is RFC 3339 at second
+    precision — a frozen response field — so drops published inside one second shared a key
+    prefix and fell back to sorting by their random slug; the contract test that publishes 35
+    drops and pages them caught it. The id is a ULID, carries the millisecond, and is fixed by
+    the idempotency claim, so the key is stable across retries. (b) **`charset=utf-8` is
+    declared at the serving seam, never stored in the manifest.** A browser given `text/html`
+    with no charset falls back to a legacy encoding and renders `·` as `Â·` (observed on a real
+    drop). The manifest's `content_type` is hashed into the drop's state and returned in
+    `Drop.files[]`, so putting the parameter there would change stored data and the response
+    shape; `serve.ts` adds it for exactly the set `get(files: true)` inlines as text.
+    (c) **A reader deletes a projection only on proof.** `list` removes a `list/` pointer when
+    it names a drop id whose `meta.json` is gone; a pointer it cannot interpret is skipped and
+    left alone, because destroying the row of a live drop is the one mistake a tolerant reader
+    must not make. (d) **`update` accepts `title: null`.** `meta.json` already stores
+    `title: string | null`, so without it a title could be set but never unset; it mirrors
+    `password: null` and the `meta` null-delete.
+
+76. **Concurrent `update` is `409`, not `429` (issue #5, measured).** Ten `PATCH` of one drop
+    issued at once give 1 success and 9 `UPDATE_CONFLICT`, five runs out of five (occasionally
+    2 successes — a request issued at the same instant can arrive late enough to read the etag
+    the first winner wrote, and winning on it is correct). `429 R2_RATE_LIMIT` never appears on
+    this path: R2 evaluates the `onlyIf` precondition first and reports a lost race by resolving
+    the `put` to `null`, so its own per-key refusal (10058) is never reached. The 429 mapping
+    stays and is proven at the seam by `contract-tests/storage.test.ts`. The slice spec had
+    expected a 429 here; the owner ruled the measurement is the correct behaviour. Transcript in
+    `docs/research/2026-09-03-free-plan-measurements.md`.
+
+77. **The contract project runs one file at a time (issue #5).** There is one deployed dev
+    Worker and one bucket. With files in parallel, a file that publishes drops and a file that
+    asserts what the bucket contains measure each other — `drops.test.ts`'s "leaves nothing
+    served" check failed against slug pointers `lifecycle.test.ts` had just created. Serial
+    files, one bucket reset per run.

@@ -44,6 +44,9 @@ describe("production bundle", () => {
     expect(bundle).not.toContain("/bench/pbkdf2");
     expect(bundle).not.toContain("DEV_ROUTES");
     expect(bundle).not.toContain("r2/burst");
+    // The clock override is a dev hook too, and lives in the dev entry only.
+    expect(bundle).not.toContain("DEV-Clock");
+    expect(bundle).not.toContain("DEV-Fault");
   }, 120_000);
 
   it("still contains the product's own routes", async () => {

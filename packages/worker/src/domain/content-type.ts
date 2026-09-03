@@ -89,3 +89,21 @@ export function textEntryContentType(path: string): string | null {
   if (declared === undefined) return "text/plain";
   return isTextTyped(declared) ? declared : null;
 }
+
+/**
+ * The `Content-Type` header for a stored file's bytes.
+ *
+ * The manifest holds the bare type from the frozen table, because that value is
+ * hashed into the drop's state and handed back in `Drop.files[]`. The charset
+ * is a serving decision and lives here: dropthis assumes UTF-8 (AGENTS.md,
+ * "Non-goals" — no charset detection), and a browser given `text/html` with no
+ * charset falls back to a legacy encoding and renders `·` as `Â·`.
+ *
+ * Only text-typed files get it — the same set `get(files: true)` will inline as
+ * a string, so "what dropthis treats as UTF-8 text" is one answer, not two. A
+ * type that already carries a `charset` parameter is left exactly as it is.
+ */
+export function servedContentType(contentType: string): string {
+  if (/;\s*charset=/i.test(contentType)) return contentType;
+  return isTextTyped(contentType) ? `${contentType}; charset=utf-8` : contentType;
+}

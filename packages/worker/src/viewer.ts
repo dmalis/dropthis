@@ -44,7 +44,7 @@ export function viewerRoutes(hooks: DevHooks) {
 
     // Expiry is checked before anything is resolved: an expired drop tells the
     // visitor it is gone, and never which paths it had.
-    const state = dropState(loaded.meta.expires_at, hooks.now(c.env));
+    const state = dropState(loaded.meta.expires_at, hooks.now(c.env, c.req.raw));
     if (state !== "live") return gonePage(c.req.url);
 
     const url = new URL(c.req.url);

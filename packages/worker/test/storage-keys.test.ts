@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   blobKey,
+  dropIdTimeMs,
   expiringKey,
   idempotencyHash,
   listKey,
+  listKeyForDrop,
   metaKey,
   newDropId,
   requestClaimKey,
@@ -68,3 +70,43 @@ describe("idempotencyHash", () => {
     expect(await idempotencyHash("key-a", "abc")).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+describe("dropIdTimeMs", () => {
+  it("reads back the millisecond a drop id was minted at", () => {
+    for (const iso of [
+      "2026-09-03T12:00:00.000Z",
+      "2026-09-03T12:00:00.001Z",
+      "2026-09-03T12:00:00.999Z",
+      "1970-01-01T00:00:00.000Z",
+      "2199-12-31T23:59:59.999Z",
+    ]) {
+      const at = new Date(iso);
+      expect(dropIdTimeMs(newDropId(at)), iso).toBe(at.getTime());
+    }
+  });
+
+  it("orders two ids minted a millisecond apart", () => {
+    const first = newDropId(new Date("2026-09-03T12:00:00.000Z"));
+    const second = newDropId(new Date("2026-09-03T12:00:00.001Z"));
+    expect(dropIdTimeMs(first)).toBeLessThan(dropIdTimeMs(second));
+  });
+});
+
+/**
+ * `list` is newest-first, and the ordering has to hold for drops published in
+ * the SAME second — an agent publishing a batch does exactly that. The key
+ * therefore carries milliseconds, which `created` (RFC 3339 at second
+ * precision, a frozen response field) cannot supply; the drop id, a ULID, can.
+ */
+describe("listKeyForDrop", () => {
+  it("sorts a newer drop before an older one, inside one second", () => {
+    const older = newDropId(new Date("2026-09-03T12:00:00.100Z"));
+    const newer = newDropId(new Date("2026-09-03T12:00:00.900Z"));
+    expect(listKeyForDrop(newer, "bbbbbbbbbb") < listKeyForDrop(older, "aaaaaaaaaa")).toBe(true);
+  });
+
+  it("has the frozen shape", () => {
+    const id = newDropId(new Date("2026-09-03T12:00:00.000Z"));
+    expect(listKeyForDrop(id, "abcdefghij")).toMatch(/^list\/\d{13}-abcdefghij$/);
+  });
+})

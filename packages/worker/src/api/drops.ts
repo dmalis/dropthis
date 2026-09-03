@@ -15,7 +15,12 @@ import { loadInstanceConfig } from "../instance-config.js";
 import { attribution, resolveCaller } from "../auth/caller.js";
 import { getDrop, loadDrop } from "../operations/get.js";
 import { publish } from "../operations/publish.js";
+import { deleteDrop } from "../operations/delete.js";
+import { listDrops } from "../operations/list.js";
+import { updateDrop } from "../operations/update.js";
 import { parsePublishInput } from "../registry/publish.js";
+import { parseListInput } from "../registry/list.js";
+import { parseUpdateInput } from "../registry/update.js";
 import { blobKey } from "../storage/keys.js";
 import { errorResponse } from "./errors.js";
 import type { DevHooks } from "../dev/hooks.js";
@@ -34,12 +39,54 @@ export function dropRoutes(hooks: DevHooks) {
       bucket: c.env.BUCKET,
       config,
       caller: attribution(resolveCaller(c.req.raw, c.env)),
-      now: hooks.now(c.env),
+      now: hooks.now(c.env, c.req.raw),
       secret: requireSecret(c.env),
       fault: hooks.faultPoint(c.req.raw, c.env),
     });
 
     return c.json(result.drop, result.created ? 201 : 200);
+  });
+
+  // One page of drops, newest first. It is registered before `/drops/:slug`
+  // for readability only — Hono matches the literal path first either way.
+  routes.get("/drops", async (c) => {
+    const page = await listDrops(parseListInput(new URL(c.req.url).searchParams), {
+      bucket: c.env.BUCKET,
+      config: await loadInstanceConfig(c.env.BUCKET, c.req.url),
+      now: hooks.now(c.env, c.req.raw),
+    });
+    return c.json(page);
+  });
+
+  // `update` takes any subset of the publish fields and changes only those.
+  // The slug is the target here: the URL form is resolved by the CLI and the
+  // MCP layer before the REST call, so this route never sees an origin.
+  routes.patch("/drops/:slug", async (c) => {
+    const slug = c.req.param("slug");
+    if (!isSlug(slug)) throw new ApiError("NOT_FOUND", `No drop at ${slug}.`);
+
+    const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
+    const body = await readJsonBody(c.req.raw, config.policy.max_request_bytes);
+
+    const drop = await updateDrop(slug, parseUpdateInput(body), {
+      bucket: c.env.BUCKET,
+      config,
+      caller: attribution(resolveCaller(c.req.raw, c.env)),
+      now: hooks.now(c.env, c.req.raw),
+      secret: requireSecret(c.env),
+      fault: hooks.faultPoint(c.req.raw, c.env),
+    });
+
+    return c.json(drop);
+  });
+
+  // `delete` is idempotent: 204 whether or not the drop was there. An agent
+  // that never saw the response of the first call must be able to send it again
+  // without having to tell "gone" apart from "was never here".
+  routes.delete("/drops/:slug", async (c) => {
+    const slug = c.req.param("slug");
+    if (isSlug(slug)) await deleteDrop(c.env.BUCKET, slug);
+    return c.body(null, 204);
   });
 
   routes.get("/drops/:slug", async (c) => {
@@ -49,7 +96,7 @@ export function dropRoutes(hooks: DevHooks) {
     const drop = await getDrop(slug, {
       bucket: c.env.BUCKET,
       config: await loadInstanceConfig(c.env.BUCKET, c.req.url),
-      now: hooks.now(c.env),
+      now: hooks.now(c.env, c.req.raw),
       files: c.req.query("files") === "true",
     });
     return c.json(drop);

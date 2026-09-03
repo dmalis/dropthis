@@ -20,11 +20,16 @@ import { encodePathForUrl } from "../domain/url-path.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig } from "../instance-config.js";
 import { blobKey, metaKey, slugKey } from "../storage/keys.js";
+import { repairListEntry } from "./projections.js";
 
 /** The total bytes `get(files: true)` will inline across all files. */
 export const INLINE_CONTENT_BUDGET = 1024 * 1024;
 
-export type LoadedDrop = { dropId: string; meta: DropMeta };
+/**
+ * `etag` is the CAS token `update` compares against: the drop was read at this
+ * version, and the flip only lands if nothing moved since.
+ */
+export type LoadedDrop = { dropId: string; meta: DropMeta; etag: string };
 
 /** The slug → pointer → `meta.json` walk every read path starts with. */
 export async function loadDrop(bucket: Bucket, slug: string): Promise<LoadedDrop | null> {
@@ -35,7 +40,7 @@ export async function loadDrop(bucket: Bucket, slug: string): Promise<LoadedDrop
 
   const record = await bucket.get(metaKey(dropId));
   if (record === null) return null;
-  return { dropId, meta: JSON.parse(await record.text()) as DropMeta };
+  return { dropId, meta: JSON.parse(await record.text()) as DropMeta, etag: record.etag };
 }
 
 export type GetOptions = {
@@ -54,6 +59,11 @@ export async function getDrop(slug: string, options: GetOptions): Promise<Drop> 
   if (dropState(loaded.meta.expires_at, options.now) === "expired_final") {
     throw new ApiError("EXPIRED_FINAL", `The drop at ${slug} is past recovery.`);
   }
+
+  // "A `meta.json` whose `list/` entry is missing or stale is repaired by the
+  // next `get`" (AGENTS.md). It costs one `head`, and it is the only reason a
+  // listing can be answered from pointers alone.
+  await repairListEntry(options.bucket, loaded.meta);
 
   const drop = toDrop(loaded.meta, { canonicalUrl: options.config.canonicalUrl, now: options.now });
   if (!options.files) return drop;

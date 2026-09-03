@@ -117,10 +117,21 @@ to retry something that only needed a second.
 is about concurrency on a key, not about a one-per-second rate for a serial writer. Pinned
 by `contract-tests/storage.test.ts`.
 
+### Concurrent `update` sees the CAS, not the throttle (issue #5, 2026-09-03)
+
+Ten `PATCH /_api/v1/drops/{slug}` of one drop issued at once, five runs against the deployed
+dev Worker: **1 success and 9 `409 UPDATE_CONFLICT` every run** (occasionally 2 successes — a
+request issued at the same instant can arrive late enough to read the etag the first winner
+wrote, and winning on it is correct). `429 R2_RATE_LIMIT` never appeared: R2 evaluates the
+`onlyIf` precondition first and reports a lost race by resolving the `put` to `null`, so the
+10058 refusal above is never reached on this path. The 429 mapping is still live in
+`storage/r2.ts` and is proven at the seam by `contract-tests/storage.test.ts`; the behaviour
+here is pinned by `contract-tests/lifecycle.test.ts`.
+
 ## What is not measured here
 
 - `max_unhashed_bytes` (2 MiB): the Worker-side streaming hash of a `url` entry has no code
-  yet (issue #5). Unchanged, and still provisional.
+  yet (issue #9). Unchanged, and still provisional.
 - `cron_ops_budget` (40): no cron code yet (issue #6).
 - Multi-file bodies: every ladder used one file per body. `--files N` exists in the script;
   the 500-file shape is worth a run when `publish` lands.

@@ -21,6 +21,13 @@ export default defineConfig({
           environment: "node",
           testTimeout: 30_000,
           globalSetup: ["contract-tests/global-setup.ts"],
+          /**
+           * One deployed Worker, one bucket, one run. Files that publish drops
+           * while another file is asserting what the bucket contains are
+           * measuring each other, not the contract — so the contract project
+           * runs one file at a time.
+           */
+          fileParallelism: false,
         },
       },
     ],

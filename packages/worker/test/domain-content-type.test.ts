@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   contentTypeForPath,
   isTextTyped,
+  servedContentType,
   textEntryContentType,
 } from "../src/domain/content-type.js";
 
@@ -100,5 +101,44 @@ describe("textEntryContentType", () => {
 
   it("returns null for an extension that is not text-typed", () => {
     expect(textEntryContentType("shot.png")).toBe(null);
+  });
+});
+
+describe("servedContentType", () => {
+  it.each([
+    "text/html",
+    "text/css",
+    "text/javascript",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "text/tab-separated-values",
+    "application/json",
+    "application/xml",
+    "image/svg+xml",
+  ])("declares UTF-8 for %s, the charset the product assumes", (type) => {
+    expect(servedContentType(type)).toBe(`${type}; charset=utf-8`);
+  });
+
+  it.each([
+    "application/octet-stream",
+    "image/png",
+    "application/pdf",
+    "font/woff2",
+    "video/mp4",
+    "application/zip",
+  ])("leaves %s alone: a charset on binary bytes means nothing", (type) => {
+    expect(servedContentType(type)).toBe(type);
+  });
+
+  it("never doubles a charset that is already there", () => {
+    expect(servedContentType("text/html; charset=utf-8")).toBe("text/html; charset=utf-8");
+    expect(servedContentType("text/html;charset=iso-8859-1")).toBe("text/html;charset=iso-8859-1");
+  });
+
+  it("covers exactly the types get(files:true) inlines as text", () => {
+    for (const type of ["text/plain", "application/json", "image/svg+xml", "image/png"]) {
+      expect(servedContentType(type).endsWith("; charset=utf-8")).toBe(isTextTyped(type));
+    }
   });
 });

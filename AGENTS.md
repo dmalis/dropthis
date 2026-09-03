@@ -92,10 +92,18 @@ slugs/<slug>                         pointer → id, claimed with If-None-Match:
                                      exists; every lookup is a direct GET of this key. A staged
                                      publish marks it {pending_upload, expires}; the reconcile
                                      removes a meta-less pointer only when no live session owns it
-list/<inv-created-ms>-<slug>         listing pointer; customMetadata (strings only) {id, updated,
-                                     expires_at, title, created_by_id, created_by_label}; state is
-                                     derived at list time. R2 lists keys in order, so ONE list()
-                                     over this prefix is newest-first with a cursor
+list/<inv-created-ms>-<slug>         listing pointer; the ms come from the drop id (a ULID), not
+                                     from `created` — `created` is RFC 3339 at SECOND precision, so
+                                     a batch published inside one second would sort by its random
+                                     slug. customMetadata (strings only) {id, created, updated,
+                                     expires_at, title, noindex, has_password, created_by_id,
+                                     created_by_label} — every field of the listing row, so a page
+                                     costs ONE list() and no meta.json reads; state is derived at
+                                     list time. R2 lists keys in order, so ONE list() over this
+                                     prefix is newest-first with a cursor. A pointer is deleted by
+                                     a reader only on PROOF its record is gone (it names an id and
+                                     the id has no meta.json); one this reader cannot interpret is
+                                     skipped, never destroyed
 keys/<id>.json                       {id, label, scope, hash, created}; the admin key is one of these
 keyhash/<sha256(key)>                pointer → key id (the auth lookup)
 users/<normalized-label>             pointer → key id, claimed with If-None-Match: * → labels unique
