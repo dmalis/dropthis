@@ -5,14 +5,18 @@
  *
  * Some operations never become tools: `health` (public, a liveness probe), the
  * raw file download (`restOnly`: a byte stream is not a tool result) and the
- * three staged-upload routes (`restOnly`: a three-call handshake the CLI alone
- * drives, and one of them signed rather than key-scoped).
+ * staged blob PUT (`restOnly` and `signed`: its credential is the HMAC in its
+ * own URL, so an agent curls it rather than calling it). The other two staged
+ * routes ARE tools — `dropthis_upload` and `dropthis_commit`, named by the
+ * entry's own `toolName` (decision #93).
  *
- * One translation, stated here because it is the only one: where REST takes
- * the drop's slug in the path, the tool takes `target` — the drop's URL or its
- * slug — because an agent remembers a URL, and the URL is the identity. The
- * MCP layer resolves it (`domain/target.ts`) before the operation runs, which
- * is where `WRONG_INSTANCE` comes from.
+ * One translation, stated here because it is the only one: the drop is named
+ * by `target` — its URL or its slug — because an agent remembers a URL, and
+ * the URL is the identity. Where REST takes the slug in the path the tool
+ * renames it (`takesTarget`); where the operation already has a body field
+ * called `target` the value is resolved in place (`targetInBody`). Either way
+ * the MCP layer resolves it (`domain/target.ts`) before the operation runs,
+ * which is where `WRONG_INSTANCE` comes from.
  */
 import { z } from "zod";
 import type { Scope } from "../auth/key.js";
@@ -48,13 +52,15 @@ export type Tool = {
   scope: Scope;
   /** The tool takes `target` where the REST path takes a slug. */
   takesTarget: boolean;
+  /** The operation's own `target` body field, resolved in place by MCP. */
+  targetInBody: boolean;
 };
 
 /** One canonical sentence for the one parameter every drop tool shares. */
 export const TARGET_DESCRIPTION = "The drop's URL on this instance, or its slug.";
 
-export function toolNameOf(operationName: string): string {
-  return `dropthis_${operationName.replace(/\./g, "_")}`;
+export function toolNameOf(op: Operation<never>): string {
+  return op.toolName ?? `dropthis_${op.name.replace(/\./g, "_")}`;
 }
 
 /** The whole surface, in registry order, before any scope filter. */
@@ -88,7 +94,7 @@ export function toolOf(op: Operation<never>): Tool {
 
   const takesTarget = op.params?.includes("slug") === true;
   return {
-    name: toolNameOf(op.name),
+    name: toolNameOf(op),
     operation: op.name,
     title: text.title,
     description: describe(op, text),
@@ -96,6 +102,7 @@ export function toolOf(op: Operation<never>): Tool {
     annotations: text.annotations,
     scope,
     takesTarget,
+    targetInBody: !takesTarget && hasField(op.schema, "target"),
   };
 }
 

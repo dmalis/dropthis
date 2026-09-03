@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -46,7 +47,15 @@ const errorIn = (result: CallToolResult) =>
   (result.structuredContent as { error: { code: string; message: string; remediation: string; retryable: boolean } })
     .error;
 
-const USER_TOOLS = ["dropthis_publish", "dropthis_update", "dropthis_get", "dropthis_list", "dropthis_delete"];
+const USER_TOOLS = [
+  "dropthis_publish",
+  "dropthis_update",
+  "dropthis_get",
+  "dropthis_list",
+  "dropthis_delete",
+  "dropthis_upload",
+  "dropthis_commit",
+];
 
 const HELLO = {
   files: [
@@ -88,7 +97,7 @@ describe("the bearer gate", () => {
 });
 
 describe("initialize and tools/list", () => {
-  it("a user key sees exactly the five drop tools, each with its trigger clause", async () => {
+  it("a user key sees the drop tools and the staged pair, each with its trigger clause", async () => {
     const anna = await addUser(`ct-mcp-${Math.random().toString(36).slice(2, 8)}`);
     const client = await connect(anna.key);
     expect(client.getServerVersion()?.name).toBe("dropthis");
@@ -112,7 +121,7 @@ describe("initialize and tools/list", () => {
   it("the admin key sees the whole surface", async () => {
     const client = await connect(adminKey());
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(16);
     expect(tools.map((tool) => tool.name)).toEqual([
       ...USER_TOOLS,
       "dropthis_user_add",
@@ -233,7 +242,195 @@ describe("tools/call", () => {
     expect(report.ok, JSON.stringify(report.checks)).toBe(true);
     const mcp = report.checks.find((check) => check.id === "mcp_initialize")!;
     expect(mcp.status).toBe("pass");
-    expect(mcp.evidence).toContain("tools/list offers 14 tools");
+    expect(mcp.evidence).toContain("tools/list offers 16 tools");
+  });
+});
+
+/**
+ * Issue #19 (decision #93): the staged upload driven entirely through MCP,
+ * the way a browser agent whose sandbox can run curl drives it. Only this
+ * seam can prove it: the PUT leaves the MCP transport altogether and is
+ * authorised by nothing but the HMAC in the URL the session handed back, and
+ * R2 — not the Worker — verifies the digest.
+ */
+describe("the staged upload, over MCP only", () => {
+  const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const entry = (path: string, bytes: Buffer) => ({ path, size: bytes.length, sha256: sha(bytes) });
+
+  type Session = {
+    upload_id: string;
+    drop_id: string;
+    slug: string;
+    missing: string[];
+    put_urls: Record<string, string>;
+    expires: string;
+  };
+
+  /** Exactly what the tool text tells the agent to do, minus the shell. */
+  const curl = (url: string, bytes: Buffer) =>
+    fetch(url, { method: "PUT", body: new Uint8Array(bytes), cache: "no-store" });
+
+  it("upload → PUT with no Authorization → commit → the drop serves the bytes", async () => {
+    const anna = await addUser(`ct-up-${Math.random().toString(36).slice(2, 8)}`);
+    const client = await connect(anna.key);
+
+    // 1 MiB: past nothing here, but far past what any agent could type.
+    const photo = randomBytes(1024 * 1024);
+    const page = Buffer.from("<h1>staged over mcp</h1>");
+    const opened = await call(client, "dropthis_upload", {
+      manifest: [entry("index.html", page), entry("photo.jpg", photo)],
+    });
+    expect(opened.isError, textOf(opened)).toBeFalsy();
+    const session = opened.structuredContent as unknown as Session;
+    expect(session.missing.sort()).toEqual([sha(page), sha(photo)].sort());
+    expect(textOf(opened)).toContain("dropthis_commit");
+
+    // Every URL is absolute on the canonical origin and carries no key.
+    for (const url of Object.values(session.put_urls)) {
+      expect(url.startsWith(`${BASE_URL}/_api/v1/uploads/${session.upload_id}/blobs/`)).toBe(true);
+      expect(url).not.toContain(anna.key);
+    }
+
+    // Committing now names the blob that is not there yet.
+    const early = await call(client, "dropthis_commit", { id: session.upload_id, title: "too soon" });
+    expect(early.isError).toBe(true);
+    expect(errorIn(early).code).toBe("INVALID_INPUT");
+    expect(errorIn(early).message).toContain(sha(photo));
+
+    for (const [digest, bytes] of [[sha(page), page], [sha(photo), photo]] as const) {
+      const put = await curl(session.put_urls[digest]!, bytes);
+      expect(put.status, await put.clone().text()).toBe(200);
+    }
+
+    const committed = await call(client, "dropthis_commit", {
+      id: session.upload_id,
+      title: "Staged over MCP",
+      meta: { source: "contract-tests/mcp" },
+    });
+    expect(committed.isError, textOf(committed)).toBeFalsy();
+    const drop = committed.structuredContent as unknown as {
+      url: string;
+      slug: string;
+      title: string;
+      files: Array<{ path: string; size: number; content_type: string }>;
+    };
+    expect(drop.slug).toBe(session.slug);
+    expect(drop.url).toBe(`${BASE_URL}/${session.slug}/`);
+    expect(drop.title).toBe("Staged over MCP");
+    expect(textOf(committed).split("\n")[0]).toBe(`Published: ${drop.url}`);
+    expect(drop.files).toEqual([
+      { path: "index.html", size: page.length, sha256: sha(page), content_type: "text/html" },
+      { path: "photo.jpg", size: photo.length, sha256: sha(photo), content_type: "image/jpeg" },
+    ]);
+
+    const served = await fetch(`${drop.url}photo.jpg`, { cache: "no-store" });
+    expect(served.status).toBe(200);
+    expect(served.headers.get("content-type")).toBe("image/jpeg");
+    expect(Buffer.from(await served.arrayBuffer()).equals(photo)).toBe(true);
+    expect(await (await fetch(drop.url, { cache: "no-store" })).text()).toBe(page.toString());
+
+    // A repeat commit replays the same Drop, byte for byte.
+    const replay = await call(client, "dropthis_commit", {
+      id: session.upload_id,
+      title: "Staged over MCP",
+      meta: { source: "contract-tests/mcp" },
+    });
+    expect(replay.isError, textOf(replay)).toBeFalsy();
+    expect(replay.structuredContent).toEqual(committed.structuredContent);
+
+    // And REST sees exactly the drop MCP made.
+    const viaRest = (await (await api(`/_api/v1/drops/${drop.slug}`)).json()) as Json;
+    expect(viaRest).toMatchObject({ url: drop.url, title: "Staged over MCP" });
+
+    await call(client, "dropthis_delete", { target: drop.slug });
+  });
+
+  it("refuses a tampered signature, and the blob never lands", async () => {
+    const client = await connect(adminKey());
+    const bytes = Buffer.from("tampered");
+    const opened = await call(client, "dropthis_upload", { manifest: [entry("a.txt", bytes)] });
+    const session = opened.structuredContent as unknown as Session;
+    const url = new URL(session.put_urls[sha(bytes)]!);
+    url.searchParams.set("sig", "0".repeat(url.searchParams.get("sig")!.length));
+
+    const put = await curl(url.toString(), bytes);
+    expect([401, 403]).toContain(put.status);
+
+    const commit = await call(client, "dropthis_commit", { id: session.upload_id, title: "nope" });
+    expect(commit.isError).toBe(true);
+    expect(errorIn(commit).code).toBe("INVALID_INPUT");
+    expect(errorIn(commit).message).toContain(sha(bytes));
+  });
+
+  it("updates an existing drop by its URL, replacing the whole file set", async () => {
+    const client = await connect(adminKey());
+    const published = await call(client, "dropthis_publish", HELLO);
+    const drop = published.structuredContent as { url: string; slug: string };
+
+    const bytes = Buffer.from("<h1>v2 by upload</h1>");
+    const opened = await call(client, "dropthis_upload", {
+      target: drop.url,
+      manifest: [entry("index.html", bytes)],
+    });
+    expect(opened.isError, textOf(opened)).toBeFalsy();
+    const session = opened.structuredContent as unknown as Session;
+    expect(session.slug).toBe(drop.slug);
+
+    const put = await curl(session.put_urls[sha(bytes)]!, bytes);
+    expect(put.status, await put.clone().text()).toBe(200);
+
+    const committed = await call(client, "dropthis_commit", { id: session.upload_id });
+    expect(committed.isError, textOf(committed)).toBeFalsy();
+    expect(committed.structuredContent).toMatchObject({
+      url: drop.url,
+      files: [{ path: "index.html" }],
+    });
+    expect(await (await fetch(drop.url, { cache: "no-store" })).text()).toBe(bytes.toString());
+    // notes.md was in the published set and is gone: a generation flip, not a merge.
+    expect((await fetch(`${drop.url}notes.md`, { cache: "no-store" })).status).toBe(404);
+
+    await call(client, "dropthis_delete", { target: drop.slug });
+  });
+
+  it("answers a URL from another instance with WRONG_INSTANCE", async () => {
+    const client = await connect(adminKey());
+    const result = await call(client, "dropthis_upload", {
+      target: "https://someone-else.example/abcdefghij/",
+      manifest: [entry("a.txt", Buffer.from("x"))],
+    });
+    expect(result.isError).toBe(true);
+    expect(errorIn(result)).toMatchObject({ code: "WRONG_INSTANCE", retryable: false });
+  });
+
+  it("returns a generated password once, on the commit that set it", async () => {
+    const client = await connect(adminKey());
+    const bytes = Buffer.from("<h1>locked</h1>");
+    const opened = await call(client, "dropthis_upload", { manifest: [entry("index.html", bytes)] });
+    const session = opened.structuredContent as unknown as Session;
+    expect((await curl(session.put_urls[sha(bytes)]!, bytes)).status).toBe(200);
+
+    const committed = await call(client, "dropthis_commit", {
+      id: session.upload_id,
+      title: "Locked, staged",
+      password: "generate",
+    });
+    expect(committed.isError, textOf(committed)).toBeFalsy();
+    const drop = committed.structuredContent as unknown as {
+      url: string;
+      slug: string;
+      password: string;
+      has_password: boolean;
+    };
+    expect(drop.has_password).toBe(true);
+    expect(drop.password).toMatch(/^[\S]{16}$/);
+
+    // Never again: not from get, not from the viewer.
+    const got = await call(client, "dropthis_get", { target: drop.slug });
+    expect(got.structuredContent).toMatchObject({ has_password: true });
+    expect(got.structuredContent).not.toHaveProperty("password");
+    expect((await fetch(drop.url, { cache: "no-store", redirect: "manual" })).status).toBe(401);
+
+    await call(client, "dropthis_delete", { target: drop.slug });
   });
 });
 
@@ -249,6 +446,10 @@ describe("GET /_skill.md", () => {
     expect(text).toContain(`${BASE_URL}/_api/mcp`);
     expect(text).toContain("### `dropthis_publish`");
     expect(text).toContain("never publish again");
+    // The three ways to move bytes, this instance's own (issue #19).
+    expect(text).toContain("curl -sS -T");
+    expect(text).toContain("### `dropthis_upload`");
+    expect(text).toContain("### `dropthis_commit`");
     expect(text).not.toMatch(/\{\{|\}\}/);
   });
 });

@@ -1,29 +1,70 @@
 /**
- * The registry entries for the staged-upload path. All three are REST-only:
- * the CLI is the only client in v1, and neither an MCP tool nor `/_skill.md`
- * mentions them (AGENTS.md, "One call uploads a drop").
+ * The registry entries for the staged-upload path (AGENTS.md, "One call
+ * uploads a drop"; decision #93).
+ *
+ * The session and the commit are tools as well as routes — `dropthis_upload`
+ * and `dropthis_commit` — because a browser agent whose sandbox can run curl
+ * moves bytes that way instead of typing them as base64. Only the blob PUT
+ * stays REST-only: its credential is the HMAC in its own URL, not a key, so
+ * it is not something an agent calls with its key.
  */
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import { parseFaultPoint } from "../operations/publish.js";
 import { commitSession, createSession, putStagedBlob } from "../operations/uploads.js";
 import type { CommitInput, PutInput, SessionInput, UploadContext } from "../operations/uploads.js";
-import { describeIssues } from "./fields.js";
+import {
+  EXPIRES_DESCRIPTION,
+  IDEMPOTENCY_DESCRIPTION,
+  META_DESCRIPTION,
+  NOINDEX_DESCRIPTION,
+  PASSWORD_DESCRIPTION,
+  PATH_DESCRIPTION,
+  TITLE_DESCRIPTION,
+  describeIssues,
+} from "./fields.js";
 import type { Operation, OperationContext } from "./types.js";
 
 const manifestEntry = z.strictObject({
-  path: z.string(),
+  path: z.string().describe(PATH_DESCRIPTION),
   /** Absent = keep what the target drop already holds under this digest (#95). */
-  size: z.number().optional(),
-  sha256: z.string(),
+  size: z
+    .number()
+    .optional()
+    .describe(
+      "The file's length in bytes; the PUT must send exactly this many. Leave it out to keep " +
+        "a file the target drop already holds under this sha256.",
+    ),
+  sha256: z
+    .string()
+    .describe(
+      "The file's SHA-256 as lowercase hex. R2 verifies it: other bytes are HASH_MISMATCH and " +
+        "nothing is stored.",
+    ),
   /** A public http(s) URL the instance fetches at commit, instead of a PUT. */
-  url: z.string().optional(),
+  url: z
+    .string()
+    .optional()
+    .describe(
+      "A public http(s) URL this instance fetches at commit instead of you uploading this file.",
+    ),
 });
 
 export const uploadCreateSchema = z.strictObject({
-  target: z.string().optional(),
-  manifest: z.array(manifestEntry),
-  idempotency_key: z.string().min(1).optional(),
+  target: z
+    .string()
+    .optional()
+    .describe(
+      "Update an EXISTING drop instead of making a new one: its URL on this instance, or its " +
+        "slug. Omit it for a new drop.",
+    ),
+  manifest: z
+    .array(manifestEntry)
+    .describe(
+      "Every file the drop will have, each {path, size, sha256}. On an update this REPLACES the " +
+        "whole file set.",
+    ),
+  idempotency_key: z.string().min(1).optional().describe(IDEMPOTENCY_DESCRIPTION),
 });
 
 const putSchema = z.strictObject({
@@ -39,12 +80,12 @@ const putSchema = z.strictObject({
  * instance's password policy cannot reach.
  */
 export const uploadCommitSchema = z.strictObject({
-  id: z.string(),
-  title: z.string().nullable().optional(),
-  meta: z.record(z.string(), z.unknown()).optional(),
-  password: z.union([z.string(), z.null()]).optional(),
-  expires: z.string().optional(),
-  noindex: z.boolean().optional(),
+  id: z.string().describe("The upload_id dropthis_upload returned."),
+  title: z.string().nullable().optional().describe(TITLE_DESCRIPTION),
+  meta: z.record(z.string(), z.unknown()).optional().describe(META_DESCRIPTION),
+  password: z.union([z.string(), z.null()]).optional().describe(PASSWORD_DESCRIPTION),
+  expires: z.string().optional().describe(EXPIRES_DESCRIPTION),
+  noindex: z.boolean().optional().describe(NOINDEX_DESCRIPTION),
 });
 
 function uploadContext(ctx: OperationContext): UploadContext {
@@ -76,7 +117,7 @@ export const uploadCreate: Operation<SessionInput> = {
   schema: uploadCreateSchema as unknown as z.ZodType<SessionInput>,
   parse: parseWith(uploadCreateSchema, "target, manifest and idempotency_key"),
   status: 201,
-  restOnly: true,
+  toolName: "dropthis_upload",
   handler: async (input, ctx) => {
     const result = await createSession(input, uploadContext(ctx));
     return { value: result.session, status: result.created ? 201 : 200 };
@@ -110,7 +151,7 @@ export const uploadCommit: Operation<CommitRequest> = {
   schema: uploadCommitSchema as unknown as z.ZodType<CommitRequest>,
   parse: parseWith(uploadCommitSchema, "title, meta, password, expires and noindex"),
   params: ["id"],
-  restOnly: true,
+  toolName: "dropthis_commit",
   handler: async (input, ctx) => {
     const { id, ...settings } = input;
     const result = await commitSession(id, settings, uploadContext(ctx));

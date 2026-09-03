@@ -1,6 +1,7 @@
 /**
- * The staged-upload path — the CLI's way past `max_request_bytes` (AGENTS.md,
- * "One call uploads a drop"; docs/spec-v1.md, "Staged upload path").
+ * The staged-upload path — the way past `max_request_bytes` for the CLI and
+ * for any MCP agent whose environment can run `curl` (AGENTS.md, "One call
+ * uploads a drop"; docs/spec-v1.md, "Staged upload path"; decision #93).
  *
  *   session   allocate the drop (id, slug claimed now) or fix the update target
  *             (its `meta.json` etag), record the manifest, answer which blobs

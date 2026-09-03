@@ -201,7 +201,8 @@ finish its task.
     fetch from URL"; Vercel inline files). The single-call ceiling is set by isolate memory
     and measured in slice 2 (expected ~50 MB); above it the CLI/SDK use the staged
     manifest → per-file streamed PUT → commit path silently. Supersedes #14. Dedupe of
-    unchanged files lives on the staged path only.
+    unchanged files lives on the staged path only. *(The "CLI/SDK" half is superseded by
+    #93: an MCP agent that can run `curl` drives the same path itself.)*
 48. **Drop fields.** Generated immutable slug, 10 chars `a-z0-9`, never starting with `_`
     (bit.ly/Vercel-style short ids; unguessable enough that noindex-without-password behaves
     like a share link). `title` optional, always set by agents. `meta`: agent-owned JSON ≤ 16
@@ -297,7 +298,8 @@ finish its task.
     record claimed before side effects and its response encrypted at rest (a generated
     password may be inside), "returned once" defined; the claude.ai spike is phase zero;
     the staged upload path fully specified (`/_api/v1/uploads`, signed PUTs, `commit`,
-    CLI-only in v1) and single-call uploads no longer stage; frozen Free-safe initial policy
+    CLI-only in v1 — *the CLI-only clause is superseded by #93*) and single-call uploads no
+    longer stage; frozen Free-safe initial policy
     (`max_request_bytes` 25 MB, `pbkdf2_iterations` 5,000, `cron_ops_budget` 40) with a
     `doctor` benchmark instead of measuring during `init`; upload limits derived from the
     subrequest budget (≤ 500 files, ≤ 20 URL files, ≤ 45 fetches); hourly resumable cron with
@@ -697,7 +699,8 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     from `HMAC_SECRET`, own `info`) is its only credential, so the router skips bearer auth
     and body parsing for that one operation; the handler verifies the signature and the
     `Content-Length` against the manifest before any byte reaches R2. All three upload
-    operations are `restOnly` — no MCP tool, no `/_skill.md` mention.
+    operations are `restOnly` — no MCP tool, no `/_skill.md` mention. *(Superseded in part by
+    #93: only the blob PUT stays `restOnly`; the session and the commit are MCP tools.)*
     (e) **Inline base64 entries may carry `sha256`.** "Digests always" had no field to land
     in; now the instance refuses a mismatch as `HASH_MISMATCH` instead of storing bytes the
     client did not mean to send.
@@ -892,7 +895,43 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     Such a digest is never in `missing` and gets no signed PUT URL — it is not the client's to
     upload — and the target is validated when the session opens, so a URL this instance will
     never fetch fails before anything else is uploaded. The three staged routes stay
-    `restOnly` (#85).
+    `restOnly` (#85). *(Superseded in part by #93: the blob PUT alone stays `restOnly`.)*
+
+93. **Staged uploads over MCP, so a browser agent can move bytes it cannot type (issue #19).**
+    A tool call's arguments are generated tokens: inline base64 costs the agent roughly one
+    output token per byte, so a 200 KB photo is ~270,000 tokens. Observed 2026-09-03: a
+    claude.ai agent stalled six minutes typing a photo into a `publish` call and then
+    published a placeholder. Its file sandbox can have network egress (Free/Pro/Max: an
+    "Allow network egress" toggle; Team/Enterprise: an admin whitelist —
+    support.claude.com article 12111783, read 2026-09-03), so it can `curl -T` a file to a
+    URL. The staged path already exists for the CLI; the only thing missing was who may see
+    it.
+    (a) **`upload.create` and `upload.commit` lose `restOnly`** and become the user-scope
+    tools `dropthis_upload` and `dropthis_commit`. This supersedes the `restOnly` half of
+    #85(d) (and of #92(e), #47 and #60's CLI-only clauses); nothing about the routes'
+    semantics, limits or write order changes. **The blob PUT stays `restOnly` and `signed`**:
+    its credential is the HMAC in its own URL, handed to the agent in the session response,
+    so it is a capability the agent curls — never a third presentation of the key, and never
+    something the key can call.
+    (b) **The names are `dropthis_upload` and `dropthis_commit`, set by a `toolName` field on
+    the registry entry.** The generated names would be `dropthis_upload_create` and
+    `dropthis_upload_commit`: longer, and `_create`/`_commit` reads as a namespace an agent
+    must learn. One optional field on the entry beats a special case in the generator, and it
+    is the same shape as `restOnly` beside it.
+    (c) **MCP resolves `upload.create`'s own `target` field through `resolveTarget`.** REST
+    takes a slug there (the CLI knows no aliases, #85), but an agent remembers a URL. The
+    field keeps its name and its position in the body; only the value is translated, so a
+    canonical URL, an alias URL and a bare slug all work and another instance's URL is
+    `WRONG_INSTANCE` before storage is touched. This is the `takesTarget` translation applied
+    to a body field instead of a path parameter (`targetInBody` in `mcp/tools.ts`).
+    (d) **The tool text tells the agent the whole three-step dance, curl line included**, and
+    says when NOT to use it: text inline, `{path, url}` for anything already public, this path
+    only when the environment can run `curl` and reach the internet, and otherwise shrink the
+    file. `/_skill.md` carries the same three ways in one bullet. An agent that reads only the
+    tool list must still be able to finish the job.
+    (e) **`openWorldHint` stays false on both**, as on `publish`, which also fetches `url`
+    entries: the hint is about the tool reaching an open world of its own accord, and these
+    reach only this instance and the targets the caller named.
 
 94. **The chosen (vanity) slug: a kept-open door, opened (issue #18, 2026-09-03).** AGENTS.md
     listed vanity slugs under "Kept open, deliberately empty" — "one optional field away …

@@ -30,6 +30,11 @@ const LINES: Record<string, Line> = {
     return `${count(page.drops.length, "drop")}${page.has_more ? ", more on the next page" : ""}`;
   },
   delete: (input) => `Deleted: ${String(input.target)}`,
+  "upload.create": (_input, value) => {
+    const session = value as { upload_id: string; missing: string[] };
+    return `Upload ${session.upload_id}: PUT ${count(session.missing.length, "file")}, then dropthis_commit.`;
+  },
+  "upload.commit": (_input, value) => `Published: ${asDrop(value).url}`,
   "user.add": (_input, value) =>
     `Added ${(value as { user: { label: string } }).user.label}; the key is in this response once.`,
   "user.list": (_input, value) => count((value as { users: unknown[] }).users.length, "key"),

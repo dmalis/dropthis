@@ -73,11 +73,17 @@ export type Operation<I = never> = {
    */
   handler?: (input: I, context: OperationContext) => Promise<OperationResult | Response>;
   /**
-   * REST-only: a raw file body, or the staged-upload path the CLI alone uses —
-   * nothing an MCP tool returns or an agent is told about. `mcp/tools.ts`
-   * skips these when it generates the tool list.
+   * REST-only: a raw file body, or the staged blob PUT whose credential is the
+   * HMAC in its own URL — nothing an MCP tool returns or an agent is told
+   * about. `mcp/tools.ts` skips these when it generates the tool list.
    */
   restOnly?: boolean;
+  /**
+   * The MCP tool name, when the generated one would be wrong for an agent:
+   * `upload.create` is `dropthis_upload`, not `dropthis_upload_create`
+   * (decision #93). Every other operation takes the generated name.
+   */
+  toolName?: string;
   /**
    * The body is bytes the handler streams (a staged blob PUT), not JSON the
    * router parses. The router leaves `request.body` untouched.
