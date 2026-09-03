@@ -84,10 +84,31 @@ async function run(argv: string[], options: RunOptions) {
   return { code, stdout: stdout.text(), stderr: stderr.text() };
 }
 
+/**
+ * The account API, plus a real instance on localhost that the deploy fills.
+ *
+ * The URL has to exist BEFORE `init` runs (it is what `init` polls), and the
+ * bucket only exists once `init` has written it — so the instance starts
+ * empty and the fake's `onDeploy` hook copies the installer's bucket into it
+ * at the moment a deploy happens, which is exactly when a real Worker starts
+ * seeing that bucket.
+ */
 async function fake(options: Parameters<typeof startFakeCloudflare>[0] = {}) {
-  const started = await startFakeCloudflare(options);
+  const instance = await startFakeInstance({});
+  teardown.push(() => instance.close());
+  const started = await startFakeCloudflare({
+    ...options,
+    onDeploy: (script) => {
+      const bucketName = String(
+        script.bindings.find((binding) => binding.name === "BUCKET")?.bucket_name ?? "",
+      );
+      for (const [key, object] of started.state.objects.get(bucketName) ?? new Map()) {
+        instance.bucket.seed(key, new TextDecoder().decode(object.body));
+      }
+    },
+  });
   teardown.push(() => started.close());
-  return started;
+  return { ...started, instanceUrl: instance.url, instance };
 }
 
 const oneDocument = (text: string): Record<string, unknown> => {
@@ -106,6 +127,7 @@ describe("init --json", () => {
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
       CLOUDFLARE_BASE_URL: cf.apiBase,
       DROPTHIS_WRANGLER: await stubWranglerBinary(cf.origin),
+      DROPTHIS_INIT_PROBE_URL: cf.instanceUrl,
       DROPTHIS_INIT_POLL_MS: "10",
     };
 
@@ -137,6 +159,7 @@ describe("init --json", () => {
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
       CLOUDFLARE_BASE_URL: cf.apiBase,
       DROPTHIS_WRANGLER: await stubWranglerBinary(cf.origin),
+      DROPTHIS_INIT_PROBE_URL: cf.instanceUrl,
       DROPTHIS_INIT_POLL_MS: "10",
     };
     const first = oneDocument((await run(["init", "--json"], { env })).stdout);
@@ -160,6 +183,7 @@ describe("init --json", () => {
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
       CLOUDFLARE_BASE_URL: cf.apiBase,
       DROPTHIS_WRANGLER: await stubWranglerBinary(cf.origin),
+      DROPTHIS_INIT_PROBE_URL: cf.instanceUrl,
       DROPTHIS_INIT_POLL_MS: "10",
     };
 
@@ -182,11 +206,12 @@ describe("init --json", () => {
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
       CLOUDFLARE_BASE_URL: cf.apiBase,
       DROPTHIS_WRANGLER: await stubWranglerBinary(cf.origin),
+      DROPTHIS_INIT_PROBE_URL: cf.instanceUrl,
       DROPTHIS_INIT_POLL_MS: "10",
     };
 
     const json = await run(["init", "--json"], { env });
-    const plain = await run(["init", "--name", "second", { ...env } && "--yes"].filter(Boolean) as string[], { env });
+    const plain = await run(["init", "--name", "second"], { env });
 
     for (const stream of [json.stdout, json.stderr, plain.stdout, plain.stderr]) {
       expect(stream).not.toMatch(/HMAC_SECRET["'\s]*[:=]/);
@@ -202,6 +227,7 @@ describe("init --json", () => {
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
       CLOUDFLARE_BASE_URL: cf.apiBase,
       DROPTHIS_WRANGLER: await stubWranglerBinary(cf.origin),
+      DROPTHIS_INIT_PROBE_URL: cf.instanceUrl,
     };
 
     const result = await run(["init", "--dry-run", "--json"], { env });
