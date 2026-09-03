@@ -243,7 +243,7 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
   });
 
   // R2 lifecycle rules: the fake just stores and echoes what was set.
-  app.post("/client/v4/accounts/:accountId/r2/buckets/:bucketName/lifecycle", async (c) => {
+  app.put("/client/v4/accounts/:accountId/r2/buckets/:bucketName/lifecycle", async (c) => {
     if (c.req.param("accountId") !== state.accountId) {
       return c.json(fail(7003, "Could not route to account"), 404);
     }
