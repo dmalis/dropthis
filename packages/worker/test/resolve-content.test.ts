@@ -152,6 +152,7 @@ describe("resolveFiles with url entries", () => {
         fetchImpl: serve(png) as unknown as typeof fetch,
         async streamBlob(digest, body) {
           written.push(digest);
+          if (body instanceof Uint8Array) return body.length;
           let size = 0;
           const reader = body.getReader();
           for (;;) {

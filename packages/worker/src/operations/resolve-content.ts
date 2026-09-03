@@ -60,7 +60,7 @@ export type ResolveOptions = {
   held?: ReadonlyMap<string, number>;
   streamBlob?: (
     sha256: string,
-    body: ReadableStream<Uint8Array>,
+    body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>,
   ) => Promise<number | undefined>;
   fetchImpl?: typeof fetch;
   budget?: FetchBudget;
@@ -85,9 +85,6 @@ function decodeBase64(text: string, path: string): Uint8Array<ArrayBuffer> {
     throw new ApiError("INVALID_INPUT", `The base64 of ${JSON.stringify(path)} is not valid base64.`);
   }
 }
-
-/** Marks a body that outgrew its cap mid-stream, so the put fails and says why. */
-class Oversize extends Error {}
 
 export async function resolveFiles(
   entries: readonly PublishFile[],
@@ -178,8 +175,8 @@ async function resolveUrlEntry(
     ...(ctx.fetchImpl === undefined ? {} : { fetchImpl: ctx.fetchImpl }),
   });
 
-  const declared = Number(response.headers.get("content-length") ?? "");
-  if (Number.isInteger(declared) && declared > policy.max_file_bytes) {
+  const declared = contentLength(response);
+  if (declared !== undefined && declared > policy.max_file_bytes) {
     throw new ApiError(
       "PAYLOAD_TOO_LARGE",
       `${entry.url} is ${declared} bytes; this instance accepts files up to ${policy.max_file_bytes}.`,
@@ -195,7 +192,6 @@ async function resolveUrlEntry(
     const size = await streamToBlob(response, entry.url, entry.sha256, {
       policy,
       streamBlob: ctx.streamBlob,
-      ...(entry.size === undefined ? {} : { declaredSize: entry.size }),
     });
     return { path, sha256: entry.sha256, contentType, size };
   }
@@ -217,62 +213,62 @@ async function resolveUrlEntry(
 }
 
 /**
- * Pipe a fetched body to its final blob key, capped, letting R2 verify the
- * digest. Shared by `publish`/`update` and the staged commit, which fetches a
- * `url` manifest entry the client never uploaded.
+ * Send a fetched body to its final blob key, letting R2 verify the digest.
+ *
+ * R2 refuses a stream whose length it does not know ("Provided readable stream
+ * must have a known length" — measured against remote R2, 2026-09-03), so a
+ * response that declares `Content-Length` streams through untouched and one
+ * that does not is buffered first. That is why a chunked response is capped at
+ * `max_unhashed_bytes` even when the caller sent a digest: the Worker has to
+ * hold those bytes to give R2 a length, and holding them is exactly what that
+ * limit bounds.
+ *
+ * Shared by `publish`/`update` and the staged commit, which fetches a `url`
+ * manifest entry the client never uploaded.
  */
+function contentLength(response: Response): number | undefined {
+  const raw = response.headers.get("content-length");
+  if (raw === null || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
 export async function streamToBlob(
   response: Response,
   url: string,
   sha256: string,
   ctx: {
     policy: ResolvedPolicy;
-    streamBlob: (sha256: string, body: ReadableStream<Uint8Array>) => Promise<number | undefined>;
-    declaredSize?: number;
+    streamBlob: (
+      sha256: string,
+      body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>,
+    ) => Promise<number | undefined>;
   },
 ): Promise<number> {
   if (response.body === null) throw new ApiError("FETCH_FAILED", `${url} answered with no body.`);
-  const max = ctx.policy.max_file_bytes;
-  let oversize = false;
-  const capped = response.body.pipeThrough(
-    limit(max, () => {
-      oversize = true;
-    }),
-  );
 
-  let written: number | undefined;
-  try {
-    written = await ctx.streamBlob(sha256, capped as ReadableStream<Uint8Array>);
-  } catch (error) {
-    if (oversize || error instanceof Oversize) {
+  // `Number("")` is 0, so an ABSENT header must be told from a zero-length one:
+  // a body of unknown length is exactly what R2 refuses.
+  const header = contentLength(response);
+  if (header !== undefined) {
+    if (header > ctx.policy.max_file_bytes) {
       throw new ApiError(
         "PAYLOAD_TOO_LARGE",
-        `${url} is over ${max} bytes, this instance's max_file_bytes.`,
+        `${url} is ${header} bytes; this instance accepts files up to ${ctx.policy.max_file_bytes}.`,
       );
     }
-    throw error;
+    const written = await ctx.streamBlob(sha256, response.body as ReadableStream<Uint8Array>);
+    return written ?? header;
   }
 
-  const header = Number(response.headers.get("content-length") ?? "");
-  const size = written ?? (Number.isInteger(header) ? header : ctx.declaredSize);
-  if (size === undefined) throw new ApiError("INTERNAL", `The stored size of ${url} is unknown.`);
-  return size;
-}
-
-/** Errors the stream past `max` bytes, so an oversized body fails the put. */
-function limit(max: number, onOversize: () => void): TransformStream<Uint8Array, Uint8Array> {
-  let seen = 0;
-  return new TransformStream({
-    transform(chunk, controller) {
-      seen += chunk.byteLength;
-      if (seen > max) {
-        onOversize();
-        controller.error(new Oversize(`body over ${max} bytes`));
-        return;
-      }
-      controller.enqueue(chunk);
-    },
-  });
+  const bytes = await readCapped(
+    response.body as ReadableStream<Uint8Array>,
+    ctx.policy.max_unhashed_bytes,
+    url,
+    { unhashed: true },
+  );
+  const written = await ctx.streamBlob(sha256, bytes);
+  return written ?? bytes.length;
 }
 
 async function readCapped(
