@@ -447,6 +447,16 @@ finish its task.
     contract before #12. (c) "slice 2 measures `max_request_bytes`" referred to the
     pre-ticket phase list; the measurement belongs to issue #3, the R2 truth slice.
 
+72. **Phase-zero spike PASSED — the auth contract stands.** 2026-09-03, real claude.ai
+    (Max plan): a custom connector at a Worker-hosted `/_api/mcp` (Streamable HTTP,
+    `@cloudflare/workers-oauth-provider`) completed login through the one-form paste-key
+    authorize page; the tool list rendered (`spike_echo`); scripted PKCE flow, wrong-key
+    rejection and tools/call all passed (transcript in the session scratchpad,
+    spike-verify.md). One binding finding: claude.ai identified itself via **Client ID
+    Metadata Documents** (`client_id=https://claude.ai/oauth/mcp-oauth-client-metadata`),
+    not dynamic client registration — the OAuth slice (#12) must support CIMD first-class
+    (keep DCR enabled for other clients). Throwaway Worker + KV deleted after the run.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry
