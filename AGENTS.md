@@ -330,6 +330,9 @@ boundary: a key from instance A does not exist in instance B's `keys/`. An opera
 many clients on one Cloudflare account (`npx dropthis init --name client-x` per client) and
 holds every instance's admin key in their own `~/.config/dropthis/instances.json`; or a
 client runs it on their own account with their own token. Same command, different token.
+`--name` is optional and defaults to `main` (most accounts hold one instance; a rerun
+without a name reconciles `main` and says "pass `--name <other>` for a separate instance" —
+a second instance always needs an explicit name, never an invented one, #69).
 `init --name <name>` derives every resource from the normalised name (`[a-z0-9-]`, 3–30):
 Worker `dropthis-<name>`, bucket `dropthis-<name>-drops`, KV `dropthis-<name>-oauth`;
 reruns reconcile by these names, a clash with another instance is `NAME_TAKEN`. Five cron

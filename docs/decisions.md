@@ -414,6 +414,16 @@ finish its task.
     apply only to instances hosted in the operator's own account (managed hosting), not to
     client-owned accounts. Amends the #44 milestone-2 wording accordingly.
 
+69. **`init --name` is optional; the default instance name is `main`.** Most accounts hold
+    exactly one instance, and setup ease is the product's selling point — the happy path
+    asks zero naming questions (`npx dropthis init --domain …` suffices). Industry pattern:
+    Vercel derives the name, Fly generates one, create-cloudflare prompts with a default.
+    A rerun without a name reconciles `main` (the normal self-heal) and its output says
+    "pass `--name <other>` for a separate instance"; a second instance always requires an
+    explicit name — no auto-suffixing, an accidental second Worker+bucket is worse than an
+    error. The solo default user is the admin key `init` mints; `user add` is only for
+    additional people. Amends #44's milestone-1 wording (operator instance is `main`).
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry

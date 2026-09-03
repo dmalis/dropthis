@@ -72,7 +72,7 @@ step needs you.
 3. *[terminal]*
 
 ```sh
-npx dropthis@latest init --name drops --domain drops.example.com --json
+npx dropthis@latest init --domain drops.example.com --json
 ```
 
 Automation (agents, CI, n8n) skips the browser entirely: set `CLOUDFLARE_API_TOKEN`
@@ -97,7 +97,8 @@ prints the Claude Code / Cursor / Codex / claude.ai connect snippets. Result:
 
 `admin_key` appears only on the run that minted it. Re-running reports `"admin_key_status":
 "existing"`; `--rotate-admin-key` is explicit. `--dry-run` stops after the preflight. Without
-`--domain` the instance lives on its free `*.workers.dev` hostname.
+`--domain` the instance lives on its free `*.workers.dev` hostname. `--name` is only needed
+from the second instance on (it defaults to `main`).
 
 A **Deploy to Cloudflare button** (no-CLI path, boots unclaimed until `npx dropthis claim`
 proves ownership with your token) comes after v1.
