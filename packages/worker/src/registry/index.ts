@@ -15,6 +15,7 @@ import {
   publishOp,
   updateOp,
 } from "./drops.js";
+import { configGet, configSet } from "./config.js";
 import { userAdd, userList, userRemove } from "./users.js";
 import type { Operation } from "./types.js";
 
@@ -29,6 +30,8 @@ export const OPERATIONS: Array<Operation<never>> = [
   userAdd,
   userList,
   userRemove,
+  configGet,
+  configSet,
 ] as unknown as Array<Operation<never>>;
 
 export function operation(name: string): Operation<never> {

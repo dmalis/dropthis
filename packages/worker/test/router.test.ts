@@ -70,6 +70,7 @@ describe("authentication", () => {
     ["POST", "/_api/v1/drops", { method: "POST", body: "{}" }],
     ["GET", "/_api/v1/drops/abcdefghij", {}],
     ["GET", "/_api/v1/users", {}],
+    ["GET", "/_api/v1/config", {}],
   ];
 
   it.each(authenticated)("%s %s refuses a missing key", async (_method, path, init) => {

@@ -47,4 +47,32 @@ export type InstancePolicy = typeof INITIAL_POLICY;
 export const POLICY_CEILINGS = {
   max_request_bytes: 64 * 1024 * 1024,
   max_file_bytes: 104_857_600,
+  /**
+   * workerd refuses 200,000 PBKDF2 iterations outright (decision #73), so a
+   * count above this ceiling would deploy an instance whose password page
+   * cannot answer at all. 50,000 already costs 12.5 ms, over the 8 ms unlock
+   * budget, so anything near the ceiling is an operator's deliberate trade.
+   */
+  pbkdf2_iterations: 100_000,
+  /**
+   * The Free plan allows 50 subrequests per invocation and every cron R2 call
+   * is one, so a budget at or above 50 guarantees the run is killed mid-sweep.
+   */
+  cron_ops_budget: 45,
 } as const;
+
+/**
+ * Below these, a stored password is materially weaker than the measured
+ * default with nothing measured to justify it. There is no floor on the byte
+ * limits: a tiny instance is a valid choice.
+ */
+export const POLICY_FLOORS = {
+  pbkdf2_iterations: 10_000,
+  cron_ops_budget: 1,
+  max_request_bytes: 1024,
+  max_file_bytes: 1024,
+  max_unhashed_bytes: 1024,
+} as const;
+
+/** The shortest password this instance will ever accept (docs/spec-v1.md). */
+export const MIN_PASSWORD_LENGTH = 8;
