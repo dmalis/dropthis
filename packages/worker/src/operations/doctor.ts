@@ -77,6 +77,14 @@ export type DoctorContext = {
 /** The unlock budget the measured default was chosen to fit (decision #73). */
 export const UNLOCK_BUDGET_MS = 8;
 
+/**
+ * Derives to time before judging. The cost of a derive is what the check is
+ * about; a single sample also measures whatever else the machine was doing at
+ * that moment, so the report is the FASTEST of a few — the honest floor of
+ * what an unlock will cost.
+ */
+const BENCHMARK_ROUNDS = 3;
+
 export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
   // One read of the stored config, shared by the two checks that judge it.
   // The RESOLVED config cannot answer either question: its reader is tolerant
@@ -269,9 +277,12 @@ async function pbkdf2Benchmark(ctx: DoctorContext): Promise<CheckResult> {
     ["deriveBits"],
   );
 
-  const started = Date.now();
-  await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
-  const elapsed = Date.now() - started;
+  let elapsed = Number.POSITIVE_INFINITY;
+  for (let round = 0; round < BENCHMARK_ROUNDS; round += 1) {
+    const started = Date.now();
+    await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
+    elapsed = Math.min(elapsed, Date.now() - started);
+  }
 
   if (elapsed > UNLOCK_BUDGET_MS) {
     return {
