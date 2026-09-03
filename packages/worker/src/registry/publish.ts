@@ -14,6 +14,13 @@
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
+  EXPIRES_DESCRIPTION,
+  FILES_DESCRIPTION,
+  IDEMPOTENCY_DESCRIPTION,
+  META_DESCRIPTION,
+  NOINDEX_DESCRIPTION,
+  PASSWORD_DESCRIPTION,
+  TITLE_DESCRIPTION,
   checkFiles,
   checkMetaSize,
   describeIssues,
@@ -31,18 +38,17 @@ export {
 const FIELDS = "files, title, meta, password, expires, noindex and idempotency_key";
 
 export const publishSchema = z.strictObject({
-  files: z.array(fileEntry),
-  title: z.string().optional(),
-  meta: z.record(z.string(), z.unknown()).optional(),
+  files: z.array(fileEntry).describe(FILES_DESCRIPTION),
+  title: z.string().optional().describe(TITLE_DESCRIPTION),
+  meta: z.record(z.string(), z.unknown()).optional().describe(META_DESCRIPTION),
   /**
-   * `"generate"`, a chosen password of at least 8 characters, or `null` for
-   * none. `null` is a value the caller sends, not an absent field, so the
-   * schema takes the union rather than making it optional-and-nullable.
+   * `null` is a value the caller sends, not an absent field, so the schema
+   * takes the union rather than making it optional-and-nullable.
    */
-  password: z.union([z.string(), z.null()]).optional(),
-  expires: z.string().optional(),
-  noindex: z.boolean().optional(),
-  idempotency_key: z.string().min(1).optional(),
+  password: z.union([z.string(), z.null()]).optional().describe(PASSWORD_DESCRIPTION),
+  expires: z.string().optional().describe(EXPIRES_DESCRIPTION),
+  noindex: z.boolean().optional().describe(NOINDEX_DESCRIPTION),
+  idempotency_key: z.string().min(1).optional().describe(IDEMPOTENCY_DESCRIPTION),
 });
 
 export type PublishInput = z.infer<typeof publishSchema>;

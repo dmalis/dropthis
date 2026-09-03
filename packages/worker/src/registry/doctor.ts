@@ -24,6 +24,8 @@ export const doctorOp: Operation<z.infer<typeof empty>> = {
       config: ctx.config,
       now: ctx.now,
       secret: ctx.secret(),
+      request: ctx.request,
+      self: ctx.self,
     }),
   }),
 };

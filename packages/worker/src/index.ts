@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { mcpRoutes } from "./api/mcp.js";
 import { apiRoutes } from "./api/router.js";
 import type { Env } from "./bindings.js";
 import { PRODUCTION_HOOKS } from "./dev/hooks.js";
@@ -7,6 +8,7 @@ import { errorBody } from "./errors.js";
 import { loadInstanceConfig } from "./instance-config.js";
 import { runCron } from "./operations/cron.js";
 import { isReservedPath } from "./reserved.js";
+import { renderSkill } from "./skill.js";
 import { viewerRoutes } from "./viewer.js";
 
 const NOT_FOUND_PAGE = `<!doctype html>
@@ -38,9 +40,26 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
     c.res.headers.set("X-Robots-Tag", "noindex, nofollow");
   });
 
+  // The Worker calling itself, in-process: no network hop, no binding to
+  // render. `doctor` proves the MCP endpoint through it.
+  const self = (request: Request, env: Env) => Promise.resolve(app.fetch(request, env));
+
   // Every REST route, generated from the operation registry. `health` is the
   // one open route in it; everything else needs a key and a scope.
-  app.route("/_api/v1", apiRoutes(hooks));
+  app.route("/_api/v1", apiRoutes(hooks, self));
+
+  // The same operations as MCP tools, one stateless server per request.
+  app.route("/_api/mcp", mcpRoutes(hooks, self));
+
+  // The instance's own skill, open: it holds no secret, and one URL is how an
+  // agent onboards. Rendered per request from the live policy.
+  app.get("/_skill.md", async (c) => {
+    const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
+    return c.text(renderSkill(config), 200, {
+      "content-type": "text/markdown; charset=utf-8",
+      "cache-control": "no-cache, must-revalidate",
+    });
+  });
 
   // The viewer is last: it owns every path that is not the control plane, and
   // `RESERVED_PREFIXES` plus the `_`-free slug alphabet keep the two apart.

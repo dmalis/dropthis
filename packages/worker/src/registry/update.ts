@@ -19,6 +19,13 @@
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
+  EXPIRES_DESCRIPTION,
+  FILES_DESCRIPTION,
+  IDEMPOTENCY_DESCRIPTION,
+  META_DESCRIPTION,
+  NOINDEX_DESCRIPTION,
+  PASSWORD_DESCRIPTION,
+  TITLE_DESCRIPTION,
   checkFiles,
   checkMetaSize,
   describeIssues,
@@ -29,14 +36,19 @@ import {
 const FIELDS = "files, title, meta, password, expires, noindex and idempotency_key";
 
 export const updateSchema = z.strictObject({
-  files: z.array(fileEntry).optional(),
-  title: z.string().nullable().optional(),
-  meta: z.record(z.string(), z.unknown()).optional(),
-  /** `"generate"`, a chosen password, or `null` to remove it; see `publish`. */
-  password: z.union([z.string(), z.null()]).optional(),
-  expires: z.string().optional(),
-  noindex: z.boolean().optional(),
-  idempotency_key: z.string().min(1).optional(),
+  files: z.array(fileEntry).optional().describe(FILES_DESCRIPTION),
+  title: z.string().nullable().optional().describe(`${TITLE_DESCRIPTION} null removes it.`),
+  meta: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(`${META_DESCRIPTION} Merged at the top level; a key set to null is removed.`),
+  password: z
+    .union([z.string(), z.null()])
+    .optional()
+    .describe(`${PASSWORD_DESCRIPTION} null removes it; re-sending the current one changes nothing.`),
+  expires: z.string().optional().describe(EXPIRES_DESCRIPTION),
+  noindex: z.boolean().optional().describe(NOINDEX_DESCRIPTION),
+  idempotency_key: z.string().min(1).optional().describe(IDEMPOTENCY_DESCRIPTION),
 });
 
 export type UpdateInput = z.infer<typeof updateSchema>;

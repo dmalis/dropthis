@@ -74,6 +74,10 @@ export type DoctorContext = {
   config: InstanceConfig;
   now: Date;
   secret: string;
+  /** The `doctor` call itself: its origin and its credential feed the MCP probe. */
+  request: Request;
+  /** This Worker, in-process (`OperationContext.self`). */
+  self(request: Request): Promise<Response>;
 };
 
 /** The unlock budget the measured default was chosen to fit (decision #73). */
@@ -104,11 +108,7 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
 
   const checks: CheckResult[] = [
     await helloDrop(ctx),
-    {
-      id: "mcp_initialize",
-      status: "skip",
-      evidence: "This instance has no MCP endpoint yet; it arrives with issue #8.",
-    },
+    await mcpInitialize(ctx),
     policyReadable(stored),
     await cronState(ctx),
     canonicalOrigin(stored),
@@ -245,6 +245,82 @@ async function helloDrop(ctx: DoctorContext): Promise<CheckResult> {
       remediation: "Check the bucket binding and redeploy this instance.",
     };
   }
+}
+
+/**
+ * `initialize` and `tools/list` against this Worker's own `/_api/mcp`, in
+ * process, with the credential the `doctor` call carried. A version-correct
+ * deploy with a dead MCP endpoint is a broken deploy (AGENTS.md, "Installer
+ * principles"), and this is the check that says so. In-process rather than
+ * over the network: a Worker cannot reliably fetch its own hostname, and a
+ * service binding to itself would be one more thing `init` has to render.
+ */
+async function mcpInitialize(ctx: DoctorContext): Promise<CheckResult> {
+  const fail = (evidence: string): CheckResult => ({
+    id: "mcp_initialize",
+    status: "fail",
+    evidence,
+    remediation: "Redeploy this instance; its MCP endpoint did not answer.",
+  });
+
+  try {
+    const initialized = await mcpCall(ctx, 1, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "dropthis-doctor", version: "0" },
+    });
+    if (initialized.status !== 200) {
+      return fail(`initialize answered HTTP ${initialized.status}: ${initialized.text.slice(0, 200)}`);
+    }
+    const info = initialized.body?.result as { serverInfo?: { name?: string; version?: string } } | undefined;
+    if (info?.serverInfo?.name !== "dropthis") {
+      return fail(`initialize answered without a dropthis serverInfo: ${initialized.text.slice(0, 200)}`);
+    }
+
+    const listed = await mcpCall(ctx, 2, "tools/list", {});
+    const tools = (listed.body?.result as { tools?: Array<{ name: string }> } | undefined)?.tools;
+    if (listed.status !== 200 || !Array.isArray(tools) || tools.length === 0) {
+      return fail(`tools/list answered HTTP ${listed.status} with no tools: ${listed.text.slice(0, 200)}`);
+    }
+
+    return {
+      id: "mcp_initialize",
+      status: "pass",
+      evidence: `initialize answered dropthis ${info.serverInfo.version ?? "?"}; tools/list offers ${tools.length} tools.`,
+    };
+  } catch (error) {
+    return fail(`The MCP probe threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function mcpCall(
+  ctx: DoctorContext,
+  id: number,
+  method: string,
+  params: unknown,
+): Promise<{ status: number; text: string; body: { result?: unknown } | null }> {
+  const headers = new Headers({
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  });
+  const credential = ctx.request.headers.get("authorization");
+  if (credential !== null) headers.set("authorization", credential);
+
+  const response = await ctx.self(
+    new Request(`${new URL(ctx.request.url).origin}/_api/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    }),
+  );
+  const text = await response.text();
+  let body: { result?: unknown } | null = null;
+  try {
+    body = JSON.parse(text) as { result?: unknown };
+  } catch {
+    body = null;
+  }
+  return { status: response.status, text, body };
 }
 
 /** A failed hello drop still must not leave a drop serving on the instance. */
