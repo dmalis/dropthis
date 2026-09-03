@@ -58,6 +58,12 @@ export type FakeOptions = {
   dnsRecords?: FakeDnsRecord[];
   /** Page size the fake enforces regardless of what the client asks for. */
   perPage?: number;
+  /**
+   * Called when a stub wrangler reports a deploy. A test uses it to hand the
+   * bucket it just wrote to an already-running instance, which is the only
+   * way to have a localhost URL BEFORE the deploy that fills the bucket.
+   */
+  onDeploy?: (script: FakeScript) => Promise<void> | void;
 };
 
 type Envelope<T> = {
@@ -317,6 +323,7 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
       secrets: [...new Set([...(existing?.secrets ?? []), ...(body.secrets ?? [])])],
       bindings: body.bindings ?? existing?.bindings ?? [],
     });
+    await options.onDeploy?.(state.scripts.get(name)!);
     return c.json(ok({ name }));
   });
 
