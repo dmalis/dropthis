@@ -31,7 +31,41 @@ export type ClaimRecord = {
   created: string;
   /** The RESOLVED expiry, never the caller's spelling. See decision #74. */
   expires_at: string | null;
+  /**
+   * The stored `access` this call decided on — salt, hash and nonce included.
+   * A generated password is random, so a retry that re-derived one would write
+   * a different `meta.json` and conflict with the attempt it is retrying.
+   */
+  access: Record<string, unknown>;
+  /**
+   * The password itself, AES-GCM sealed, so the ONE response that carries it
+   * can be rebuilt by a retry that finds the claim but no stored result. It is
+   * a live secret, and the bucket is not the place to keep one in clear.
+   */
+  password_enc?: string;
 };
+
+/**
+ * The claim's sealed password, for a retry that has to rebuild the response.
+ * Typed on the sealed field alone: the staged commit's own claim
+ * (`operations/uploads.ts`) carries it under the same name and unseals it the
+ * same way.
+ */
+export async function openPassword(
+  claim: { password_enc?: string },
+  secret: string,
+): Promise<string | undefined> {
+  if (claim.password_enc === undefined) return undefined;
+  return decryptResult(secret, claim.password_enc);
+}
+
+/** The `password_enc` half of a claim, or nothing when the call set no password. */
+export async function sealPassword(
+  secret: string,
+  password: string | undefined,
+): Promise<{ password_enc?: string }> {
+  return password === undefined ? {} : { password_enc: await encryptResult(secret, password) };
+}
 
 export async function readClaim(bucket: Bucket, hash: string): Promise<ClaimRecord | null> {
   const object = await bucket.get(requestClaimKey(hash));

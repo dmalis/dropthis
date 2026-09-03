@@ -24,6 +24,7 @@ import type { Bucket } from "../bindings.js";
 import { canonicalJson, mergeAgentMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
 import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import { resolvePassword, storedPassword } from "../domain/password.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig, ResolvedPolicy } from "../instance-config.js";
 import { checkMetaSize } from "../registry/fields.js";
@@ -32,7 +33,15 @@ import { blobKey, idempotencyHash, metaKey } from "../storage/keys.js";
 import { casPut, putBlob } from "../storage/r2.js";
 import { loadDrop } from "./get.js";
 import type { ClaimRecord } from "./idempotency.js";
-import { putClaim, putResult, readClaim, readResult, requireSamePayload } from "./idempotency.js";
+import {
+  openPassword,
+  putClaim,
+  putResult,
+  readClaim,
+  readResult,
+  requireSamePayload,
+  sealPassword,
+} from "./idempotency.js";
 import type { FaultPoint } from "./publish.js";
 import { repairListEntry, writeProjections } from "./projections.js";
 import { resolveInlineFiles } from "./resolve-content.js";
@@ -91,21 +100,59 @@ export async function updateDrop(
   const content = input.files === undefined ? null : await resolveInlineFiles(input.files);
   const manifest: Manifest = claim?.manifest ?? content?.manifest ?? current.manifest;
 
-  const desired = await desiredUpdateMeta(current, input, manifest, {
-    policy: config.policy,
-    now,
-    // Decision #74: everything the first attempt read from the clock lives in
-    // the claim, so a retry does not re-resolve "30d" against its own clock.
-    expiresAt: claim === null ? undefined : claim.expires_at,
-  });
-  const desiredHash = await stateHash(desired);
+  // A `password` the caller did not send changes nothing — policy defaults
+  // never apply to an update. One they did send is resolved against what the
+  // drop holds, so re-sending the current password is a no-op (nonce kept) and
+  // anything else rotates the nonce and revokes every unlock cookie.
+  const change =
+    input.password === undefined
+      ? ({ kind: "unchanged" } as const)
+      : await resolvePassword(storedPassword(current.access), input.password, {
+          iterations: config.policy.pbkdf2_iterations,
+          required: config.policy.password.required,
+          default: config.policy.password.default,
+        });
+  let access: Record<string, unknown> = current.access;
+  if (change.kind === "set") access = { ...current.access, password: change.record };
+  if (change.kind === "removed") {
+    const { password: _removed, ...rest } = current.access;
+    access = rest;
+  }
+  let password: string | undefined = change.kind === "set" ? change.password : undefined;
+
+  // The state this call is trying to reach. A claim fixes the access record
+  // too — a generated password is random, and a retry that drew another would
+  // never converge on the first attempt — and, per decision #74, the resolved
+  // expiry, so a retry does not re-resolve "30d" against its own clock.
+  const fromClaim = async (fixed: ClaimRecord) => {
+    access = fixed.access;
+    password = await openPassword(fixed, ctx.secret);
+    return desiredUpdateMeta(current, input, fixed.manifest, access, {
+      policy: config.policy,
+      now,
+      expiresAt: fixed.expires_at,
+    });
+  };
+  let desired =
+    claim === null
+      ? await desiredUpdateMeta(current, input, manifest, access, { policy: config.policy, now })
+      : await fromClaim(claim);
+  let desiredHash = await stateHash(desired);
 
   // The no-op rule: equality is the canonical `meta.json` minus `updated`. It
   // writes NOTHING — not the record, not a claim, not a result. A repeat of the
   // same no-op is another no-op, so convergence needs no bookkeeping.
   if (desiredHash === (await stateHash(current))) {
     await repairListEntry(bucket, current);
-    return toDrop(current, { canonicalUrl: config.canonicalUrl, now });
+    const drop = toDrop(current, { canonicalUrl: config.canonicalUrl, now });
+    // A retry whose first attempt committed the CAS and then died before its
+    // result was stored lands here. It is still that call, so it still gets the
+    // password once, and stores the result it was owed.
+    if (claim !== null) {
+      if (password !== undefined) drop.password = password;
+      if (hash !== undefined) await putResult(bucket, hash, ctx.secret, drop);
+    }
+    return drop;
   }
 
   // (0) blobs. A digest the drop already holds is not written again — that is
@@ -131,16 +178,22 @@ export async function updateDrop(
       state_hash: desiredHash,
       created: desired.created,
       expires_at: desired.expires_at,
+      access: desired.access,
+      ...(await sealPassword(ctx.secret, password)),
     };
     const claimed = await putClaim(bucket, hash, record);
     if (!claimed.claimed) {
       // A concurrent retry of this same call won the claim. Its record is the
-      // identity now; if it already finished, replay its result.
+      // identity now; if it already finished, replay its result. Otherwise the
+      // state IT fixed — the access record included — is what this call
+      // converges on, so the desired meta is rebuilt from the claim.
       claim = await readClaim(bucket, hash);
       if (claim === null) throw new ApiError("INTERNAL", "The idempotency claim vanished mid-write.");
       requireSamePayload(claim, payloadHash);
       const replayed = await readResult(bucket, hash, ctx.secret);
       if (replayed !== null) return replayed;
+      desired = await fromClaim(claim);
+      desiredHash = await stateHash(desired);
     } else {
       claim = record;
     }
@@ -164,6 +217,10 @@ export async function updateDrop(
   fault(ctx, "projections");
 
   const drop = toDrop(desired, { canonicalUrl: config.canonicalUrl, now });
+  // "Returned once": the password rides the response that set it and the
+  // sealed result a retry replays, never `get` or `list`. An identical re-send
+  // set nothing, so it echoes nothing.
+  if (password !== undefined) drop.password = password;
 
   // (6) the result, sealed, so a lost response is recoverable exactly once.
   if (hash !== undefined) await putResult(bucket, hash, ctx.secret, drop);
@@ -204,6 +261,7 @@ export async function desiredUpdateMeta(
   current: DropMeta,
   input: Omit<UpdateInput, "files">,
   manifest: Manifest,
+  access: Record<string, unknown>,
   options: DesiredOptions,
 ): Promise<DropMeta> {
   const meta =
@@ -225,6 +283,7 @@ export async function desiredUpdateMeta(
     ...current,
     title: input.title === undefined ? current.title : input.title,
     meta,
+    access,
     current_gen: await sha256Hex(canonicalJson(manifest)),
     manifest,
     expires_at: expiresAt,

@@ -55,7 +55,8 @@ describe("dropthis commands --json", () => {
     const publish = surface[0]!;
     expect(publish.arguments).toEqual([{ name: "paths", kind: "files", required: true, variadic: true }]);
     expect((publish.options as Array<{ flag: string }>).map((o) => o.flag)).toEqual([
-      "--title", "--meta", "--expires", "--noindex", "--idempotency-key",
+      "--title", "--meta", "--password", "--expires", "--noindex", "--idempotency-key",
+      "--password-stdin",
     ]);
     expect(surface.find((entry) => entry.command === "prune")!.steps).toBe(true);
   });
@@ -65,7 +66,14 @@ describe("dropthis commands --json", () => {
     const surface = oneJsonDocument(run.stdout) as Array<{ options: Array<{ flag: string }> }>;
     const flags = surface.flatMap((entry) => entry.options.map((o) => o.flag));
     expect(flags.some((flag) => /key$/.test(flag) && flag !== "--idempotency-key")).toBe(false);
-    expect(flags.some((flag) => /token|secret|password/.test(flag))).toBe(false);
+    // `--password` exists (the field is `publish`'s), but it takes only the
+    // spellings that are NOT a secret: a chosen one goes in on stdin.
+    expect(flags.filter((flag) => /token|secret|password/.test(flag)).sort()).toEqual([
+      "--password", "--password", "--password-stdin", "--password-stdin",
+    ]);
+    const publish = surface[0] as unknown as { options: Array<{ flag: string; description: string }> };
+    const password = publish.options.find((o) => o.flag === "--password")!;
+    expect(password.description).toContain("--password-stdin");
   });
 });
 

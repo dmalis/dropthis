@@ -308,6 +308,74 @@ describe("POST /uploads/:id/commit", () => {
     ]);
   });
 
+  it("takes password exactly as publish does, returns it once and replays it", async () => {
+    const files = [await file("index.html", "<p>staged</p>")];
+    const session = await openSession(files);
+    await uploadAll(session, files);
+
+    const first = await commit(session.upload_id, { title: "Locked", password: "generate" });
+    expect(first.status, await first.clone().text()).toBe(201);
+    const drop = (await first.json()) as Json;
+    expect(drop.has_password).toBe(true);
+    expect(typeof drop.password).toBe("string");
+    expect((drop.password as string).length).toBe(16);
+
+    // The unlock gate is on, and the generated password opens it.
+    const locked = await app().fetch(new Request(`${ORIGIN}/${session.slug}/`), env);
+    expect(locked.status).toBe(401);
+
+    // A retry replays the SAME password — a second generate would never converge.
+    const again = await commit(session.upload_id, { title: "Locked", password: "generate" });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual(drop);
+  });
+
+  it("enforces the instance's password rule, which a staged publish cannot skip", async () => {
+    bucket.seed(
+      CONFIG_KEY,
+      JSON.stringify({
+        ...INITIAL_POLICY,
+        canonical_url: ORIGIN,
+        alias_origins: [],
+        password: { ...INITIAL_POLICY.password, required: true, default: "generate" },
+      }),
+    );
+
+    const files = [await file("a.txt", "a")];
+    const session = await openSession(files);
+    await uploadAll(session, files);
+
+    const open = await commit(session.upload_id, { title: "Must lock", password: null });
+    expect(await errorOf(open)).toMatchObject({ status: 400, code: "POLICY_VIOLATION" });
+
+    const other = await openSession(files);
+    await uploadAll(other, files);
+    const created = await commit(other.upload_id, { title: "Must lock" });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const drop = (await created.json()) as Json;
+    expect(drop.has_password).toBe(true);
+    expect(typeof drop.password).toBe("string");
+  });
+
+  it("leaves a target drop's password alone when the commit does not send one", async () => {
+    const files = [await file("a.txt", "a")];
+    const first = await json("/_api/v1/drops", "POST", {
+      files: [{ path: "a.txt", text: "a" }],
+      title: "Held",
+      password: "hunter2hunter2",
+    });
+    expect(first.status, await first.clone().text()).toBe(201);
+    const original = (await first.json()) as Json;
+
+    const session = await openSession(files, { target: original.slug });
+    await uploadAll(session, files);
+    const committed = await commit(session.upload_id, { title: "Held still" });
+    expect(committed.status, await committed.clone().text()).toBe(200);
+    const drop = (await committed.json()) as Json;
+    expect(drop.has_password).toBe(true);
+    expect(drop.password).toBeUndefined();
+  });
+
   it("is the session owner's alone", async () => {
     const files = [await file("a.txt", "a")];
     const session = await openSession(files);

@@ -6,6 +6,7 @@ import { PRODUCTION_HOOKS } from "./dev/hooks.js";
 import type { DevHooks } from "./dev/hooks.js";
 import { errorBody } from "./errors.js";
 import { loadInstanceConfig } from "./instance-config.js";
+import { runCron } from "./operations/cron.js";
 import { isReservedPath } from "./reserved.js";
 import { renderSkill } from "./skill.js";
 import { viewerRoutes } from "./viewer.js";
@@ -76,4 +77,43 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
   return app;
 }
 
-export default createApp();
+/**
+ * The hourly cron (AGENTS.md, "Pruning"). It is deliberately thin: everything
+ * it decides lives in `operations/cron.ts`, so the contract tests can drive
+ * the same function through a dev route instead of waiting an hour.
+ *
+ * The Worker's own URL is not knowable here — there is no request — and the
+ * cron does not need one: it reads the config only for `cron_ops_budget`.
+ */
+export async function runScheduled(env: Env, hooks: DevHooks = PRODUCTION_HOOKS): Promise<void> {
+  const config = await loadInstanceConfig(env.BUCKET, "https://cron.invalid/");
+  await runCron({
+    bucket: env.BUCKET,
+    now: hooks.now(env),
+    budget: config.policy.cron_ops_budget,
+  });
+}
+
+/**
+ * What Cloudflare runs: the fetch handler and the scheduled handler, from one
+ * app. `createApp` is exported separately because the dev entry point adds its
+ * probe routes to the Hono app before wrapping it the same way.
+ */
+export function createWorker(hooks: DevHooks = PRODUCTION_HOOKS) {
+  return workerOf(createApp(hooks), hooks);
+}
+
+export function workerOf(app: Hono<{ Bindings: Env }>, hooks: DevHooks) {
+  return {
+    fetch: (request: Request, env: Env, ctx: WaitUntil) =>
+      app.fetch(request, env, ctx as Parameters<typeof app.fetch>[2]),
+    scheduled: async (_event: unknown, env: Env, ctx: WaitUntil) => {
+      ctx.waitUntil(runScheduled(env, hooks));
+    },
+  };
+}
+
+/** The one thing this Worker asks of Cloudflare's execution context. */
+type WaitUntil = { waitUntil(promise: Promise<unknown>): void };
+
+export default createWorker();

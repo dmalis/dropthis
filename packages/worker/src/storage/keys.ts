@@ -42,6 +42,12 @@ export const DROPS_PREFIX = "drops/";
 export const UPLOADS_PREFIX = "uploads/";
 
 export const CONFIG_KEY = "system/config.json";
+/** The cron's cursors. One key, written once per invocation, at the end. */
+export const PRUNE_STATE_KEY = "system/prune-state.json";
+
+/** The prefixes the cron walks. */
+export const EXPIRING_PREFIX = "expiring/";
+export const SLUGS_PREFIX = "slugs/";
 
 /**
  * The listing pointer. R2 lists keys in lexicographic order and `list` must be

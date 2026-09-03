@@ -70,6 +70,11 @@ export type Drop = {
   has_password: boolean;
   state: DropState;
   files?: DropFile[];
+  /**
+   * The password, in the ONE response that set or generated it, and in an
+   * identical idempotent retry of that call. Never from `get` or `list`.
+   */
+  password?: string;
 };
 
 const canonicalize = canonicalizeModule as unknown as (value: unknown) => string;
@@ -106,6 +111,8 @@ export type NewDropInput = {
   expiresAt: string | null;
   noindex: boolean;
   createdBy: CreatedBy;
+  /** The unlock rule. `{}` is an open drop; `{password: {…}}` a locked one. */
+  access?: Record<string, unknown>;
   now: Date;
   /**
    * The drop's birth instant, when it is already fixed — an idempotent retry
@@ -128,7 +135,7 @@ export async function newDropMeta(input: NewDropInput): Promise<DropMeta> {
     slug: input.slug,
     title: input.title,
     meta: input.meta,
-    access: {},
+    access: input.access ?? {},
     current_gen: await manifestGen(input.manifest),
     manifest: input.manifest,
     expires_at: input.expiresAt,

@@ -43,10 +43,22 @@ describe("commandSurface", () => {
     expect(flagsOf(spec)).toEqual([
       "title:string",
       "meta:json",
+      "password:string",
       "expires:string",
       "noindex:boolean",
       "idempotency-key:string",
+      "password-stdin:boolean",
     ]);
+  });
+
+  it("gives every command that takes a password its --password-stdin companion", () => {
+    for (const spec of commandSurface()) {
+      const takesPassword = spec.flags.some((f) => f.field === "password");
+      expect(spec.flags.some((f) => f.field === "password_stdin"), spec.words.join(" ")).toBe(takesPassword);
+    }
+    const password = byWords("publish").flags.find((f) => f.field === "password")!;
+    expect(password.secret).toBe(true);
+    expect(password.description).toContain("--password-stdin");
   });
 
   it("maps update: the target then optional paths; title can be cleared", () => {

@@ -27,6 +27,9 @@ export const META_DESCRIPTION =
   "Your own JSON notes on the drop (16 KB max): what it is, where the data came from, who it was sent to. Returned by get, never shown to visitors.";
 export const EXPIRES_DESCRIPTION =
   'When the link stops working: "7d", "2026-12-31", an RFC 3339 instant, or "never".';
+export const PASSWORD_DESCRIPTION =
+  '"generate" for a random 16-character password returned once, in this response; a chosen ' +
+  "password of at least 8 characters; or null for none.";
 export const NOINDEX_DESCRIPTION = "Tell search engines to stay away (default true).";
 export const IDEMPOTENCY_DESCRIPTION =
   "A key you choose; a retry with the same key and payload returns the same result instead of acting twice.";

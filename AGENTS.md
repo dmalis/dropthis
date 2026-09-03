@@ -108,8 +108,10 @@ list/<inv-created-ms>-<slug>         listing pointer; the ms come from the drop 
 keys/<id>.json                       {id, label, scope, hash, created}; the admin key is one of these
 keyhash/<sha256(key)>                pointer → key id (the auth lookup)
 users/<normalized-label>             pointer → key id, claimed with If-None-Match: * → labels unique
-expiring/<yyyy-mm-dd>/<id>           marker for the daily cron, dated expires_at + grace;
-                                     one list per day, never a scan; a HINT — cron re-reads meta.json
+expiring/<yyyy-mm-dd>/<id>           marker for the hourly cron, dated expires_at + grace;
+                                     the cron walks these KEYS in order (R2 key order IS date
+                                     order), so empty days cost nothing and no day is ever
+                                     listed on its own; a HINT — cron re-reads meta.json
 requests/<hash>/claim, …/result     idempotency: two keys, each written ONCE (1 write/s per key).
                                      The claim fixes the identity {drop_id, slug, gen, generated
                                      password (encrypted)} BEFORE side effects, so retries converge;
@@ -202,8 +204,9 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   HMAC-signed 1-hour URL that is the PUT's only credential (registry scope `signed`,
   `rawBody`), `Content-Length` checked against the manifest and the digest verified by R2 —
   either wrong is `HASH_MISMATCH` and the key stays absent → `POST
-  /_api/v1/uploads/<id>/commit` (carries the settings — `title?, meta?, expires?, noindex?`
-  — exactly as `publish`/`update` take them; fenced by the write-once `commit` claim that
+  /_api/v1/uploads/<id>/commit` (carries the settings — `title?, meta?, password?, expires?,
+  noindex?` — exactly as `publish`/`update` take them, so a drop too large for one call is
+  not one the instance's password policy cannot reach; fenced by the write-once `commit` claim that
   fixes `payload_hash`, `state_hash`, `created` and `expires_at` (#74); verifies every blob
   exists, naming the missing hashes as `INVALID_INPUT`; then steps (4)–(7) of the write
   order, an update CASing against the session's etag; replays the sealed `result` on
@@ -472,8 +475,11 @@ servers connected.
   yes. The only prompts are `delete` and `prune --no-dry-run`; they write to stderr, and
   "no", Ctrl-C or SIGINT exit 2. `DROPTHIS_INTERACTIVE=1|0` forces prompts on or off (as
   `GH_FORCE_TTY`), which is how the prompt path is tested through a pipe. Secrets via env or
-  stdin, never flags. Boolean flags map 1:1 to the schema and are never inverted by the
-  CLI: `prune` is a dry run unless `--no-dry-run` (#78d holds on every surface).
+  stdin, never flags: a drop's `password` takes only `generate` on the command line, and a
+  chosen one arrives through `--password-stdin` (Docker's `--password-stdin`), so it is in
+  neither the shell history nor `ps` (#85m). Boolean flags map 1:1 to the schema and are
+  never inverted by the CLI: `prune` is a dry run unless `--no-dry-run` (#78d holds on
+  every surface).
 - **Output contract:** `--json` = exactly one deterministic JSON document, always (for
   `init`, a result object with a `steps[]` array); `--jsonl` streams live step events where
   a command has them (`init`; `usage` and `prune`, which follow the scan cursor to the end,

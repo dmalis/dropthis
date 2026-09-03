@@ -78,6 +78,41 @@ describe("publish", () => {
     expect(await css.text()).toBe("body{}");
   });
 
+  it("takes a chosen password on stdin, never as a flag value", async () => {
+    const refused = await runCli(
+      ["publish", join(site, "index.html"), "--title", "Locked", "--password", "hunter2hunter2"],
+      { env },
+    );
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain("--password-stdin");
+    expect(refused.stdout).toBe("");
+
+    const run = await runCli(
+      ["publish", join(site, "index.html"), "--title", "Locked", "--password-stdin", "--json"],
+      { env, input: "hunter2hunter2\n" },
+    );
+    expect(run.code, run.stderr).toBe(0);
+    const drop = oneJsonDocument(run.stdout) as Json;
+    expect(drop.has_password).toBe(true);
+    // The response that SET it carries it once, as publish's contract says.
+    expect(drop.password).toBe("hunter2hunter2");
+
+    const locked = await fetch(String(drop.url));
+    expect(locked.status).toBe(401);
+  });
+
+  it("generates a password with --password generate and prints it once", async () => {
+    const run = await runCli(
+      ["publish", join(site, "index.html"), "--title", "Gen", "--password", "generate", "--json"],
+      { env },
+    );
+    expect(run.code, run.stderr).toBe(0);
+    const drop = oneJsonDocument(run.stdout) as Json;
+    expect(drop.has_password).toBe(true);
+    expect(typeof drop.password).toBe("string");
+    expect((drop.password as string).length).toBe(16);
+  });
+
   it("refuses a missing path and an unknown flag before touching the network", async () => {
     const missing = await runCli(["publish", join(site, "nope.html"), "--json"], { env });
     expect(missing.code).toBe(1);

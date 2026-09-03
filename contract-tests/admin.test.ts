@@ -166,7 +166,7 @@ describe("doctor", () => {
     expect(report.ok).toBe(true);
 
     const skipped = report.checks.filter((check) => check.status === "skip").map((c) => c.id);
-    expect(skipped).toEqual(["cron_state"]);
+    expect(skipped).toEqual([]);
     const mcp = report.checks.find((check) => check.id === "mcp_initialize")!;
     expect(mcp.status, mcp.evidence).toBe("pass");
     expect(mcp.evidence).toContain("tools/list offers");

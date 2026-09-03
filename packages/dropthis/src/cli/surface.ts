@@ -27,8 +27,22 @@ export type FlagSpec = {
   kind: Exclude<FieldKind, "files">;
   /** `--no-<flag>` sends `null` (clears the field). */
   nullable: boolean;
+  /**
+   * The field's value can be a secret, so the flag takes only the spellings
+   * that are not one (`generate`); the secret itself arrives on stdin through
+   * the `--<flag>-stdin` companion. AGENTS.md, "CLI conventions": secrets via
+   * env or stdin, never flags — a password on argv is in the shell history and
+   * in `ps` for every user on the machine.
+   */
+  secret?: boolean;
   description: string;
 };
+
+/** The registry fields whose value may be a secret. */
+export const SECRET_FIELDS = new Set(["password"]);
+
+/** The one non-secret spelling `--password` accepts on the command line. */
+export const GENERATE = "generate";
 
 export type ArgKind = "string" | "target" | "files" | "json";
 
@@ -165,7 +179,19 @@ function specFor(op: Operation<never>): CommandSpec {
       flag: kebab(name),
       kind: field.kind,
       nullable: field.nullable,
+      ...(SECRET_FIELDS.has(name) ? { secret: true } : {}),
       description: describe(op.name, name, field, schema),
+    });
+  }
+
+  // One companion per secret field, last so the generated order is stable.
+  for (const secret of flags.filter((flag) => flag.secret === true)) {
+    flags.push({
+      field: `${secret.field}_stdin`,
+      flag: `${secret.flag}-stdin`,
+      kind: "boolean",
+      nullable: false,
+      description: `Read the ${secret.field} from stdin (one line), so it stays out of argv.`,
     });
   }
 
@@ -190,7 +216,10 @@ function specFor(op: Operation<never>): CommandSpec {
  * is the `--no-<flag>` clause, which is CLI grammar and exists nowhere else.
  */
 function describe(opName: string, field: string, kind: Field, schema: z.ZodType): string {
-  const base = descriptionOf(schema) ?? `${field} (${kind.kind})`;
+  let base = descriptionOf(schema) ?? `${field} (${kind.kind})`;
+  if (SECRET_FIELDS.has(field)) {
+    base = `${base} On the command line only "${GENERATE}"; a chosen one goes on stdin with --${kebab(field)}-stdin.`;
+  }
   return kind.nullable && opName === "update" ? `${base} --no-${kebab(field)} clears it.` : base;
 }
 

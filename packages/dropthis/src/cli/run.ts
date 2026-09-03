@@ -21,7 +21,7 @@ import { confirm, isInteractive } from "./interactive.js";
 import { jsonLine, renderResult } from "./output.js";
 import type { Mode } from "./output.js";
 import { sendFiles } from "./send.js";
-import { coerceFlag } from "./surface.js";
+import { coerceFlag, GENERATE } from "./surface.js";
 import type { CommandSpec } from "./surface.js";
 
 export type Globals = {
@@ -47,6 +47,13 @@ export type RunIo = {
   stdout: Writable & { isTTY?: boolean };
   stderr: Writable;
 };
+
+/** Every byte of stdin, for the one thing that may never ride argv. */
+async function readAll(stream: Readable): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk as Buffer));
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 export const modeOf = (globals: Globals): Mode => (globals.jsonl ? "jsonl" : globals.json ? "json" : "plain");
 
@@ -89,7 +96,34 @@ export async function runCommand(invocation: Invocation, io: RunIo): Promise<voi
       if (raw === true) op = operation("doctor.checks");
       continue;
     }
+    if (flag.field.endsWith("_stdin")) continue; // handled with its secret below
+    if (flag.secret === true && raw !== false && raw !== GENERATE) {
+      throw new CliError(
+        "INVALID_INPUT",
+        `--${flag.flag} takes only "${GENERATE}" on the command line.`,
+        `A chosen ${flag.field} on argv is in your shell history and in \`ps\`. Send it on stdin with --${flag.flag}-stdin instead.`,
+      );
+    }
     input[flag.field] = raw === false && flag.nullable ? null : coerceFlag(flag, raw);
+  }
+
+  // A secret read from stdin, after the loop so it wins over nothing and
+  // collides with an explicit value rather than silently replacing it.
+  for (const flag of spec.flags.filter((f) => f.secret === true)) {
+    if (invocation.flags[`${flag.field}_stdin`] !== true) continue;
+    if (invocation.flags[flag.field] !== undefined) {
+      throw new CliError(
+        "INVALID_INPUT",
+        `--${flag.flag} and --${flag.flag}-stdin are two ways to say the same thing.`,
+        `Send the ${flag.field} on stdin and drop --${flag.flag}.`,
+      );
+    }
+    const value = (await readAll(io.stdin)).replace(/\r?\n$/, "");
+    if (value.length === 0) {
+      throw new CliError("INVALID_INPUT", `--${flag.flag}-stdin read nothing from stdin.`,
+        `Pipe the ${flag.field} in, for example: printf %s "$SECRET" | dropthis …`);
+    }
+    input[flag.field] = value;
   }
 
   const interactive = await isInteractive({ env: io.env, stdin: io.stdin, stdout: io.stdout, yes: globals.yes });

@@ -19,6 +19,7 @@ type Stored = {
   etag: string;
   customMetadata: Record<string, string> | undefined;
   contentType?: string | undefined;
+  uploaded: Date;
 };
 
 const encoder = new TextEncoder();
@@ -55,8 +56,17 @@ export type MemoryBucket = Bucket & {
   keys(prefix?: string): string[];
   /** The stored body of a key, as text. */
   read(key: string): string | null;
-  /** Seed a key without going through the conditional-write path. */
-  seed(key: string, body: string, customMetadata?: Record<string, string>): void;
+  /**
+   * Seed a key without going through the conditional-write path. `uploaded`
+   * exists because the reconcile refuses to remove a blob younger than a day,
+   * and a test cannot wait one.
+   */
+  seed(
+    key: string,
+    body: string,
+    customMetadata?: Record<string, string>,
+    uploaded?: Date,
+  ): void;
   /** Every operation, in order, so a test can pin the write ORDER. */
   log: string[];
   /** Make the next write to `key` throw, to prove a crash converges. */
@@ -106,6 +116,7 @@ export function memoryBucket(): MemoryBucket {
         etag: `etag-${version}`,
         customMetadata: options?.customMetadata,
         contentType: options?.httpMetadata?.contentType,
+        uploaded: new Date(),
       };
       store.set(key, stored);
       return { etag: stored.etag, size: bytes.length };
@@ -122,7 +133,14 @@ export function memoryBucket(): MemoryBucket {
       const stored = store.get(key);
       return stored === undefined
         ? null
-        : { key, etag: stored.etag, size: stored.bytes.length };
+        : {
+            key,
+            etag: stored.etag,
+            size: stored.bytes.length,
+            ...(stored.customMetadata === undefined
+              ? {}
+              : { customMetadata: stored.customMetadata }),
+          };
     },
 
     async delete(keys) {
@@ -150,6 +168,7 @@ export function memoryBucket(): MemoryBucket {
             key,
             etag: stored.etag,
             size: stored.bytes.length,
+            uploaded: stored.uploaded,
             customMetadata: stored.customMetadata,
           } as R2Listing["objects"][number];
         }),
@@ -167,9 +186,14 @@ export function memoryBucket(): MemoryBucket {
       return stored === undefined ? null : decoder.decode(stored.bytes);
     },
 
-    seed(key, body, customMetadata) {
+    seed(key, body, customMetadata, uploaded) {
       version += 1;
-      store.set(key, { bytes: encoder.encode(body), etag: `etag-${version}`, customMetadata });
+      store.set(key, {
+        bytes: encoder.encode(body),
+        etag: `etag-${version}`,
+        customMetadata,
+        uploaded: uploaded ?? new Date(),
+      });
     },
 
     failNext(key, error) {

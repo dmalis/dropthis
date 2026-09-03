@@ -27,6 +27,7 @@ import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
 import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
+import { resolvePassword, storedPassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig, ResolvedPolicy } from "../instance-config.js";
@@ -46,6 +47,7 @@ import { casPut, claimKey, createPut, putBlob } from "../storage/r2.js";
 import { decryptResult, encryptResult } from "../storage/result-crypto.js";
 import { signUploadUrl, verifyUploadSignature } from "../storage/upload-sign.js";
 import { loadDrop } from "./get.js";
+import { openPassword, sealPassword } from "./idempotency.js";
 import { writeProjections } from "./projections.js";
 import type { FaultPoint } from "./publish.js";
 import { desiredUpdateMeta } from "./update.js";
@@ -66,6 +68,8 @@ export type SessionInput = {
 export type CommitInput = {
   title?: string | null | undefined;
   meta?: Record<string, unknown> | undefined;
+  /** `"generate"`, a chosen password, or `null` to remove one — as `update`. */
+  password?: string | null | undefined;
   expires?: string | undefined;
   noindex?: boolean | undefined;
 };
@@ -94,6 +98,14 @@ type CommitClaim = {
   gen: string;
   created: string;
   expires_at: string | null;
+  /**
+   * The stored `access` this commit decided on, exactly as `publish`'s claim
+   * carries it: a generated password is random, so a retry that derived a
+   * second one would build a different `meta.json` and never converge.
+   */
+  access: Record<string, unknown>;
+  /** That password, AES-GCM sealed, so a retry can rebuild the one response. */
+  password_enc?: string;
 };
 
 export type SessionResult = {
@@ -434,7 +446,10 @@ export async function commitSession(
 
     if (claim !== null && loaded.etag !== session.base_etag) {
       if ((await stateHash(loaded.meta)) === claim.state_hash) {
-        return { drop: await finish(bucket, ctx, uploadId, loaded.meta, null), created: false };
+        return {
+          drop: await finish(bucket, ctx, uploadId, loaded.meta, null, await openPassword(claim, ctx.secret)),
+          created: false,
+        };
       }
     }
 
@@ -448,6 +463,31 @@ export async function commitSession(
         `The drop at ${session.slug} expired at ${loaded.meta.expires_at}; send expires to bring it back.`,
       );
     }
+  }
+
+  // The password is decided before any write, so it is inside the state hash
+  // the claim fixes. On a create the rule is `publish`'s (policy default and
+  // `required` apply); on an update it is `update`'s (an omitted password
+  // changes nothing, and re-sending the current one keeps the nonce).
+  const change = await resolvePassword(
+    isCreate ? undefined : storedPassword(current!.meta.access),
+    input.password,
+    {
+      iterations: config.policy.pbkdf2_iterations,
+      required: config.policy.password.required,
+      default: config.policy.password.default,
+    },
+  );
+  let access: Record<string, unknown> = isCreate ? {} : current!.meta.access;
+  if (change.kind === "set") access = { ...access, password: change.record };
+  if (change.kind === "removed") {
+    const { password: _removed, ...rest } = access;
+    access = rest;
+  }
+  let password: string | undefined = change.kind === "set" ? change.password : undefined;
+  if (claim !== null) {
+    access = claim.access;
+    password = await openPassword(claim, ctx.secret);
   }
 
   const build = async (fixed: CommitClaim | null): Promise<DropMeta> => {
@@ -467,11 +507,12 @@ export async function commitSession(
             : fixed.expires_at,
         noindex,
         createdBy,
+        access,
         now,
         ...(fixed === null ? {} : { created: fixed.created }),
       });
     }
-    return desiredUpdateMeta(current!.meta, input, session.manifest, {
+    return desiredUpdateMeta(current!.meta, input, session.manifest, access, {
       policy: config.policy,
       now,
       expiresAt: fixed === null ? undefined : fixed.expires_at,
@@ -490,6 +531,8 @@ export async function commitSession(
       gen: desired.current_gen,
       created: desired.created,
       expires_at: desired.expires_at,
+      access: desired.access,
+      ...(await sealPassword(ctx.secret, password)),
     };
     const claimed = await claimKey(bucket, uploadCommitKey(uploadId), JSON.stringify(record));
     if (claimed.claimed) {
@@ -500,6 +543,8 @@ export async function commitSession(
       requireSamePayload(claim, payloadHash);
       const replayed = await readResult(bucket, uploadId, ctx.secret);
       if (replayed !== null) return { drop: replayed, created: false };
+      access = claim.access;
+      password = await openPassword(claim, ctx.secret);
       desired = await build(claim);
       desiredHash = await stateHash(desired);
     }
@@ -546,6 +591,7 @@ export async function commitSession(
     uploadId,
     stored,
     ours && current !== null ? current.meta : null,
+    password,
   );
   return { drop, created: isCreate && ours };
 }
@@ -561,11 +607,15 @@ async function finish(
   uploadId: string,
   stored: DropMeta,
   previous: DropMeta | null,
+  password: string | undefined,
 ): Promise<Drop> {
   await writeProjections(bucket, stored, previous === null ? undefined : previous.expires_at);
   fault(ctx, "projections");
 
   const drop = toDrop(stored, { canonicalUrl: ctx.config.canonicalUrl, now: ctx.now });
+  // "Returned once" — the password rides this response and the sealed result a
+  // retry replays, and lives nowhere else a caller can reach.
+  if (password !== undefined) drop.password = password;
   await bucket.put(uploadResultKey(uploadId), await encryptResult(ctx.secret, JSON.stringify(drop)), {
     onlyIf: { etagDoesNotMatch: "*" },
   });

@@ -23,6 +23,7 @@ import type { Bucket } from "../bindings.js";
 import type { CreatedBy, Drop, DropMeta } from "../domain/meta.js";
 import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import { resolvePassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig, ResolvedPolicy } from "../instance-config.js";
@@ -30,7 +31,15 @@ import type { PublishInput } from "../registry/publish.js";
 import { blobKey, idempotencyHash, metaKey, newDropId, slugKey } from "../storage/keys.js";
 import { claimKey, createPut, putBlob } from "../storage/r2.js";
 import type { ClaimRecord } from "./idempotency.js";
-import { putClaim, putResult, readClaim, readResult, requireSamePayload } from "./idempotency.js";
+import {
+  openPassword,
+  putClaim,
+  putResult,
+  readClaim,
+  readResult,
+  requireSamePayload,
+  sealPassword,
+} from "./idempotency.js";
 import { writeProjections } from "./projections.js";
 import { resolveInlineFiles } from "./resolve-content.js";
 
@@ -93,6 +102,18 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
 
   const content = await resolveInlineFiles(input.files);
 
+  // The password is decided before any write: it goes into the desired
+  // `meta.json`, and therefore into the state hash the claim fixes. A retry
+  // adopts the claim's decision rather than generating a second password.
+  const change = await resolvePassword(undefined, input.password, {
+    iterations: config.policy.pbkdf2_iterations,
+    required: config.policy.password.required,
+    default: config.policy.password.default,
+  });
+  let access: Record<string, unknown> =
+    change.kind === "set" ? { password: change.record } : {};
+  let password: string | undefined = change.kind === "set" ? change.password : undefined;
+
   let identity: Identity =
     claim === null
       ? { dropId: newDropId(now), slug: generateSlug(), slugClaimedHere: false }
@@ -105,6 +126,10 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
     claim === null
       ? resolveExpiryOrFail(input.expires ?? config.policy.expiry.default, config.policy, now)
       : claim.expires_at;
+  if (claim !== null) {
+    access = claim.access;
+    password = await openPassword(claim, ctx.secret);
+  }
 
   const buildMeta = (slug: string) =>
     newDropMeta({
@@ -116,6 +141,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       expiresAt,
       noindex,
       createdBy: ctx.caller,
+      access,
       now,
       created,
     });
@@ -136,6 +162,8 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       state_hash: await stateHash(desired),
       created: desired.created,
       expires_at: desired.expires_at,
+      access: desired.access,
+      ...(await sealPassword(ctx.secret, password)),
     };
     const claimed = await putClaim(bucket, hash, record);
     if (!claimed.claimed) {
@@ -149,6 +177,8 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       identity = { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false };
       created = claim.created;
       expiresAt = claim.expires_at;
+      access = claim.access;
+      password = await openPassword(claim, ctx.secret);
       await writeBlobs(bucket, identity.dropId, content.blobs);
     } else {
       claim = record;
@@ -169,6 +199,10 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
   fault(ctx, "projections");
 
   const drop = toDrop(stored, { canonicalUrl: config.canonicalUrl, now });
+  // "Returned once" is this line: the password rides the response that set it
+  // and the sealed result a retry replays, and lives nowhere else a caller can
+  // reach — `get` and `list` build the same `Drop` without it.
+  if (password !== undefined) drop.password = password;
 
   // (6) the result, sealed, so a lost response is recoverable exactly once.
   if (hash !== undefined) await putResult(bucket, hash, ctx.secret, drop);

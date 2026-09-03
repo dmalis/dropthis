@@ -30,10 +30,16 @@ const putSchema = z.strictObject({
   sig: z.string().optional(),
 });
 
+/**
+ * The commit carries the settings `publish` and `update` take, spelled the same
+ * way — `password` included, so a drop too large for one call is not a drop the
+ * instance's password policy cannot reach.
+ */
 export const uploadCommitSchema = z.strictObject({
   id: z.string(),
   title: z.string().nullable().optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
+  password: z.union([z.string(), z.null()]).optional(),
   expires: z.string().optional(),
   noindex: z.boolean().optional(),
 });
@@ -99,7 +105,7 @@ export const uploadCommit: Operation<CommitRequest> = {
   scope: "user",
   summary: "Commit a staged upload with the settings publish takes; replays on repeat.",
   schema: uploadCommitSchema as unknown as z.ZodType<CommitRequest>,
-  parse: parseWith(uploadCommitSchema, "title, meta, expires and noindex"),
+  parse: parseWith(uploadCommitSchema, "title, meta, password, expires and noindex"),
   params: ["id"],
   restOnly: true,
   handler: async (input, ctx) => {
