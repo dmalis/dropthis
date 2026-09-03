@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Env } from "./bindings.js";
 import { errorBody } from "./errors.js";
 import { isReservedPath } from "./reserved.js";
 
@@ -15,7 +16,7 @@ const NOT_FOUND_PAGE = `<!doctype html>
 </html>
 `;
 
-const app = new Hono();
+const app = new Hono<{ Bindings: Env }>();
 
 // Every response, without exception: drops are not for search engines.
 app.use("*", async (c, next) => {

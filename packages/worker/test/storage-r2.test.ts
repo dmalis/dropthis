@@ -125,10 +125,12 @@ describe("putBlob", () => {
 });
 
 describe("write-rate mapping", () => {
-  // R2 allows about one write per second to the same key; every writer maps
-  // that refusal to the same retryable code, never to a silent in-Worker retry.
+  // The message remote R2 actually sends, captured from the deployed dev Worker
+  // on 2026-09-03 and recorded in
+  // docs/research/2026-09-03-free-plan-measurements.md. Every writer maps this
+  // refusal to the same retryable code, never to a silent in-Worker retry.
   const rateLimited = new Error(
-    "put: Reduce the rate at which you are writing to the same object. (10029)",
+    "put: Reduce your concurrent request rate for the same object. (10058)",
   );
 
   it("maps it to R2_RATE_LIMIT with Retry-After 1 on a claim", async () => {
@@ -142,6 +144,15 @@ describe("write-rate mapping", () => {
     await expect(
       casPut(throwing(rateLimited), "drops/d1/meta.json", "{}", "e1"),
     ).rejects.toMatchObject({ code: "R2_RATE_LIMIT", retryAfterSeconds: 1 });
+  });
+
+  it("maps R2's documented per-key write-rate wording too", async () => {
+    const older = new Error("put: Reduce the rate at which you are writing to this object. (10029)");
+
+    await expect(claimKey(throwing(older), "slugs/x", "d1")).rejects.toMatchObject({
+      code: "R2_RATE_LIMIT",
+      retryAfterSeconds: 1,
+    });
   });
 
   it("leaves an unrecognised failure as INTERNAL", async () => {

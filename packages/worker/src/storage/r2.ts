@@ -136,11 +136,15 @@ async function write(
 }
 
 /**
- * R2's thrown failures, mapped to the catalogue. The rate-limit match is broad
- * on purpose: the wording of the per-key throttle is Cloudflare's to change,
- * and mis-reporting it as `INTERNAL` would tell an agent not to retry something
- * that only needed a second. The exact message the deployed Worker sees is
- * recorded in docs/research/2026-09-03-free-plan-measurements.md.
+ * R2's thrown failures, mapped to the catalogue.
+ *
+ * The refusal remote R2 actually sends when several writes to one key are in
+ * flight is `put: Reduce your concurrent request rate for the same object.
+ * (10058)` — measured against the deployed dev Worker, transcript in
+ * docs/research/2026-09-03-free-plan-measurements.md. `10029` is the rate-limit
+ * code of the same family. The match stays broad on purpose: the wording is
+ * Cloudflare's to change, and reporting a throttle as `INTERNAL` would tell an
+ * agent not to retry something that only needed a second.
  */
 export function mapStorageError(error: unknown, key: string): StorageError {
   if (error instanceof StorageError) return error;
@@ -149,6 +153,9 @@ export function mapStorageError(error: unknown, key: string): StorageError {
 
   if (
     lower.includes("10029") ||
+    lower.includes("10058") ||
+    lower.includes("concurrent request rate") ||
+    lower.includes("same object") ||
     lower.includes("429") ||
     lower.includes("too many requests") ||
     lower.includes("rate at which") ||

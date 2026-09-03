@@ -26,6 +26,11 @@ async function runDeployDev(args: string[], env: Record<string, string | undefin
   }
 }
 
+async function secretsPath() {
+  const dir = await mkdtemp(join(tmpdir(), "dropthis-deploy-dev-secrets-"));
+  return join(dir, "secrets.json");
+}
+
 async function outPath() {
   const dir = await mkdtemp(join(tmpdir(), "dropthis-deploy-dev-"));
   return join(dir, "wrangler.dev.jsonc");
@@ -35,6 +40,8 @@ async function outPath() {
 async function readRendered(path: string) {
   return JSON.parse(await readFile(path, "utf8")) as {
     name: string;
+    main: string;
+    vars?: Record<string, string>;
     r2_buckets: Array<{ binding: string; bucket_name: string }>;
     kv_namespaces: Array<{ binding: string; id: string }>;
   };
@@ -167,5 +174,59 @@ describe("deploy-dev --dry-run", () => {
     const rendered = await readRendered(out);
     expect(rendered.name).toBe("dropthis-dev");
     expect(rendered.r2_buckets[0]!.bucket_name).toBe("dropthis-dev-drops");
+  });
+});
+
+describe("deploy-dev renders the dev build", () => {
+  const env = { CLOUDFLARE_API_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account-id" };
+
+  it("points main at the dev entry and turns the /_dev probes on", async () => {
+    const cf = await fake();
+    const out = await outPath();
+
+    const run = await runDeployDev(
+      ["--no-deploy", "--api-base", cf.apiBase, "--config-out", out, "--secrets-out", await secretsPath()],
+      env,
+    );
+
+    expect(run.code, run.stderr).toBe(0);
+    const rendered = await readRendered(out);
+    expect(rendered.main.endsWith("packages/worker/src/dev-entry.ts")).toBe(true);
+    expect(rendered.vars).toEqual({ DEV_ROUTES: "1" });
+  });
+
+  it("mints HMAC_SECRET once and reuses it on every later run", async () => {
+    const cf = await fake();
+    const secrets = await secretsPath();
+    const env2 = { ...env };
+
+    const first = await runDeployDev(
+      ["--no-deploy", "--api-base", cf.apiBase, "--config-out", await outPath(), "--secrets-out", secrets],
+      env2,
+    );
+    expect(first.code, first.stderr).toBe(0);
+    const minted = JSON.parse(await readFile(secrets, "utf8")) as { HMAC_SECRET: string };
+    // 32 random bytes, base64url — long enough that it is not a placeholder.
+    expect(minted.HMAC_SECRET.length).toBeGreaterThanOrEqual(43);
+
+    const second = await runDeployDev(
+      ["--no-deploy", "--api-base", cf.apiBase, "--config-out", await outPath(), "--secrets-out", secrets],
+      env2,
+    );
+    expect(second.code, second.stderr).toBe(0);
+    expect(JSON.parse(await readFile(secrets, "utf8"))).toEqual(minted);
+  });
+
+  it("never prints the secret", async () => {
+    const cf = await fake();
+    const secrets = await secretsPath();
+
+    const run = await runDeployDev(
+      ["--no-deploy", "--api-base", cf.apiBase, "--config-out", await outPath(), "--secrets-out", secrets],
+      env,
+    );
+
+    const minted = JSON.parse(await readFile(secrets, "utf8")) as { HMAC_SECRET: string };
+    expect(run.stdout + run.stderr).not.toContain(minted.HMAC_SECRET);
   });
 });
