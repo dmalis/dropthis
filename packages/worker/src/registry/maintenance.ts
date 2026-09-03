@@ -10,11 +10,17 @@ import { prune, usage } from "../operations/usage.js";
 import { boolParam } from "./params.js";
 import type { Operation } from "./types.js";
 
-const usageSchema = z.strictObject({ cursor: z.string().min(1).optional() });
+const CURSOR_DESCRIPTION = "The cursor of an incomplete previous call, to continue the scan.";
+
+const usageSchema = z.strictObject({
+  cursor: z.string().min(1).optional().describe(CURSOR_DESCRIPTION),
+});
 
 const pruneSchema = z.strictObject({
-  dry_run: boolParam.optional(),
-  cursor: z.string().min(1).optional(),
+  dry_run: boolParam
+    .optional()
+    .describe("Report only (default true). Pass false to delete what is past grace."),
+  cursor: z.string().min(1).optional().describe(CURSOR_DESCRIPTION),
 });
 
 export const usageOp: Operation<z.infer<typeof usageSchema>> = {
