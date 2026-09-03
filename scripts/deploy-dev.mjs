@@ -14,6 +14,7 @@
  *   --no-deploy   reconcile (creating what is missing) and render, but do not deploy
  */
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,17 +30,30 @@ const KV_PAGE_SIZE = 100;
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const templatePath = join(repoRoot, "packages", "worker", "wrangler.jsonc");
-const workerMain = join(repoRoot, "packages", "worker", "src", "index.ts");
+/**
+ * The dev build, and only the dev build, mounts the `/_dev` probes seam 1 uses
+ * to prove remote R2's behaviour. `src/index.ts` — the production entry — never
+ * imports that module.
+ */
+const workerMain = join(repoRoot, "packages", "worker", "src", "dev-entry.ts");
 const defaultConfigOut = join(repoRoot, ".dev", "wrangler.dev.jsonc");
+const defaultSecretsOut = join(repoRoot, ".dev", "secrets.json");
 
 function parseArgs(argv) {
-  const args = { dryRun: false, deploy: true, apiBase: undefined, configOut: defaultConfigOut };
+  const args = {
+    dryRun: false,
+    deploy: true,
+    apiBase: undefined,
+    configOut: defaultConfigOut,
+    secretsOut: defaultSecretsOut,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--no-deploy") args.deploy = false;
     else if (arg === "--api-base") args.apiBase = argv[++i];
     else if (arg === "--config-out") args.configOut = argv[++i];
+    else if (arg === "--secrets-out") args.secretsOut = argv[++i];
     else die(`Unknown option: ${arg}`);
   }
   if (args.dryRun) args.deploy = false;
@@ -119,12 +133,34 @@ async function findNamespace(client, accountId, title) {
   return undefined;
 }
 
+/**
+ * `HMAC_SECRET` is minted once and never re-minted: unlock cookies and signed
+ * upload URLs are HMACs over it, so rotating it on every deploy would silently
+ * invalidate them. The file holds the only copy and is gitignored; nothing
+ * prints it.
+ */
+async function ensureSecrets(secretsOut) {
+  try {
+    const existing = JSON.parse(await readFile(secretsOut, "utf8"));
+    if (typeof existing.HMAC_SECRET === "string" && existing.HMAC_SECRET.length > 0) {
+      return { secrets: existing, minted: false };
+    }
+  } catch {
+    // No file yet, or an unreadable one: mint below.
+  }
+  const secrets = { HMAC_SECRET: randomBytes(32).toString("base64url") };
+  await mkdir(dirname(secretsOut), { recursive: true });
+  await writeFile(secretsOut, `${JSON.stringify(secrets, null, 2)}\n`, "utf8", { mode: 0o600 });
+  return { secrets, minted: true };
+}
+
 async function renderConfig(configOut, kvId) {
   const template = JSON.parse(stripJsonComments(await readFile(templatePath, "utf8")));
   const rendered = {
     ...template,
     name: WORKER_NAME,
     main: workerMain,
+    vars: { DEV_ROUTES: "1" },
     r2_buckets: [{ binding: "BUCKET", bucket_name: BUCKET_NAME }],
     kv_namespaces: [{ binding: "OAUTH_KV", id: kvId }],
   };
@@ -134,11 +170,18 @@ async function renderConfig(configOut, kvId) {
   return rendered;
 }
 
-function runWrangler(configOut, token, accountId) {
+function runWrangler(configOut, secretsOut, token, accountId) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      [join(repoRoot, "node_modules", "wrangler", "bin", "wrangler.js"), "deploy", "-c", configOut],
+      [
+        join(repoRoot, "node_modules", "wrangler", "bin", "wrangler.js"),
+        "deploy",
+        "-c",
+        configOut,
+        "--secrets-file",
+        secretsOut,
+      ],
       {
         cwd: repoRoot,
         stdio: ["ignore", "inherit", "inherit"],
@@ -198,8 +241,11 @@ async function main() {
   await renderConfig(args.configOut, namespace ? namespace.id : "pending-create");
   log(`rendered ${args.configOut}`);
 
+  const { minted } = await ensureSecrets(args.secretsOut);
+  log(`HMAC_SECRET: ${minted ? "minted" : "reused"} (${args.secretsOut})`);
+
   if (args.deploy) {
-    await runWrangler(args.configOut, token, accountId);
+    await runWrangler(args.configOut, args.secretsOut, token, accountId);
     log("deployed");
   }
 
