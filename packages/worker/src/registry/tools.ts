@@ -71,8 +71,13 @@ export const TOOL_TEXT: Record<string, ToolText> = {
       "PAYLOAD_TOO_LARGE otherwise. " +
       'expires is "7d", a date, an RFC 3339 instant or "never", inside this instance\'s policy ' +
       "(POLICY_VIOLATION otherwise); omitted, the policy default applies. " +
+      "{{slug}} " +
       "Send idempotency_key when a retry must not make a second drop.",
     whenField: {
+      slug:
+        "The slug is generated for you; pass slug only when the user wants a readable " +
+        "campaign link (3-40 characters of a-z 0-9 and -), it is permanent, and one another " +
+        "drop already holds is SLUG_TAKEN.",
       password:
         'Prefer password: "generate" — the generated password is in THIS response once and ' +
         "never again; hand it to the user.",

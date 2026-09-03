@@ -22,7 +22,7 @@ const pinOf = (tool: { name: string; description: string; annotations: unknown }
 
 /** Move a pin only in the commit that changes the tool's wording on purpose. */
 const PINS: Record<string, string> = {
-  dropthis_publish: "d301ed979518a0dac64c08c97a8420835772fbf0ba52dae3249b933f6f7e2af0",
+  dropthis_publish: "3634d419bd041b8ea477e154941f24acd232c89be1e5e5240f1b3b1c5687e66e",
   dropthis_update: "b7fc63125b3aecd37ad9cec22588cadfe3c2e5290f4b3ab5e9872d34d5857dc4",
   dropthis_get: "4964c34dbb9531847016f669a634fbd86f1a1db1daee5d5c10e69255fdeee128",
   dropthis_list: "90c3017b61f72f78444e144555906de1efb1e5c6528fd1d76d902736e0dfdab4",
