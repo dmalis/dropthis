@@ -13,6 +13,11 @@ export async function stubWranglerBinary(cfOrigin: string): Promise<string> {
   await writeFile(
     path,
     [
+      // Wrangler prints a banner and a bindings table on stdout. The stub does
+      // too, because a deploy that put those in front of the --json document
+      // is exactly the bug this seam exists to catch.
+      "console.log(' \\u26c5\\ufe0f wrangler 0.0.0-stub');",
+      "console.log('Uploaded a Worker');",
       "const { readFileSync } = require('node:fs');",
       "const argv = process.argv.slice(2);",
       "const at = (flag) => { const i = argv.indexOf(flag); return i === -1 ? null : argv[i + 1]; };",

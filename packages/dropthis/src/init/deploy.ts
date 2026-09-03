@@ -17,6 +17,7 @@
  * seconds wrangler is reading it.
  */
 import { spawn } from "node:child_process";
+import type { Writable } from "node:stream";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -36,6 +37,12 @@ export type DeployOptions = {
   /** Tests point this at a stub; production resolves the bundled wrangler. */
   wranglerPath?: string;
   cwd?: string;
+  /**
+   * Where wrangler's own chatter goes. NEVER our stdout: `--json` is exactly
+   * one document there, and wrangler prints a banner and a table on every
+   * deploy. Defaults to stderr, which is where everything but the result goes.
+   */
+  log?: Writable;
 };
 
 /** `~/.config/dropthis/<name>/` — beside `instances.json`, never in the cwd. */
@@ -66,6 +73,7 @@ export async function wranglerDeploy(options: DeployOptions): Promise<void> {
   try {
     await run(resolveWrangler(options.wranglerPath), args, {
       cwd: options.cwd ?? process.cwd(),
+      log: options.log ?? process.stderr,
       env: {
         ...process.env,
         CLOUDFLARE_API_TOKEN: options.token,
@@ -96,16 +104,19 @@ export function resolveWrangler(explicit?: string): string {
 function run(
   script: string,
   args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
+  options: { cwd: string; env: NodeJS.ProcessEnv; log: Writable },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], {
       cwd: options.cwd,
       env: options.env,
-      // wrangler talks to the operator, not to us: its output goes straight
-      // to stderr so `--json` on stdout stays one document.
-      stdio: ["ignore", "inherit", "inherit"],
+      // wrangler talks to the operator, not to us. Its stdout is REDIRECTED to
+      // ours-for-humans (stderr): inheriting it put a banner in front of the
+      // `--json` document and broke "exactly one JSON document on stdout".
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    child.stdout.pipe(options.log, { end: false });
+    child.stderr.pipe(options.log, { end: false });
     child.on("error", reject);
     child.on("exit", (code) =>
       code === 0 ? resolve() : reject(new Error(`wrangler deploy exited ${String(code)}`)),

@@ -130,6 +130,7 @@ export async function runInitCommand(input: InitInput, globals: Globals, io: Run
         token: credential.token,
         accountId: credential.accountId ?? "",
         cwd: io.cwd,
+        log: io.stderr,
         ...(io.env.DROPTHIS_WRANGLER === undefined ? {} : { wranglerPath: io.env.DROPTHIS_WRANGLER }),
       });
       const override = probeOverride(io.env);
