@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_FILES_PER_CALL, parsePublishInput } from "../src/registry/publish.js";
+import { MAX_FILES_PER_CALL, MAX_URL_ENTRIES, parsePublishInput } from "../src/registry/publish.js";
 
 const ok = { files: [{ path: "index.html", text: "<h1>hi</h1>" }] };
 
@@ -68,10 +68,52 @@ describe("parsePublishInput", () => {
     expect(codeOf(() => parsePublishInput({ files: [{ path: "a.txt" }] }))).toBe("INVALID_INPUT");
   });
 
-  it("rejects a url entry — the fetch path is not in this slice", () => {
+  it("accepts a url entry, with and without its digest and size", () => {
     expect(
-      codeOf(() => parsePublishInput({ files: [{ path: "a.txt", url: "https://example.com/a" }] })),
+      parsePublishInput({ files: [{ path: "a.png", url: "https://example.com/a.png" }] }).files[0],
+    ).toEqual({ path: "a.png", url: "https://example.com/a.png" });
+    const withDigest = parsePublishInput({
+      files: [{ path: "a.png", url: "https://example.com/a.png", sha256: "a".repeat(64), size: 12 }],
+    });
+    expect(withDigest.files[0]).toEqual({
+      path: "a.png",
+      url: "https://example.com/a.png",
+      sha256: "a".repeat(64),
+      size: 12,
+    });
+  });
+
+  it("rejects an entry that carries url beside base64", () => {
+    expect(
+      codeOf(() =>
+        parsePublishInput({ files: [{ path: "a.png", base64: "AAAA", url: "https://example.com/a" }] }),
+      ),
     ).toBe("INVALID_INPUT");
+  });
+
+  it("refuses more url entries than one call may fetch", () => {
+    const files = Array.from({ length: MAX_URL_ENTRIES + 1 }, (_, i) => ({
+      path: `a${i}.png`,
+      url: `https://example.com/${i}.png`,
+    }));
+    expect(codeOf(() => parsePublishInput({ files }))).toBe("INVALID_INPUT");
+  });
+
+  it("accepts exactly the maximum number of url entries", () => {
+    const files = Array.from({ length: MAX_URL_ENTRIES }, (_, i) => ({
+      path: `a${i}.png`,
+      url: `https://example.com/${i}.png`,
+    }));
+    expect(parsePublishInput({ files }).files).toHaveLength(MAX_URL_ENTRIES);
+  });
+
+  it("names all three kinds when an entry matches none of them", () => {
+    try {
+      parsePublishInput({ files: [{ path: "a.txt" }] });
+      throw new Error("unreachable");
+    } catch (error) {
+      expect((error as Error).message).toContain("url");
+    }
   });
 
   it("requires at least one file", () => {
