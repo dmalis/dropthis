@@ -567,7 +567,8 @@ noindex. **Prune** — deleting expired drops, abandoned uploads and orphaned ge
 ## Stack (#70 — library over hand-rolled wherever a maintained standard exists)
 
 Worker: **Hono** (routing) · **@modelcontextprotocol/sdk** (MCP over Streamable HTTP through
-its own web-standard transport, one stateless server per request; `@hono/mcp` was dropped, #80) · **@cloudflare/workers-oauth-provider** (OAuth, #53) · **zod** (one schema per
+its own web-standard transport, one stateless server per request; `@hono/mcp` was dropped,
+#80) · **@cloudflare/workers-oauth-provider** (OAuth, #53) · **zod** (one schema per
 operation in the registry drives REST validation, the MCP tool schemas and CLI parsing) ·
 **canonicalize** (RFC 8785) · WebCrypto built-ins for sha256/HMAC/PBKDF2/AES-GCM (no lib).
 CLI/installer: **cloudflare** (official typed SDK — all provisioning calls) · **wrangler**
