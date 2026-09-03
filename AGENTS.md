@@ -648,6 +648,8 @@ decision entry in the same commit.
 - Docs are generated from the operation registry wherever possible. Hand-written prose is
   limited to README, this file, `SECURITY.md`, `docs/decisions.md` and `docs/spec-v1.md`
   (the v1 spec, committed by owner decision #65; code beats it on conflict).
+- Several worktrees share this machine. Never kill a test process by name (`pkill vitest`,
+  `killall node`); kill only the PID of the run you started.
 - No plan files or status notes in the repo. Decisions go in `docs/decisions.md` with a date
   and a reason; superseded entries are marked, not deleted.
 
