@@ -424,6 +424,17 @@ finish its task.
     error. The solo default user is the admin key `init` mints; `user add` is only for
     additional people. Amends #44's milestone-1 wording (operator instance is `main`).
 
+70. **Stack chosen: maintained libraries over hand-rolled code, full circle.** Worker: Hono,
+    @modelcontextprotocol/sdk + @hono/mcp, @cloudflare/workers-oauth-provider (#53), zod
+    (registry schemas → REST + MCP + CLI from one definition), canonicalize (RFC 8785),
+    WebCrypto built-ins. CLI/installer: the official `cloudflare` typed SDK for every
+    provisioning call, bundled wrangler for deploy + browser login, commander,
+    @vercel/detect-agent, @clack/prompts. Tests: vitest; Hono for the fake Cloudflare API;
+    the MCP SDK's client in the corpus. No library for storage or the pure domain functions
+    (slugs, paths, policy, expiry) — that is the product. Versions are pinned and each
+    library re-verified as maintained the day its slice starts; the AGENTS.md Stack block is
+    the living list and changes only together with a decision entry.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry

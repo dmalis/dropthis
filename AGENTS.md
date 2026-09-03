@@ -536,6 +536,21 @@ and a scope. **Instance** — one Worker + bucket + config; one team; the unit o
 of hosting a client. **Policy** — the instance's defaults and rules for expiry, password,
 noindex. **Prune** — deleting expired drops, abandoned uploads and orphaned generations.
 
+## Stack (#70 — library over hand-rolled wherever a maintained standard exists)
+
+Worker: **Hono** (routing) · **@modelcontextprotocol/sdk + @hono/mcp** (MCP over Streamable
+HTTP) · **@cloudflare/workers-oauth-provider** (OAuth, #53) · **zod** (one schema per
+operation in the registry drives REST validation, the MCP tool schemas and CLI parsing) ·
+**canonicalize** (RFC 8785) · WebCrypto built-ins for sha256/HMAC/PBKDF2/AES-GCM (no lib).
+CLI/installer: **cloudflare** (official typed SDK — all provisioning calls) · **wrangler**
+bundled (deploy + browser login, never reimplemented) · **commander** · **@vercel/detect-agent** ·
+**@clack/prompts**. Tests: **vitest**; Hono again for `test/fake-cloudflare/`; the MCP SDK's
+client drives `/_api/mcp` in the corpus. Deliberately no library: storage (the R2 binding is
+the API), slugs/paths/policy/expiry (pure functions — the product itself), no ORM, no
+framework beyond the above. Exact versions are pinned and re-verified the day a slice starts;
+if a listed library turns out unmaintained or unfit, replace it and update this block + a
+decision entry in the same commit.
+
 ## Working rules for this repo
 
 - The dev credential: contract tests and `init` read `CLOUDFLARE_API_TOKEN` and
