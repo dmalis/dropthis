@@ -2,7 +2,9 @@
   "name": "dropthis-monorepo",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "workspaces": [
     "packages/*",
     "contract-tests",
@@ -11,7 +13,7 @@
   "scripts": {
     "build": "npm run build --workspace=dropthis",
     "deploy:dev": "node scripts/deploy-dev.mjs",
-    "test": "npm run build --workspace=dropthis && vitest run",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
