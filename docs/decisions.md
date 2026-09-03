@@ -371,6 +371,21 @@ finish its task.
     that keep it from rotting: current code beats it on conflict; superseded sections are
     marked, not edited away; it is retired (marked historical) when v1's milestones pass.
 
+## Follow-up grilling, 2026-09-03
+
+66. **Topology, marketing, self-hosting, demo — settled in a follow-up grilling.**
+    (a) `dropthis.app` root = marketing; every instance is one subdomain (`damjan.`,
+    `byrokko.`, future managed clients `<client>.dropthis.app`) — the Vercel-style split,
+    and #28 keeps drops off any cookie-bearing domain. (b) "Self-hostable" is defined as
+    the current design: your own Cloudflare account, `npx dropthis init`, no central
+    service — no second backend gets built (#1 stands). (c) The marketing site comes after
+    v1 and is dogfooded: a root drop at `dropthis.app` served via `host_*` — dropthis
+    hosting its own site is the credibility signal. (d) The demo/public-playground idea is
+    skipped; if a public playground is ever wanted (Reddit showcase), it gets its own
+    abuse-control grilling first. Priority order confirmed: operator instance (milestone 1),
+    then Byrokko (milestone 2). Work is ticketed as GitHub issues #1–#14 (`ready-for-agent`),
+    issue numbers = ticket numbers.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry
