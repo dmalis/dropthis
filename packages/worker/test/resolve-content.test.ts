@@ -184,6 +184,45 @@ describe("resolveFiles with url entries", () => {
     });
   });
 
+  it("streams a body whose length the caller declared, past max_unhashed_bytes", async () => {
+    const big = new Uint8Array(4096);
+    const digest = await sha256Hex(big as Uint8Array<ArrayBuffer>);
+    const tiny = { ...policy, max_unhashed_bytes: 16 } as ResolvedPolicy;
+    const resolved = await resolveFiles(
+      [{ path: "a.bin", url: "https://a.example/x", sha256: digest, size: 4096 }],
+      { policy: tiny, fetchImpl: serve(big) as unknown as typeof fetch, streamBlob: async () => 4096 },
+    );
+    expect(resolved.manifest["a.bin"]!.size).toBe(4096);
+  });
+
+  it("refuses a body that is not the length the caller declared", async () => {
+    const big = new Uint8Array(4096);
+    const digest = await sha256Hex(big as Uint8Array<ArrayBuffer>);
+    expect(
+      await codeOf(() =>
+        resolveFiles([{ path: "a.bin", url: "https://a.example/x", sha256: digest, size: 999 }], {
+          policy,
+          fetchImpl: serve(big) as unknown as typeof fetch,
+          streamBlob: async () => 999,
+        }),
+      ),
+    ).toBe("HASH_MISMATCH");
+  });
+
+  it("refuses a declared size over max_file_bytes before it reads a byte", async () => {
+    const spy = vi.fn(serve(new Uint8Array(4)) as unknown as typeof fetch);
+    const tiny = { ...policy, max_file_bytes: 1024 } as ResolvedPolicy;
+    expect(
+      await codeOf(() =>
+        resolveFiles([{ path: "a.bin", url: "https://a.example/x", sha256: "a".repeat(64), size: 99999 }], {
+          policy: tiny,
+          fetchImpl: spy,
+          streamBlob: async () => 0,
+        }),
+      ),
+    ).toBe("PAYLOAD_TOO_LARGE");
+  });
+
   it("refuses an undigested body over max_unhashed_bytes", async () => {
     const big = new Uint8Array(64);
     const tiny = { ...policy, max_unhashed_bytes: 16 } as ResolvedPolicy;

@@ -62,10 +62,13 @@ const urlEntry = z.strictObject({
     .string()
     .describe(
       "A public http(s) URL this instance fetches for you — it costs you no tokens. " +
-        "Give sha256 when you know it.",
+        "Give sha256 and size when you know them.",
     ),
   sha256: z.string().optional(),
-  size: z.number().optional(),
+  size: z
+    .number()
+    .optional()
+    .describe("The file's length in bytes, when you know it: the body is streamed, never buffered."),
 });
 
 /**
@@ -85,7 +88,7 @@ export const FILES_DESCRIPTION =
   "The files, each {path, text}, {path, base64} or {path, url}, exactly one of the three. " +
   "On update, the WHOLE set. " +
   "Anything that already exists at a public http(s) URL goes as {path, url}: this instance " +
-  "fetches the bytes and they cost you no tokens — add sha256 when you know it. " +
+  "fetches the bytes and they cost you no tokens — add sha256 and size when you know them. " +
   "Inline base64 costs you roughly one output token per byte, so keep it for small binaries " +
   "(a few KB) and shrink a photo to what the page actually needs — a sprite of 128 px or less, " +
   "JPEG or WebP — before inlining it.";

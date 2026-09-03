@@ -469,8 +469,12 @@ export async function commitSession(
       continue;
     }
     const response = await fetchPublicUrl(source, { budget });
+    // The staged manifest always declares the size, so the body streams under a
+    // `FixedLengthStream` and never has to be held in the isolate.
+    const declared = Object.values(session.manifest).find((e) => e.sha256 === digest)?.size;
     await streamToBlob(response, source, digest, {
       policy: config.policy,
+      declaredSize: declared,
       streamBlob: async (sha256, body) =>
         (await putBlob(bucket, blobKey(session.drop_id, sha256), body, sha256)).size,
     });

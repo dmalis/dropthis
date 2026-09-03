@@ -175,14 +175,24 @@ describe("the undigested ceiling", () => {
     expect(error.status).toBe(413);
     expect(error.code).toBe("PAYLOAD_TOO_LARGE");
 
-    // The same body WITH a digest streams past the same cap: R2 verifies it.
+    // With sha256 AND size the body is wrapped in a FixedLengthStream and goes
+    // straight to R2, so the same body passes a cap it could never be held under.
     const digest = await sha256Of(BIG_TEXT);
     const ok = await publishOk({
-      files: [{ path: "big.txt", url: big, sha256: digest }],
-      title: "Digested past the cap",
+      files: [{ path: "big.txt", url: big, sha256: digest, size: 2048 }],
+      title: "Streamed past the cap",
       expires: "1d",
     });
     expect(filesOf(ok)[0]!.size).toBe(2048);
+
+    // A size that is not the body's length errors that stream: HASH_MISMATCH,
+    // and the key stays absent.
+    const wrongSize = await errorOf(
+      await publish({ files: [{ path: "big.txt", url: big, sha256: digest, size: 999 }] }),
+    );
+    expect(wrongSize.status).toBe(422);
+    expect(wrongSize.code).toBe("HASH_MISMATCH");
+
     await restore();
   });
 });
@@ -265,6 +275,7 @@ describe("the served skill", () => {
     expect(text).toContain("2097152 bytes");
     expect(text).toContain("104857600 bytes");
     expect(text).toContain("128 px");
+    expect(text).toContain("`size`");
     expect(text).not.toMatch(/\{\{|\}\}/);
   });
 });

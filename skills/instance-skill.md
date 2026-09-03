@@ -39,9 +39,10 @@ names below are the MCP names; the REST routes are the same five operations.
   - `{path, text}` for text you wrote: HTML, CSS, JS, Markdown, JSON, SVG.
   - `{path, url}` for a picture, PDF, font or archive that already exists at a public
     http(s) address. This instance fetches it, so **it costs you no tokens**. Add `sha256`
-    when you know it; without one the instance must hash the body itself and refuses above
-    **{{max_unhashed_bytes}} bytes**. With a digest a file may be up to
-    **{{max_file_bytes}} bytes**. A target that is not public, is not http(s), or does not
+    and `size` when you know them: with both, the body is streamed straight through and may
+    be up to **{{max_file_bytes}} bytes**. Without them the instance has to hold the body
+    itself and refuses above **{{max_unhashed_bytes}} bytes**. A body that is not `size`
+    bytes long is `HASH_MISMATCH` and nothing is stored. A target that is not public, is not http(s), or does not
     answer, is `FETCH_FAILED`; wrong bytes are `HASH_MISMATCH`. At most {{max_url_entries}}
     `url` entries per call.
   - `{path, base64}` **only for small binaries**. The bytes are your own generated tokens:

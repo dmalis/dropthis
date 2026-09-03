@@ -27,6 +27,7 @@ import { sha256Hex } from "../domain/meta.js";
 import type { Manifest } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
 import { ApiError } from "../errors.js";
+import { StorageError } from "../storage/r2.js";
 import { INITIAL_POLICY } from "../policy/defaults.js";
 import type { ResolvedPolicy } from "../instance-config.js";
 import type { PublishFile } from "../registry/publish.js";
@@ -176,12 +177,7 @@ async function resolveUrlEntry(
   });
 
   const declared = contentLength(response);
-  if (declared !== undefined && declared > policy.max_file_bytes) {
-    throw new ApiError(
-      "PAYLOAD_TOO_LARGE",
-      `${entry.url} is ${declared} bytes; this instance accepts files up to ${policy.max_file_bytes}.`,
-    );
-  }
+  if (declared !== undefined) tooLarge(entry.url, declared, policy.max_file_bytes);
   if (response.body === null) {
     throw new ApiError("FETCH_FAILED", `${entry.url} answered with no body.`);
   }
@@ -192,6 +188,7 @@ async function resolveUrlEntry(
     const size = await streamToBlob(response, entry.url, entry.sha256, {
       policy,
       streamBlob: ctx.streamBlob,
+      declaredSize: entry.size,
     });
     return { path, sha256: entry.sha256, contentType, size };
   }
@@ -215,13 +212,18 @@ async function resolveUrlEntry(
 /**
  * Send a fetched body to its final blob key, letting R2 verify the digest.
  *
- * R2 refuses a stream whose length it does not know ("Provided readable stream
- * must have a known length" — measured against remote R2, 2026-09-03), so a
- * response that declares `Content-Length` streams through untouched and one
- * that does not is buffered first. That is why a chunked response is capped at
- * `max_unhashed_bytes` even when the caller sent a digest: the Worker has to
- * hold those bytes to give R2 a length, and holding them is exactly what that
- * limit bounds.
+ * R2 refuses a stream whose length it does not know — "Provided readable stream
+ * must have a known length (request/response body or readable half of
+ * FixedLengthStream)", measured against remote R2 on 2026-09-03 — and a drop's
+ * own viewer does not always send `Content-Length`. So there are three ways to
+ * give R2 a length, in this order:
+ *
+ *   1. the caller's `size`, wrapped in a `FixedLengthStream`. A body that turns
+ *      out shorter or longer errors that stream, the put fails and the key
+ *      stays absent: `HASH_MISMATCH`, the same answer a wrong digest gets;
+ *   2. the response's own `Content-Length`, streamed through untouched;
+ *   3. nothing — the Worker buffers, and `max_unhashed_bytes` is the cap,
+ *      because holding those bytes is exactly what that limit bounds.
  *
  * Shared by `publish`/`update` and the staged commit, which fetches a `url`
  * manifest entry the client never uploaded.
@@ -243,32 +245,85 @@ export async function streamToBlob(
       sha256: string,
       body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>,
     ) => Promise<number | undefined>;
+    declaredSize?: number | undefined;
   },
 ): Promise<number> {
   if (response.body === null) throw new ApiError("FETCH_FAILED", `${url} answered with no body.`);
+  const body = response.body as ReadableStream<Uint8Array>;
+
+  if (ctx.declaredSize !== undefined) {
+    tooLarge(url, ctx.declaredSize, ctx.policy.max_file_bytes);
+    const fixed = fixedLength(ctx.declaredSize);
+    if (fixed !== null) {
+      // The pipe is NOT awaited before the put: R2 reads the readable half as
+      // the body arrives, so awaiting here would deadlock. Its rejection is
+      // absorbed — the put fails with the same error, and that is the one the
+      // caller sees.
+      void body.pipeTo(fixed.writable).catch(() => {});
+      const written = await asHashMismatch(url, ctx.declaredSize, () =>
+        ctx.streamBlob(sha256, fixed.readable),
+      );
+      return written ?? ctx.declaredSize;
+    }
+    // No `FixedLengthStream` (Node, under the unit tests): buffer and check the
+    // length ourselves, so the same call answers the same way.
+    const bytes = await readCapped(body, ctx.policy.max_file_bytes, url, { unhashed: false });
+    if (bytes.length !== ctx.declaredSize) {
+      throw new ApiError(
+        "HASH_MISMATCH",
+        `${url} answered ${bytes.length} bytes, not the ${ctx.declaredSize} sent with it.`,
+      );
+    }
+    return (await ctx.streamBlob(sha256, bytes)) ?? bytes.length;
+  }
 
   // `Number("")` is 0, so an ABSENT header must be told from a zero-length one:
   // a body of unknown length is exactly what R2 refuses.
   const header = contentLength(response);
   if (header !== undefined) {
-    if (header > ctx.policy.max_file_bytes) {
-      throw new ApiError(
-        "PAYLOAD_TOO_LARGE",
-        `${url} is ${header} bytes; this instance accepts files up to ${ctx.policy.max_file_bytes}.`,
-      );
-    }
-    const written = await ctx.streamBlob(sha256, response.body as ReadableStream<Uint8Array>);
-    return written ?? header;
+    tooLarge(url, header, ctx.policy.max_file_bytes);
+    return (await ctx.streamBlob(sha256, body)) ?? header;
   }
 
-  const bytes = await readCapped(
-    response.body as ReadableStream<Uint8Array>,
-    ctx.policy.max_unhashed_bytes,
-    url,
-    { unhashed: true },
-  );
-  const written = await ctx.streamBlob(sha256, bytes);
-  return written ?? bytes.length;
+  const bytes = await readCapped(body, ctx.policy.max_unhashed_bytes, url, { unhashed: true });
+  return (await ctx.streamBlob(sha256, bytes)) ?? bytes.length;
+}
+
+function tooLarge(url: string, size: number, max: number): void {
+  if (size > max) {
+    throw new ApiError(
+      "PAYLOAD_TOO_LARGE",
+      `${url} is ${size} bytes; this instance accepts files up to ${max}.`,
+    );
+  }
+}
+
+/**
+ * A body that does not deliver exactly the declared length errors the stream,
+ * and workerd words that failure its own way. The caller's mistake is the same
+ * one either way — the bytes are not what they said — so it gets the same code.
+ * A throttle is still a throttle.
+ */
+async function asHashMismatch<T>(url: string, size: number, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof StorageError && error.code === "R2_RATE_LIMIT") throw error;
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(
+      "HASH_MISMATCH",
+      `${url} did not deliver ${size} bytes matching the sha256 sent with it.`,
+    );
+  }
+}
+
+type FixedLength = { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> };
+
+/** workerd's `FixedLengthStream`, or `null` where the runtime has none. */
+function fixedLength(size: number): FixedLength | null {
+  const ctor = (globalThis as { FixedLengthStream?: new (size: number) => FixedLength })
+    .FixedLengthStream;
+  return ctor === undefined ? null : new ctor(size);
 }
 
 async function readCapped(
