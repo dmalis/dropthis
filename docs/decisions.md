@@ -435,6 +435,18 @@ finish its task.
     library re-verified as maintained the day its slice starts; the AGENTS.md Stack block is
     the living list and changes only together with a decision entry.
 
+## Implementation start, 2026-09-03
+
+71. **Three clarifications at implementation start (from the Codex review of the first
+    slice specs).** (a) `GET /_api/v1/health` joins the frozen route table: unauthenticated
+    `200 {"ok": true}`, nothing else disclosed — `init` needs a poll target while the deploy
+    propagates, and the after-v1 unclaimed bootstrap already assumed a health route.
+    (b) The phase-zero claude.ai spike gates the OAuth slice (#12) and the auth contract, not
+    the whole repo: storage and bearer slices carry no OAuth assumption and run in parallel
+    with the spike (the owner started both lanes together); a failed spike revises the auth
+    contract before #12. (c) "slice 2 measures `max_request_bytes`" referred to the
+    pre-ticket phase list; the measurement belongs to issue #3, the R2 truth slice.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry

@@ -55,6 +55,8 @@ designed fresh for agents.
 
 ```
 /<slug>/*            viewer: resolve slug → drop → serve file (cache, unlock, headers)
+/_api/v1/health      unauthenticated liveness `{ok: true}`: init's propagation poll, the
+                     after-v1 unclaimed bootstrap's one open route (#71)
 /_api/v1/*           REST; bearer key auth
 /_api/mcp            MCP over Streamable HTTP; bearer key, or OAuth (workers-oauth-provider)
 /_oauth/*            OAuth endpoints + the one authorize page (paste your key)
@@ -169,7 +171,7 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   fallback); text-typed = `text/*`, JSON, JavaScript, XML, SVG and `+json`/`+xml` types. The
   single-call ceiling is policy `max_request_bytes` — **2 MB by default**: inline entries
   are JSON-parsed and base64-decoded by the Worker inside the CPU budget (10 ms on Free —
-  25 MB is impossible there); slice 2 measures the true Free-safe value; `url` and staged
+  25 MB is impossible there); issue #3 (the R2 truth slice) measures the true Free-safe value; `url` and staged
   entries stream to R2 with R2 verifying the hash and cost almost no CPU. `/_skill.md`
   prints the current value and says: text inline, files by `url`. Above it **the CLI — the only staged-path client in v1** — uses
   `POST /_api/v1/uploads` (manifest → `upload_id`, drop id and slug allocated, missing
@@ -288,7 +290,9 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   ends every session behind it: every OAuth token resolves to a key id and is checked
   against `keys/<id>.json` on each request. `@cloudflare/workers-oauth-provider` does the
   protocol; a recorded spike against a real claude.ai connector is **phase zero** — it runs
-  before any code in this repo, and if it fails the auth contract is revised first. On
+  before any OAuth code lands (issue #12) and gates the auth contract; storage and bearer
+  slices proceed in parallel with it, and if it fails the auth contract is revised before
+  #12 starts (#71). On
   claude.ai Team/Enterprise only an Owner can add a custom connector; members then
   log in with their own key — onboarding messages say so.
 - Cloudflare Access was evaluated and rejected as the auth layer (50 service-token cap,
