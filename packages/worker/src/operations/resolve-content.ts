@@ -192,28 +192,11 @@ async function resolveUrlEntry(
   // With a digest and a writer, the bytes go straight to their final key and
   // R2 verifies them — the Worker never sees them.
   if (entry.sha256 !== undefined && ctx.streamBlob !== undefined) {
-    let oversize = false;
-    const capped = response.body.pipeThrough(
-      limit(policy.max_file_bytes, () => {
-        oversize = true;
-      }),
-    );
-    let written: number | undefined;
-    try {
-      written = await ctx.streamBlob(entry.sha256, capped as ReadableStream<Uint8Array>);
-    } catch (error) {
-      if (oversize || error instanceof Oversize) {
-        throw new ApiError(
-          "PAYLOAD_TOO_LARGE",
-          `${entry.url} is over ${policy.max_file_bytes} bytes, this instance's max_file_bytes.`,
-        );
-      }
-      throw error;
-    }
-    const size = written ?? (Number.isInteger(declared) ? declared : entry.size);
-    if (size === undefined) {
-      throw new ApiError("INTERNAL", `The stored size of ${entry.url} is unknown.`);
-    }
+    const size = await streamToBlob(response, entry.url, entry.sha256, {
+      policy,
+      streamBlob: ctx.streamBlob,
+      ...(entry.size === undefined ? {} : { declaredSize: entry.size }),
+    });
     return { path, sha256: entry.sha256, contentType, size };
   }
 
@@ -231,6 +214,49 @@ async function resolveUrlEntry(
     );
   }
   return { path, bytes, sha256: digest, contentType, size: bytes.length };
+}
+
+/**
+ * Pipe a fetched body to its final blob key, capped, letting R2 verify the
+ * digest. Shared by `publish`/`update` and the staged commit, which fetches a
+ * `url` manifest entry the client never uploaded.
+ */
+export async function streamToBlob(
+  response: Response,
+  url: string,
+  sha256: string,
+  ctx: {
+    policy: ResolvedPolicy;
+    streamBlob: (sha256: string, body: ReadableStream<Uint8Array>) => Promise<number | undefined>;
+    declaredSize?: number;
+  },
+): Promise<number> {
+  if (response.body === null) throw new ApiError("FETCH_FAILED", `${url} answered with no body.`);
+  const max = ctx.policy.max_file_bytes;
+  let oversize = false;
+  const capped = response.body.pipeThrough(
+    limit(max, () => {
+      oversize = true;
+    }),
+  );
+
+  let written: number | undefined;
+  try {
+    written = await ctx.streamBlob(sha256, capped as ReadableStream<Uint8Array>);
+  } catch (error) {
+    if (oversize || error instanceof Oversize) {
+      throw new ApiError(
+        "PAYLOAD_TOO_LARGE",
+        `${url} is over ${max} bytes, this instance's max_file_bytes.`,
+      );
+    }
+    throw error;
+  }
+
+  const header = Number(response.headers.get("content-length") ?? "");
+  const size = written ?? (Number.isInteger(header) ? header : ctx.declaredSize);
+  if (size === undefined) throw new ApiError("INTERNAL", `The stored size of ${url} is unknown.`);
+  return size;
 }
 
 /** Errors the stream past `max` bytes, so an oversized body fails the put. */

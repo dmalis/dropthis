@@ -46,6 +46,9 @@ import {
 import { casPut, claimKey, createPut, putBlob } from "../storage/r2.js";
 import { decryptResult, encryptResult } from "../storage/result-crypto.js";
 import { signUploadUrl, verifyUploadSignature } from "../storage/upload-sign.js";
+import { checkPublicUrl, fetchPublicUrl, newFetchBudget } from "./fetch-url.js";
+import { MAX_URL_ENTRIES } from "../registry/fields.js";
+import { streamToBlob } from "./resolve-content.js";
 import { loadDrop } from "./get.js";
 import { openPassword, sealPassword } from "./idempotency.js";
 import { writeProjections } from "./projections.js";
@@ -57,7 +60,13 @@ export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 /** A signed PUT URL lives one hour. */
 export const PUT_URL_TTL_S = 60 * 60;
 
-export type ManifestInput = { path: string; size: number; sha256: string };
+export type ManifestInput = {
+  path: string;
+  size: number;
+  sha256: string;
+  /** A public URL the INSTANCE fetches at commit; the client never uploads it. */
+  url?: string | undefined;
+};
 
 export type SessionInput = {
   target?: string | undefined;
@@ -85,6 +94,12 @@ export type UploadSession = {
   /** An update's `meta.json` etag at session open; commit CASes against it. */
   base_etag: string | null;
   manifest: Manifest;
+  /**
+   * `sha256` → the public URL the instance fetches for it at commit. A blob
+   * with a source is never asked of the client, so a drop too large for one
+   * call can still carry an image that already lives on the web.
+   */
+  sources?: Record<string, string>;
   /** So an idempotent rerun can tell "the same upload" from "another one". */
   manifest_hash: string;
   created: string;
@@ -140,8 +155,10 @@ export async function createSession(
   ctx: UploadContext,
 ): Promise<{ session: SessionResult; created: boolean }> {
   const { bucket, now } = ctx;
-  const manifest = parseManifest(input.manifest, ctx.config.policy);
-  const manifestHash = await sha256Hex(canonicalJson({ target: input.target ?? null, manifest }));
+  const { manifest, sources } = parseManifest(input.manifest, ctx.config.policy);
+  const manifestHash = await sha256Hex(
+    canonicalJson({ target: input.target ?? null, manifest, sources }),
+  );
 
   const uploadId =
     input.idempotency_key === undefined
@@ -192,6 +209,7 @@ export async function createSession(
     target: input.target ?? null,
     base_etag: baseEtag,
     manifest,
+    ...(Object.keys(sources).length === 0 ? {} : { sources }),
     manifest_hash: manifestHash,
     created: second(now),
     expires,
@@ -216,7 +234,10 @@ export async function createSession(
   return { session: await describe(session, ctx, input.target !== undefined), created: true };
 }
 
-function parseManifest(entries: ManifestInput[], policy: ResolvedPolicy): Manifest {
+function parseManifest(
+  entries: ManifestInput[],
+  policy: ResolvedPolicy,
+): { manifest: Manifest; sources: Record<string, string> } {
   if (entries.length === 0) throw new ApiError("INVALID_INPUT", "manifest must hold at least one entry.");
   if (entries.length > MAX_FILES_PER_CALL) {
     throw new ApiError(
@@ -234,6 +255,7 @@ function parseManifest(entries: ManifestInput[], policy: ResolvedPolicy): Manife
   }
 
   const manifest: Manifest = {};
+  const sources: Record<string, string> = {};
   for (const [index, entry] of entries.entries()) {
     const path = paths[index]!;
     if (!SHA256_HEX.test(entry.sha256)) {
@@ -249,8 +271,17 @@ function parseManifest(entries: ManifestInput[], policy: ResolvedPolicy): Manife
       );
     }
     manifest[path] = { sha256: entry.sha256, size: entry.size, content_type: contentTypeForPath(path) };
+    // The target is validated now, not at commit: a URL this instance will
+    // never fetch should fail before the client uploads anything else.
+    if (entry.url !== undefined) sources[entry.sha256] = checkPublicUrl(entry.url).href;
   }
-  return manifest;
+  if (Object.keys(sources).length > MAX_URL_ENTRIES) {
+    throw new ApiError(
+      "INVALID_INPUT",
+      `A single upload fetches at most ${MAX_URL_ENTRIES} url entries; this one has ${Object.keys(sources).length}.`,
+    );
+  }
+  return { manifest, sources };
 }
 
 /**
@@ -284,6 +315,8 @@ async function describe(
   const digests = [...new Set(Object.values(session.manifest).map((entry) => entry.sha256))];
   const missing: string[] = [];
   for (const digest of digests) {
+    // A blob the instance fetches itself is never the client's to upload.
+    if (session.sources?.[digest] !== undefined) continue;
     if (check && (await ctx.bucket.head(blobKey(session.drop_id, digest))) !== null) continue;
     missing.push(digest);
   }
@@ -421,11 +454,26 @@ export async function commitSession(
     if (replayed !== null) return { drop: replayed, created: false };
   }
 
-  // Every blob must be there. `HEAD` per distinct digest, ≤ 500.
+  // Every blob must be there. `HEAD` per distinct digest, ≤ 500. A digest with
+  // a `url` source that is not there yet is fetched now, streamed straight to
+  // its final key with R2 verifying the digest — the same write the client's
+  // signed PUT would have made.
   const digests = [...new Set(Object.values(session.manifest).map((entry) => entry.sha256))];
+  const budget = newFetchBudget();
   const missing: string[] = [];
   for (const digest of digests) {
-    if ((await bucket.head(blobKey(session.drop_id, digest))) === null) missing.push(digest);
+    if ((await bucket.head(blobKey(session.drop_id, digest))) !== null) continue;
+    const source = session.sources?.[digest];
+    if (source === undefined) {
+      missing.push(digest);
+      continue;
+    }
+    const response = await fetchPublicUrl(source, { budget });
+    await streamToBlob(response, source, digest, {
+      policy: config.policy,
+      streamBlob: async (sha256, body) =>
+        (await putBlob(bucket, blobKey(session.drop_id, sha256), body, sha256)).size,
+    });
   }
   if (missing.length > 0) {
     throw new ApiError(

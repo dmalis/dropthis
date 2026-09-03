@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hashKey } from "../src/auth/key.js";
 import type { Env } from "../src/bindings.js";
 import { DEV_HOOKS } from "../src/dev/enabled-hooks.js";
@@ -86,6 +86,25 @@ async function file(path: string, text: string): Promise<File> {
 const manifestOf = (files: File[]) =>
   files.map((f) => ({ path: f.path, size: f.bytes.length, sha256: f.sha256 }));
 
+/** Serves one body at one URL, so a `url` manifest entry has something to fetch. */
+function stubFetch(bodies: Record<string, Uint8Array>) {
+  const spy = vi.fn(async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const bytes = bodies[url];
+    if (bytes === undefined) return new Response("no", { status: 404 });
+    return new Response(new Blob([bytes as Uint8Array<ArrayBuffer>]).stream(), {
+      status: 200,
+      headers: { "content-length": String(bytes.length) },
+    });
+  });
+  vi.stubGlobal("fetch", spy);
+  return spy;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 type Session = {
   upload_id: string;
   drop_id: string;
@@ -123,6 +142,58 @@ async function uploadAll(session: Session, files: File[]) {
 
 const commit = (id: string, body: Json, init: RequestInit = {}, key?: string) =>
   json(`/_api/v1/uploads/${id}/commit`, "POST", body, init, key);
+
+describe("a staged manifest with url entries", () => {
+  it("does not ask the client to upload a url entry, and fetches it at commit", async () => {
+    const page = await file("index.html", "<img src=logo.png>");
+    const logo = await file("logo.png", "PNGBYTES");
+    const spy = stubFetch({ "https://cdn.example/logo.png": logo.bytes });
+
+    const response = await json("/_api/v1/uploads", "POST", {
+      manifest: [
+        ...manifestOf([page]),
+        { path: logo.path, size: logo.bytes.length, sha256: logo.sha256, url: "https://cdn.example/logo.png" },
+      ],
+    });
+    const session = (await response.json()) as Session;
+    // The instance fetches it, so it is not the client's to send.
+    expect(session.missing).toEqual([page.sha256]);
+    expect(spy).not.toHaveBeenCalled();
+
+    await uploadAll(session, [page]);
+    const committed = await commit(session.upload_id, { title: "With a logo" });
+    expect(committed.status, await committed.clone().text()).toBe(201);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(bucket.keys(`drops/${session.drop_id}/blobs/`)).toContain(
+      `drops/${session.drop_id}/blobs/${logo.sha256}`,
+    );
+  });
+
+  it("refuses a forbidden target when the session opens, before any blob moves", async () => {
+    const page = await file("index.html", "hi");
+    const response = await json("/_api/v1/uploads", "POST", {
+      manifest: [
+        ...manifestOf([page]),
+        { path: "a.png", size: 4, sha256: "c".repeat(64), url: "http://169.254.169.254/" },
+      ],
+    });
+    expect(await errorOf(response)).toMatchObject({ code: "FETCH_FAILED" });
+  });
+
+  it("answers FETCH_FAILED at commit when the target is gone", async () => {
+    const logo = await file("logo.png", "PNGBYTES");
+    stubFetch({});
+    const response = await json("/_api/v1/uploads", "POST", {
+      manifest: [
+        { path: logo.path, size: logo.bytes.length, sha256: logo.sha256, url: "https://cdn.example/logo.png" },
+      ],
+    });
+    const session = (await response.json()) as Session;
+    expect(await errorOf(await commit(session.upload_id, {}))).toMatchObject({
+      code: "FETCH_FAILED",
+    });
+  });
+});
 
 describe("the registry rows", () => {
   it("declares the three staged-upload routes, REST-only, in the frozen order", () => {

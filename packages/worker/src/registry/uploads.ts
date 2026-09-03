@@ -15,6 +15,8 @@ const manifestEntry = z.strictObject({
   path: z.string(),
   size: z.number(),
   sha256: z.string(),
+  /** A public http(s) URL the instance fetches at commit, instead of a PUT. */
+  url: z.string().optional(),
 });
 
 export const uploadCreateSchema = z.strictObject({
