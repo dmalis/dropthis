@@ -1,0 +1,63 @@
+---
+name: dropthis
+description: Share content from this dropthis instance as a permanent URL. Use when the user says share this, send this to someone, make this public, get me a link, put this online, show this to a person, or wants to change, read, list or delete a link they already have.
+---
+
+# dropthis at {{base_url}}
+
+dropthis turns files an agent produced into a permanent URL on this instance. One call in,
+one URL out. You are the only kind of caller: the human talks to you, you call dropthis, and
+the human sees what you relay — a URL, a password, a ready-to-send message.
+
+Connect over MCP at `{{mcp_url}}` (bearer key, or the paste-key login page for claude.ai),
+or call REST under `{{base_url}}/_api/v1` with `Authorization: Bearer <key>`. The tool
+names below are the MCP names; the REST routes are the same five operations.
+
+## What the user says, and what you call
+
+- **share this, send this to someone, make this shareable or public, get me a link, give me
+  a URL, host this, put this online, show this to a person** → `dropthis_publish`. Files in,
+  one permanent URL out.
+- **change it, fix it, update the page, replace the content, rename it, extend it, make it
+  expire later, bring the link back** → `dropthis_update` with the URL the user already has.
+  The URL stays the same. Never publish again to change something you already published:
+  that makes a duplicate URL.
+- **what is at this link, pull the current version, is it still live, when does it expire**
+  → `dropthis_get` with the URL or the slug.
+- **what have I published, list my drops, find the report I shared last week** →
+  `dropthis_list`.
+- **delete it, take it down, remove the link, unpublish** → `dropthis_delete`.
+
+## The rules that matter
+
+- **The URL is the identity.** `dropthis_get`, `dropthis_update` and `dropthis_delete` take
+  the drop's URL or its slug (the 10-character path segment). Nothing is resolved first.
+  A URL from another instance is `WRONG_INSTANCE`: send it to the instance that made it.
+- **Always set `title`.** It is what the user sees in lists and on the password page.
+- **Inline first, and stay under the ceiling.** Send text files as `{path, text}` and
+  binaries as `{path, base64}`. The whole call must stay under
+  **{{max_request_bytes}} bytes ({{max_request_mib}} MiB)**, this instance's
+  `max_request_bytes`, or it is `PAYLOAD_TOO_LARGE`. A single call carries
+  at most {{max_files}} files. Anything larger goes through the `dropthis` CLI, which
+  streams files instead of inlining them.
+- **`update` replaces the whole file set.** Send every file the drop should have, not only
+  the changed ones: `dropthis_get` with `files: true` returns the current text content, so
+  read, change, write back. `meta` merges at the top level; a key set to `null` is removed.
+{{password_rule}}
+- **Expiry and grace.** `expires` is `"7d"`, a date, an RFC 3339 instant or `"never"`; this
+  instance's default is **{{expiry_default}}**, its maximum **{{expiry_max}}**, and
+  `"never"` is **{{allow_never}}**. After expiry a link answers 410 for 7 days of grace; inside grace
+  `dropthis_update` with a future `expires` brings it back in one call. Past grace it is
+  `EXPIRED_FINAL` and must be published again.
+- **Retries never duplicate.** Send `idempotency_key` on `publish` and `update`; a retry
+  with the same key and payload returns the same result.
+- **Errors teach.** Every error is `{code, message, remediation, retryable}`. Act on the
+  code; read the remediation only when you are off-path.
+
+## The tools
+
+{{tools}}
+
+## Admin tools (instance key only)
+
+{{admin_tools}}

@@ -22,6 +22,7 @@ import type { DevHooks } from "../dev/hooks.js";
 import { ERRORS, errorBody } from "../errors.js";
 import { loadInstanceConfig } from "../instance-config.js";
 import { readJsonBody } from "../registry/invoke.js";
+import type { SelfFetch } from "../registry/invoke.js";
 import { mcpServer } from "../mcp/server.js";
 import { errorResponse, toApiError } from "./errors.js";
 
@@ -32,7 +33,7 @@ export function resourceMetadataUrl(origin: string): string {
   return `${origin}/.well-known/oauth-protected-resource${MCP_PATH}`;
 }
 
-export function mcpRoutes(hooks: DevHooks) {
+export function mcpRoutes(hooks: DevHooks, self: SelfFetch) {
   const routes = new Hono<{ Bindings: Env }>();
 
   routes.onError((error, c) => errorResponse(c, error));
@@ -53,7 +54,7 @@ export function mcpRoutes(hooks: DevHooks) {
       const config = await loadInstanceConfig(c.env.BUCKET, request.url);
       const parsedBody = await readJsonBody(request, config.policy.max_request_bytes);
 
-      const server = mcpServer({ env: c.env, config, caller, request, hooks });
+      const server = mcpServer({ env: c.env, config, caller, request, hooks, self });
       // No `sessionIdGenerator` = stateless; JSON answers, never an SSE stream.
       const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
       await server.connect(transport);

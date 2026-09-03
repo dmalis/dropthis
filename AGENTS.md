@@ -61,7 +61,8 @@ designed fresh for agents.
 /_api/mcp            MCP over Streamable HTTP; bearer key, or OAuth (workers-oauth-provider)
 /_oauth/*            OAuth endpoints + the one authorize page (paste your key)
 /_connect            static page: how to connect this instance (URL pre-filled)
-/_skill.md           this instance's agent skill, base URL and limits substituted live
+/_skill.md           this instance's agent skill (`skills/instance-skill.md`, bundled as a
+                     text module), base URL, live policy and the tool text substituted
 cron (hourly)        expire + prune, resumable
 ```
 
@@ -565,8 +566,8 @@ noindex. **Prune** — deleting expired drops, abandoned uploads and orphaned ge
 
 ## Stack (#70 — library over hand-rolled wherever a maintained standard exists)
 
-Worker: **Hono** (routing) · **@modelcontextprotocol/sdk + @hono/mcp** (MCP over Streamable
-HTTP) · **@cloudflare/workers-oauth-provider** (OAuth, #53) · **zod** (one schema per
+Worker: **Hono** (routing) · **@modelcontextprotocol/sdk** (MCP over Streamable HTTP through
+its own web-standard transport, one stateless server per request; `@hono/mcp` was dropped, #80) · **@cloudflare/workers-oauth-provider** (OAuth, #53) · **zod** (one schema per
 operation in the registry drives REST validation, the MCP tool schemas and CLI parsing) ·
 **canonicalize** (RFC 8785) · WebCrypto built-ins for sha256/HMAC/PBKDF2/AES-GCM (no lib).
 CLI/installer: **cloudflare** (official typed SDK — all provisioning calls) · **wrangler**

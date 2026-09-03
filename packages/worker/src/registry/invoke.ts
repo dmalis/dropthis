@@ -33,12 +33,16 @@ export function describeZodIssue(issue: Issue | undefined): string {
   return `${where}: ${issue.message}`;
 }
 
+/** The Worker's own fetch handler, for the in-process call `self` makes. */
+export type SelfFetch = (request: Request, env: Env) => Promise<Response>;
+
 export type ContextInput = {
   env: Env;
   config: InstanceConfig;
   caller: Caller;
   request: Request;
   hooks: DevHooks;
+  self: SelfFetch;
 };
 
 export function operationContext(input: ContextInput): OperationContext {
@@ -51,6 +55,7 @@ export function operationContext(input: ContextInput): OperationContext {
     hooks: input.hooks,
     request: input.request,
     secret: () => requireSecret(input.env),
+    self: (request) => input.self(request, input.env),
   };
 }
 

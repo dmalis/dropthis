@@ -35,6 +35,11 @@ export type OperationContext = {
   request: Request;
   /** `HMAC_SECRET`, resolved on demand so a route that does not sign is not blocked. */
   secret(): string;
+  /**
+   * This Worker, called in-process: the request never leaves the isolate and
+   * needs no binding. `doctor` uses it to prove its own MCP endpoint answers.
+   */
+  self(request: Request): Promise<Response>;
 };
 
 export type Operation<I = never> = {

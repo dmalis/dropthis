@@ -24,6 +24,7 @@ import { ApiError } from "../errors.js";
 import type { InstanceConfig } from "../instance-config.js";
 import { operation } from "../registry/index.js";
 import { operationContext, parseInput } from "../registry/invoke.js";
+import type { SelfFetch } from "../registry/invoke.js";
 import { serverInstructions } from "../registry/tools.js";
 import { errorResult, successResult } from "./results.js";
 import { toolSurface, toolsFor } from "./tools.js";
@@ -38,6 +39,7 @@ export type McpInput = {
   caller: Caller;
   request: Request;
   hooks: DevHooks;
+  self: SelfFetch;
 };
 
 export function mcpServer(input: McpInput): Server {

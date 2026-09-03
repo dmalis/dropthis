@@ -27,6 +27,7 @@ import type { InstanceConfig } from "../instance-config.js";
 import { INITIAL_POLICY } from "../policy/defaults.js";
 import { OPERATIONS } from "../registry/index.js";
 import { operationContext, parseInput, readJsonBody } from "../registry/invoke.js";
+import type { SelfFetch } from "../registry/invoke.js";
 import type { Operation } from "../registry/types.js";
 import { errorResponse } from "./errors.js";
 
@@ -36,14 +37,14 @@ const WITH_BODY = new Set(["POST", "PATCH", "PUT"]);
 /** The caller of an unauthenticated operation; `health` never reads it. */
 const NOBODY: Caller = { id: "", label: "", scope: "user" };
 
-export function apiRoutes(hooks: DevHooks) {
+export function apiRoutes(hooks: DevHooks, self: SelfFetch) {
   const routes = new Hono<{ Bindings: Env }>();
 
   routes.onError((error, c) => errorResponse(c, error));
 
   for (const op of OPERATIONS) {
     if (op.handler === undefined) continue;
-    routes.on(op.method, op.path, (c) => run(op as Operation<never>, c, hooks));
+    routes.on(op.method, op.path, (c) => run(op as Operation<never>, c, hooks, self));
   }
 
   return routes;
@@ -53,6 +54,7 @@ async function run(
   op: Operation<never>,
   c: Context<{ Bindings: Env }>,
   hooks: DevHooks,
+  self: SelfFetch,
 ): Promise<Response> {
   const open = op.scope === "public";
 
@@ -71,7 +73,7 @@ async function run(
   const raw = await collect(op, c, config.policy.max_request_bytes);
   const input = parseInput(op, raw);
 
-  const context = operationContext({ env: c.env, config, caller, request: c.req.raw, hooks });
+  const context = operationContext({ env: c.env, config, caller, request: c.req.raw, hooks, self });
 
   const result = await op.handler!(input, context);
   if (result instanceof Response) return result;
