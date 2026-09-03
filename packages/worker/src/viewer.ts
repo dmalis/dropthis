@@ -6,6 +6,11 @@
  * was updated or expired a second ago. Only after that may a path be resolved
  * through the manifest.
  *
+ * A protected drop adds one gate between the expiry check and the manifest:
+ * the unlock cookie, verified against the CURRENT nonce in `meta.json`, so a
+ * password change locks every open browser out on its very next request. The
+ * agent's own `get` never passes through here and never needs the password.
+ *
  * The serving matrix (docs/spec-v1.md):
  *   single-file drop   the file at `/<slug>/` and at `/<slug>/<path>`
  *   folder drop        `/<slug>/` from `index.html`, else the generated list
@@ -13,15 +18,31 @@
  *   anything missing   404
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { Env } from "./bindings.js";
 import type { DevHooks } from "./dev/hooks.js";
 import { dropState } from "./domain/expiry.js";
 import type { DropMeta } from "./domain/meta.js";
+import { storedPassword, verifyPassword } from "./domain/password.js";
+import type { PasswordRecord } from "./domain/password.js";
 import { isSlug } from "./domain/slug.js";
 import { decodeRequestPath, encodePathForUrl } from "./domain/url-path.js";
 import { loadDrop } from "./operations/get.js";
+import type { LoadedDrop } from "./operations/get.js";
 import { VIEWER_CACHE_CONTROL, serveBlob } from "./serve.js";
 import { blobKey } from "./storage/keys.js";
+import { unlockPage } from "./viewer/unlock-page.js";
+import {
+  UNLOCK_COOKIE,
+  cookieExpiry,
+  readCookie,
+  setCookieHeader,
+  signUnlock,
+  verifyUnlock,
+} from "./viewer/unlock-cookie.js";
+
+/** A typed password is short; anything larger than this is not one. */
+const MAX_UNLOCK_BODY_BYTES = 4096;
 
 export function viewerRoutes(hooks: DevHooks) {
   const viewer = new Hono<{ Bindings: Env }>();
@@ -35,17 +56,50 @@ export function viewerRoutes(hooks: DevHooks) {
     return c.redirect(`${url.pathname}/${url.search}`, 301);
   });
 
+  /**
+   * The unlock form's POST target is the very path the visitor asked for, so
+   * unlocking lands them where they were going rather than at the drop root.
+   */
+  viewer.post("/:slug/*", async (c) => {
+    const gate = await openGate(c, hooks);
+    if (gate.kind === "response") return gate.response;
+    // Nothing to unlock: a 404 rather than a 405, so an open drop never
+    // advertises an endpoint it does not have.
+    if (gate.kind !== "locked") return c.notFound();
+
+    const password = await readPassword(c.req.raw);
+    if (password === null || !(await verifyPassword(gate.password, password))) {
+      return lockedPage(gate.loaded.meta, true);
+    }
+
+    const secret = c.env.HMAC_SECRET;
+    if (typeof secret !== "string" || secret.length === 0) return noSecretPage();
+
+    const url = new URL(c.req.url);
+    const expiresAt = cookieExpiry(hooks.now(c.env, c.req.raw), gate.loaded.meta.expires_at);
+    const token = await signUnlock(secret, {
+      slug: gate.loaded.meta.slug,
+      nonce: gate.password.nonce,
+      expiresAt,
+    });
+
+    return new Response(null, {
+      status: 303,
+      headers: {
+        Location: `${url.pathname}${url.search}`,
+        "Set-Cookie": setCookieHeader(gate.loaded.meta.slug, token, expiresAt),
+        "Cache-Control": VIEWER_CACHE_CONTROL,
+      },
+    });
+  });
+
   viewer.get("/:slug/*", async (c) => {
-    const slug = c.req.param("slug");
-    if (!isSlug(slug)) return c.notFound();
-
-    const loaded = await loadDrop(c.env.BUCKET, slug);
-    if (loaded === null) return c.notFound();
-
-    // Expiry is checked before anything is resolved: an expired drop tells the
-    // visitor it is gone, and never which paths it had.
-    const state = dropState(loaded.meta.expires_at, hooks.now(c.env, c.req.raw));
-    if (state !== "live") return gonePage(c.req.url);
+    const gate = await openGate(c, hooks);
+    if (gate.kind === "response") return gate.response;
+    if (gate.kind === "not_found") return c.notFound();
+    if (gate.kind === "locked") return lockedPage(gate.loaded.meta, false);
+    const loaded = gate.loaded;
+    const slug = loaded.meta.slug;
 
     const url = new URL(c.req.url);
     const encoded = url.pathname.slice(`/${slug}/`.length);
@@ -66,6 +120,73 @@ export function viewerRoutes(hooks: DevHooks) {
   });
 
   return viewer;
+}
+
+/**
+ * Everything every viewer request has to do before it may look at a path:
+ * find the drop, refuse it if it has expired, and — when it is protected —
+ * check the unlock cookie against the nonce `meta.json` holds right now.
+ *
+ * `open` means serve it; `locked` means the password gate is in the way and
+ * the caller decides what to do about it; `response` is an answer already
+ * decided; `not_found` is left to the route, because the 404 page belongs to
+ * the app's own handler.
+ */
+type Gate =
+  | { kind: "open"; loaded: LoadedDrop }
+  | { kind: "locked"; loaded: LoadedDrop; password: PasswordRecord }
+  | { kind: "response"; response: Response }
+  | { kind: "not_found" };
+
+async function openGate(c: Context<{ Bindings: Env }>, hooks: DevHooks): Promise<Gate> {
+  const slug = c.req.param("slug") ?? "";
+  if (!isSlug(slug)) return { kind: "not_found" };
+
+  const loaded = await loadDrop(c.env.BUCKET, slug);
+  if (loaded === null) return { kind: "not_found" };
+
+  // Expiry is checked before anything is resolved: an expired drop tells the
+  // visitor it is gone, and never which paths it had.
+  const state = dropState(loaded.meta.expires_at, hooks.now(c.env, c.req.raw));
+  if (state !== "live") return { kind: "response", response: gonePage(c.req.url) };
+
+  const password = storedPassword(loaded.meta.access);
+  if (password === undefined) return { kind: "open", loaded };
+
+  const secret = c.env.HMAC_SECRET;
+  if (typeof secret !== "string" || secret.length === 0) {
+    return { kind: "response", response: noSecretPage() };
+  }
+
+  const token = readCookie(c.req.header("Cookie"), UNLOCK_COOKIE);
+  if (token !== null) {
+    const ok = await verifyUnlock(secret, token, {
+      slug: loaded.meta.slug,
+      nonce: password.nonce,
+      now: hooks.now(c.env, c.req.raw),
+    });
+    if (ok) return { kind: "open", loaded };
+  }
+
+  return { kind: "locked", loaded, password };
+}
+
+/**
+ * The typed password, from an `application/x-www-form-urlencoded` body. The
+ * read is capped because this route is reachable without any credential.
+ */
+async function readPassword(request: Request): Promise<string | null> {
+  const type = request.headers.get("content-type") ?? "";
+  if (!type.startsWith("application/x-www-form-urlencoded")) return null;
+
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_UNLOCK_BODY_BYTES) return null;
+
+  const text = await request.text();
+  if (text.length > MAX_UNLOCK_BODY_BYTES) return null;
+
+  const password = new URLSearchParams(text).get("password");
+  return password === null || password.length === 0 ? null : password;
 }
 
 type ViewerTarget = { kind: "file"; path: string } | { kind: "index"; prefix: string };
@@ -150,6 +271,44 @@ ${rows}
 </html>
 `,
     200,
+  );
+}
+
+/**
+ * The unlock form. It is a 401: the request was refused for want of a
+ * credential, and answering 200 would tell a crawler the page is the content.
+ * `Vary: Cookie` keeps any intermediary from handing this page to a visitor
+ * who has already unlocked.
+ */
+function lockedPage(meta: DropMeta, failed: boolean): Response {
+  const response = htmlResponse(
+    unlockPage({ title: meta.title ?? meta.slug, failed }),
+    401,
+  );
+  response.headers.set("Vary", "Cookie");
+  return response;
+}
+
+/**
+ * A protected drop on an instance with no `HMAC_SECRET` cannot be unlocked by
+ * anyone, so it is refused rather than opened.
+ */
+function noSecretPage(): Response {
+  return htmlResponse(
+    `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unavailable</title>
+  </head>
+  <body>
+    <h1>Unavailable</h1>
+    <p>This instance cannot verify passwords. Its operator should redeploy it.</p>
+  </body>
+</html>
+`,
+    500,
   );
 }
 

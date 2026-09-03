@@ -39,6 +39,12 @@ export const publishSchema = z.strictObject({
   files: z.array(fileEntry),
   title: z.string().optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * `"generate"`, a chosen password of at least 8 characters, or `null` for
+   * none. `null` is a value the caller sends, not an absent field, so the
+   * schema takes the union rather than making it optional-and-nullable.
+   */
+  password: z.union([z.string(), z.null()]).optional(),
   expires: z.string().optional(),
   noindex: z.boolean().optional(),
   idempotency_key: z.string().min(1).optional(),
@@ -52,7 +58,7 @@ function describe(error: z.ZodError): string {
   if (issue === undefined) return "The request body is not valid.";
   const where = issue.path.length > 0 ? issue.path.join(".") : "the request body";
   if (issue.code === "unrecognized_keys") {
-    return `Unknown field${issue.keys.length > 1 ? "s" : ""} ${issue.keys.join(", ")}: this operation takes files, title, meta, expires, noindex and idempotency_key.`;
+    return `Unknown field${issue.keys.length > 1 ? "s" : ""} ${issue.keys.join(", ")}: this operation takes files, title, meta, password, expires, noindex and idempotency_key.`;
   }
   if (issue.code === "invalid_union") {
     return `Each entry of ${where} needs a path and exactly one of text or base64.`;
