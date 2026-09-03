@@ -31,9 +31,12 @@ names below are the MCP names; the REST routes are the same five operations.
 ## The rules that matter
 
 - **The URL is the identity.** `dropthis_get`, `dropthis_update` and `dropthis_delete` take
-  the drop's URL or its slug (the 10-character path segment). Nothing is resolved first.
+  the drop's URL or its slug (the first path segment). Nothing is resolved first.
   A URL from another instance is `WRONG_INSTANCE`: send it to the instance that made it.
 - **Always set `title`.** It is what the user sees in lists and on the password page.
+- **The slug is generated.** Pass `slug` on `publish` only when the user wants a readable
+  campaign link — 3-40 characters of `a-z 0-9 -`, permanent, and `SLUG_TAKEN` when another
+  drop already holds it.
 - **Text inline, everything else by `url`.** A file entry is `{path, text}`,
   `{path, base64}`, `{path, url}` or — on `update` only — `{path, sha256}`: exactly one of
   the four.

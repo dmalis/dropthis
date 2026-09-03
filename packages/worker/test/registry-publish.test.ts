@@ -24,6 +24,7 @@ describe("parsePublishInput", () => {
       meta: { source: "n8n", rows: 12, nested: { a: [1, 2] } },
       expires: "7d",
       noindex: false,
+      slug: "tan-dash",
       idempotency_key: "run-42",
     };
     expect(parsePublishInput(full)).toEqual(full);
@@ -31,8 +32,23 @@ describe("parsePublishInput", () => {
 
   it("rejects an unknown top-level field — the schema is the contract", () => {
     expect(codeOf(() => parsePublishInput({ ...ok, visibility: "public" }))).toBe("INVALID_INPUT");
-    expect(codeOf(() => parsePublishInput({ ...ok, slug: "mine" }))).toBe("INVALID_INPUT");
+    expect(codeOf(() => parsePublishInput({ ...ok, vanity: "mine" }))).toBe("INVALID_INPUT");
   });
+
+  /**
+   * The chosen slug is the URL, so it is normalized where every other surface
+   * reads it — here — and not by each caller (issue #18).
+   */
+  it("normalizes a chosen slug before it becomes a claim", () => {
+    expect(parsePublishInput({ ...ok, slug: "  TAN-Dash " }).slug).toBe("tan-dash");
+  });
+
+  it.each(["ab", "-tan-dash", "tan_dash", "tan dash", "_api", ".well-known", "a".repeat(41)])(
+    "refuses the chosen slug %s as INVALID_INPUT",
+    (slug) => {
+      expect(codeOf(() => parsePublishInput({ ...ok, slug }))).toBe("INVALID_INPUT");
+    },
+  );
 
   it("names the unknown field so the agent can fix it", () => {
     expect(() => parsePublishInput({ ...ok, visibility: "public" })).toThrow(/visibility/);

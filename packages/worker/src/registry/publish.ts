@@ -12,6 +12,7 @@
  * `{path, text}` and `{path, base64}` only.
  */
 import { z } from "zod";
+import { normalizeVanitySlug, SlugError } from "../domain/slug.js";
 import { ApiError } from "../errors.js";
 import {
   EXPIRES_DESCRIPTION,
@@ -20,6 +21,7 @@ import {
   META_DESCRIPTION,
   NOINDEX_DESCRIPTION,
   PASSWORD_DESCRIPTION,
+  SLUG_DESCRIPTION,
   TITLE_DESCRIPTION,
   checkFiles,
   checkMetaSize,
@@ -37,7 +39,7 @@ export {
   type PublishFile,
 } from "./fields.js";
 
-const FIELDS = "files, title, meta, password, expires, noindex and idempotency_key";
+const FIELDS = "files, title, meta, password, expires, noindex, slug and idempotency_key";
 
 export const publishSchema = z.strictObject({
   files: z.array(fileEntry).describe(FILES_DESCRIPTION),
@@ -50,6 +52,11 @@ export const publishSchema = z.strictObject({
   password: z.union([z.string(), z.null()]).optional().describe(PASSWORD_DESCRIPTION),
   expires: z.string().optional().describe(EXPIRES_DESCRIPTION),
   noindex: z.boolean().optional().describe(NOINDEX_DESCRIPTION),
+  /**
+   * The one field that chooses the drop's identity (decision #94). It exists on
+   * `publish` and nowhere else: a URL is permanent, so there is no rename.
+   */
+  slug: z.string().optional().describe(SLUG_DESCRIPTION),
   idempotency_key: z.string().min(1).optional().describe(IDEMPOTENCY_DESCRIPTION),
 });
 
@@ -72,6 +79,17 @@ export function parsePublishInput(body: unknown): PublishInput {
   }
   if (input.title !== undefined) input.title = normalizeTitle(input.title);
   if (input.meta !== undefined) checkMetaSize(input.meta);
+  // Normalized HERE, before it is hashed into the idempotency payload and
+  // before it is claimed: `"TAN-Dash"` and `"tan-dash"` are one link, and the
+  // claim on `slugs/<slug>` only means something if both reduce to one key.
+  if (input.slug !== undefined) {
+    try {
+      input.slug = normalizeVanitySlug(input.slug);
+    } catch (error) {
+      if (error instanceof SlugError) throw new ApiError(error.code, error.message);
+      throw error;
+    }
+  }
 
   return input;
 }

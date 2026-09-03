@@ -34,6 +34,10 @@ export const PASSWORD_DESCRIPTION =
   '"generate" for a random 16-character password returned once, in this response; a chosen ' +
   "password of at least 8 characters; or null for none.";
 export const NOINDEX_DESCRIPTION = "Tell search engines to stay away (default true).";
+export const SLUG_DESCRIPTION =
+  "Optional: choose the drop's path segment (3-40 characters of a-z 0-9 and -) for a link a " +
+  "human will read, like a campaign URL; omitted, one is generated. It can never be changed, " +
+  "and a slug already in use is SLUG_TAKEN.";
 export const IDEMPOTENCY_DESCRIPTION =
   "A key you choose; a retry with the same key and payload returns the same result instead of acting twice.";
 

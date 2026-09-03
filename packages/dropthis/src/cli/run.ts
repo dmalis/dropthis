@@ -136,9 +136,14 @@ export async function runCommand(invocation: Invocation, io: RunIo): Promise<voi
   }
 
   if (files !== undefined) {
-    const { slug, ...settings } = input;
+    // `update` takes the drop it changes as a positional target, and that is
+    // the only `slug` that is one: on `publish` the field is the slug the
+    // caller CHOSE for the new drop (#94), and it travels in the body.
+    const targetsADrop = spec.args.some((arg) => arg.kind === "target");
+    const { slug, ...rest } = input;
+    const settings = targetsADrop ? rest : input;
     const answer = await sendFiles(client, {
-      ...(typeof slug === "string" ? { target: slug } : {}),
+      ...(targetsADrop && typeof slug === "string" ? { target: slug } : {}),
       files,
       settings,
     });

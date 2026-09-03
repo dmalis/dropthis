@@ -894,6 +894,47 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     never fetch fails before anything else is uploaded. The three staged routes stay
     `restOnly` (#85).
 
+94. **The chosen (vanity) slug: a kept-open door, opened (issue #18, 2026-09-03).** AGENTS.md
+    listed vanity slugs under "Kept open, deliberately empty" — "one optional field away …
+    wait for a user asking". A user asked: a marketing team wants campaign links for
+    newsletters and ads, where `/tan-dash` in an email beats `/9ul4jschtk`. The door is now
+    open and the "Kept open" list no longer names it. `publish` takes an optional `slug`;
+    `update` does not, because rename stays a non-goal and a URL is permanent. The rulings
+    this slice needed:
+    (a) **One predicate, not two.** `isSlug` answers "could a drop live at this path
+    segment?" and is now the chosen form — 3–40 characters of `a-z0-9-` starting with a
+    letter or digit, never a reserved prefix — of which the generated 10-character form is a
+    subset. Routing, the viewer, `resolveTarget` and `delete` all ask that one question, and
+    nothing in the product ever has to tell a generated slug from a chosen one. A second
+    predicate would have been two ways to say the same thing, and the one that drifts is the
+    one nobody reads.
+    (b) **A chosen slug is NOT forbidden from the ten-character alphanumeric shape.** The
+    issue's reasoning assumed the two namespaces are disjoint. They are not, deliberately:
+    `newsletter` is exactly ten letters and exactly the kind of campaign slug that was asked
+    for, and refusing it to keep a boundary nothing depends on would be a worse product.
+    Nothing needs the boundary — the collision is already handled where it happens.
+    `slugs/<slug>` is claimed with `If-None-Match: *`, so a generated publish that lands on a
+    taken slug simply generates another (`operations/publish.ts`, `claimSlug`), and a chosen
+    one that lands on a taken slug is `SLUG_TAKEN`. The argument is written into
+    `test/domain-slug.test.ts` so it cannot be lost.
+    (c) **`SLUG_TAKEN` is raised only for a slug the CALLER chose** (409, not retryable,
+    "Choose another slug, or change the existing drop with `update`"). A generated collision
+    is retried inside `publish` and never reaches the caller — which is why #58 could remove
+    the code and why it comes back now that intent exists. The failing claim is conditional,
+    so the existing pointer and the drop behind it are untouched.
+    (d) **Normalisation happens once, in `parsePublishInput`.** NFC, then lowercase, then
+    trim, then validate: the slug is the URL, so `"TAN-Dash "` and `"tan-dash"` must be one
+    claim and not two. Anything that does not survive as `[a-z0-9-]` is `INVALID_INPUT`
+    rather than transliterated — a link the caller did not type is a link they cannot
+    predict. Normalising there also puts the final value into the idempotency payload hash,
+    so the same key with a different slug is `IDEMPOTENCY_MISMATCH` with no extra code.
+    (e) **The `list/` pointer had to learn about dashes.** `slugOfListKey` pinned
+    `[a-z0-9]{10}`, and `list` builds its whole row — url included — from that key, so a
+    chosen slug would have come back as an empty slug and a broken URL. The key is
+    `<13 fixed-width digits>-<slug>`, so the separator is unambiguous however many dashes the
+    slug carries; the parsed half is checked with `isSlug`, and a key this Worker cannot read
+    is skipped, never destroyed.
+
 95. **Keep-by-hash file entries on `update` (issue #17).** Same shape of failure as #92, one
     step further along: on 2026-09-03 a claude.ai session had to re-type every base64 sprite
     of a game into the tool call to change 40 lines of CSS, because `files` replaces the whole

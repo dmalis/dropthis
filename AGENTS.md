@@ -161,9 +161,11 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   identical retry returns the stored, encrypted-at-rest result; a different payload under
   the same key is `409 IDEMPOTENCY_MISMATCH`. "A generated password is returned once" means: to the
   original call and to identical retries under the same key within 7 days, never from `get`
-  or `list`. `password: "generate"` without a key is documented as non-idempotent. Generated
-  slugs cannot collide with a caller's intent, so there is no `SLUG_TAKEN`; the skill tells
-  agents to `update`, not re-publish.
+  or `list`. `password: "generate"` without a key is documented as non-idempotent. A generated
+  slug that loses its claim is simply generated again, so only a CHOSEN slug can be
+  `409 SLUG_TAKEN` (#94); the skill tells agents to `update`, not re-publish. The chosen
+  slug is part of the payload hash, so the same key with a different slug is
+  `IDEMPOTENCY_MISMATCH`.
 - **The viewer never trusts a cache for truth.** Every viewer response first reads the slug
   pointer and `meta.json` (R2 is strongly consistent), checks expiry, then the unlock cookie
   when a password is set — and only then may it resolve `path → sha256` through the manifest
@@ -229,11 +231,15 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
 
 ### The drop model
 
-- **Slug = identity = URL.** Generated, 10 characters from `a-z0-9`, never starts with `_`,
-  immutable. `get`, `update` and `delete` accept the slug or a URL whose origin is this
+- **Slug = identity = URL.** Generated unless the caller chose one, immutable either way.
+  A generated slug is 10 characters from `a-z0-9`; a chosen one (`publish({slug})`, #94) is
+  3-40 characters of `a-z0-9-` starting with a letter or digit, lower-cased and NFC-normalised
+  before validation, never a reserved prefix. One predicate (`domain/slug.ts`, `isSlug`)
+  answers "could a drop live at this path segment?" for routing, the viewer and targets; the
+  generated form is a subset of the chosen one, and nothing ever has to tell them apart.
+  `get`, `update` and `delete` accept the slug or a URL whose origin is this
   instance's `canonical_url` or one of its `alias_origins`; any other origin is
-  `WRONG_INSTANCE`. Vanity slugs are one optional field away (the atomic claim already
-  handles them) and wait for a user asking. Rename is a non-goal: a URL is permanent.
+  `WRONG_INSTANCE`. Rename is a non-goal: a URL is permanent.
 - **One canonical origin.** `init` stores `canonical_url` (the custom domain, else the
   `*.workers.dev` URL) and `alias_origins`. Drop URLs, OAuth issuer/resource/discovery and
   `/_skill.md` use the canonical origin; viewer requests on an alias redirect (301) to it.
@@ -297,7 +303,7 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   object on stderr — (`INVALID_INPUT`,
   `INVALID_PATH`, `POLICY_VIOLATION`, `UNAUTHENTICATED`, `FORBIDDEN_SCOPE`, `NOT_FOUND`,
   `WRONG_INSTANCE`, `EXPIRED_NEEDS_EXPIRES`, `UPDATE_CONFLICT`, `IDEMPOTENCY_MISMATCH`,
-  `LABEL_TAKEN`, `NAME_TAKEN`, `EXPIRED_FINAL`, `UPLOAD_EXPIRED`,
+  `LABEL_TAKEN`, `SLUG_TAKEN`, `NAME_TAKEN`, `EXPIRED_FINAL`, `UPLOAD_EXPIRED`,
   `PAYLOAD_TOO_LARGE`, `HASH_MISMATCH`, `FETCH_FAILED`, `R2_RATE_LIMIT` with `Retry-After`,
   `INTERNAL`), each with HTTP status and retryability. The remediation is the
   only hint dropthis ever sends, and only off-path. No `next` hints on success: the URL is
@@ -423,7 +429,7 @@ means adding one entry.
 
 | op        | does                                                                                   |
 |-----------|----------------------------------------------------------------------------------------|
-| `publish` | create: `files`, `title?`, `meta?`, `password?`, `expires?`, `noindex?`, `idempotency_key?` → `Drop` + URL. Always a new slug; a retry with the same `idempotency_key` returns the same drop. |
+| `publish` | create: `files`, `title?`, `meta?`, `password?`, `expires?`, `noindex?`, `slug?`, `idempotency_key?` → `Drop` + URL. Always a new drop; the slug is generated unless `slug` chose one (`SLUG_TAKEN` if it is held). A retry with the same `idempotency_key` returns the same drop. |
 | `update`  | change only what is given: `files?` (replaces the whole set, one new generation), `title?`, `meta?` (merge), `password?` (`"…"`, `"generate"`, `null`), `expires?`, `noindex?`, `idempotency_key?`. Same resulting state = no-op. |
 | `get`     | by slug or URL; `files: true` adds content. Replaces the old `resolve` and `get_content`. |
 | `list`    | one page of `Drop`s, newest-first, `cursor`, `limit`, `q` → `{drops, cursor, has_more}`. |
@@ -569,7 +575,7 @@ gate that verifies both, CI running the contract corpus, and a versioned release
 ## Kept open, deliberately empty
 
 These are not non-goals; they are doors the layout leaves open at zero cost, to be built
-only when a real user asks: vanity slugs (one field on `publish`); `webhook_url` as an event
+only when a real user asks: `webhook_url` as an event
 bus (`published`, `paid`, `expired` with `{url, slug, title, meta, …}`) so a Telegram bot or
 n8n can deliver passwords or invitations; paid unlock through the operator's own Stripe
 Checkout (`access: {price, currency}`, orders as `orders/<session_id>.json`, dropthis never

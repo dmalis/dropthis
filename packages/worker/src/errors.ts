@@ -71,6 +71,16 @@ export const ERRORS = {
     retryable: false,
     remediation: "Choose another label; list the taken ones with `user list`.",
   },
+  /**
+   * A caller-chosen slug that another drop already holds. Never raised for a
+   * generated slug: that collision is retried inside `publish` and the caller
+   * never sees it (decision #94).
+   */
+  SLUG_TAKEN: {
+    status: 409,
+    retryable: false,
+    remediation: "Choose another slug, or change the existing drop with `update`.",
+  },
   NAME_TAKEN: {
     status: 409,
     retryable: false,

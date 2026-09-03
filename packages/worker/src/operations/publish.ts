@@ -74,7 +74,13 @@ export type PublishContext = {
 };
 
 /** The identity a call commits to before it writes anything reachable. */
-type Identity = { dropId: string; slug: string; slugClaimedHere: boolean };
+type Identity = {
+  dropId: string;
+  slug: string;
+  slugClaimedHere: boolean;
+  /** The caller chose this slug, so a collision is theirs to fix (#94). */
+  slugChosen: boolean;
+};
 
 export type PublishResult = { drop: Drop; created: boolean };
 
@@ -101,10 +107,16 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
     ? config.policy.noindex.default
     : (input.noindex ?? config.policy.noindex.default);
 
+  const slugChosen = input.slug !== undefined;
   let identity: Identity =
     claim === null
-      ? { dropId: newDropId(now), slug: generateSlug(), slugClaimedHere: false }
-      : { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false };
+      ? {
+          dropId: newDropId(now),
+          slug: input.slug ?? generateSlug(),
+          slugClaimedHere: false,
+          slugChosen,
+        }
+      : { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false, slugChosen };
   // A retry keeps the first attempt's clock-derived values. `created` is part
   // of the state hash and of the `list/` key, and "30d" resolved a second later
   // is a different instant — either would fork the identity the claim fixed.
@@ -192,7 +204,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       requireSamePayload(claim, payloadHash);
       const replayed = await readResult(bucket, hash, ctx.secret);
       if (replayed !== null) return { drop: replayed, created: false };
-      identity = { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false };
+      identity = { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false, slugChosen };
       created = claim.created;
       expiresAt = claim.expires_at;
       access = claim.access;
@@ -304,8 +316,14 @@ export function requireSameManifest(claim: ClaimRecord, manifest: Manifest): voi
 /**
  * Claim `slugs/<slug>`. A pointer already holding this drop id counts as
  * claimed — that is what makes a retry idempotent. A pointer holding another
- * id is a real collision: generate a new slug, unless the idempotency claim
- * already fixed one, in which case there is nothing safe left to do.
+ * id is a real collision, and what happens next depends on whose slug it is:
+ * a slug the CALLER chose is `SLUG_TAKEN` and theirs to fix, a generated one
+ * is retried here and the caller never learns it happened — unless the
+ * idempotency claim already fixed it, in which case there is nothing safe
+ * left to do.
+ *
+ * The failing claim leaves the existing pointer exactly as it was: it is a
+ * conditional write, so nothing of the losing call reaches the winner's drop.
  */
 async function claimSlug(bucket: Bucket, identity: Identity, slugIsFixed: boolean): Promise<Identity> {
   let slug = identity.slug;
@@ -316,6 +334,9 @@ async function claimSlug(bucket: Bucket, identity: Identity, slugIsFixed: boolea
     const existing = await bucket.get(slugKey(slug));
     if (existing !== null && (await existing.text()) === identity.dropId) {
       return { ...identity, slug, slugClaimedHere: false };
+    }
+    if (identity.slugChosen) {
+      throw new ApiError("SLUG_TAKEN", `The slug ${slug} already belongs to another drop.`);
     }
     if (slugIsFixed) {
       throw new ApiError("INTERNAL", `The slug ${slug} of this idempotent retry belongs to another drop.`);
