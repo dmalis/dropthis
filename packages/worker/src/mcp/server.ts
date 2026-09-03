@@ -90,7 +90,11 @@ async function callTool(
   requireScope(input.caller, tool.scope);
 
   const op = operation(tool.operation);
-  const raw = tool.takesTarget ? withSlug(args, input.config) : args;
+  const raw = tool.takesTarget
+    ? withSlug(args, input.config)
+    : tool.targetInBody
+      ? withResolvedTarget(args, input.config)
+      : args;
   const parsed = parseInput(op, raw);
   const context = operationContext(input);
 
@@ -116,6 +120,28 @@ function withSlug(args: Record<string, unknown>, config: InstanceConfig): Record
     aliasOrigins: config.aliasOrigins,
   });
   return { ...rest, slug };
+}
+
+/**
+ * The same translation for an operation whose OWN body field is `target`
+ * (`upload.create`): the field keeps its name and its meaning, and the URL an
+ * agent remembers becomes the slug storage looks up — so a staged upload is
+ * addressed exactly the way `dropthis_update` is.
+ */
+function withResolvedTarget(
+  args: Record<string, unknown>,
+  config: InstanceConfig,
+): Record<string, unknown> {
+  const { target } = args;
+  if (target === undefined || target === null) return args;
+  if (typeof target !== "string" || target.length === 0) {
+    throw new ApiError("INVALID_INPUT", "target: the drop's URL on this instance, or its slug.");
+  }
+  const slug = resolveTarget(target, {
+    canonicalUrl: config.canonicalUrl,
+    aliasOrigins: config.aliasOrigins,
+  });
+  return { ...args, target: slug };
 }
 
 export type { Tool };
