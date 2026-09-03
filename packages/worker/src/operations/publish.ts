@@ -75,6 +75,13 @@ type ClaimRecord = {
   manifest: Manifest;
   state_hash: string;
   created: string;
+  /**
+   * The RESOLVED expiry, not the caller's spelling. "30d" means a different
+   * instant on every attempt, so re-resolving it on a retry would produce a
+   * different desired state and turn a converging retry into UPDATE_CONFLICT.
+   * The claim fixes every clock-derived value, not just the id and the slug.
+   */
+  expires_at: string | null;
 };
 
 export type PublishResult = { drop: Drop; created: boolean };
@@ -82,24 +89,15 @@ export type PublishResult = { drop: Drop; created: boolean };
 export async function publish(input: PublishInput, ctx: PublishContext): Promise<PublishResult> {
   const { bucket, config, now } = ctx;
 
-  const expiresAt = resolveExpiryOrFail(
-    input.expires ?? config.policy.expiry.default,
-    config.policy,
-    now,
-  );
-  const noindex = config.policy.noindex.forced
-    ? config.policy.noindex.default
-    : (input.noindex ?? config.policy.noindex.default);
-
-  const content = await resolveInlineFiles(input.files);
-
   const payloadHash = await hashPayload(input);
   const hash =
     input.idempotency_key === undefined
       ? undefined
       : await idempotencyHash(ctx.caller.id, input.idempotency_key);
 
-  // Read the claim first: it owns the drop id, and every blob key contains it.
+  // The claim is read before anything else, including decoding the payload: a
+  // replay costs one GET, and the claim owns the drop id that every blob key
+  // contains.
   let claim = hash === undefined ? null : await readClaim(bucket, hash);
   if (claim !== null) {
     if (claim.payload_hash !== payloadHash) {
@@ -112,13 +110,24 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
     if (replayed !== null) return { drop: replayed, created: false };
   }
 
+  const noindex = config.policy.noindex.forced
+    ? config.policy.noindex.default
+    : (input.noindex ?? config.policy.noindex.default);
+
+  const content = await resolveInlineFiles(input.files);
+
   let identity: Identity =
     claim === null
       ? { dropId: newDropId(now), slug: generateSlug(), slugClaimedHere: false }
       : { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false };
-  // A retry keeps the first attempt's birth instant: `created` is part of the
-  // state hash and of the `list/` key, so a fresh clock would fork the identity.
+  // A retry keeps the first attempt's clock-derived values. `created` is part
+  // of the state hash and of the `list/` key, and "30d" resolved a second later
+  // is a different instant — either would fork the identity the claim fixed.
   let created = claim?.created ?? `${now.toISOString().slice(0, 19)}Z`;
+  let expiresAt =
+    claim === null
+      ? resolveExpiryOrFail(input.expires ?? config.policy.expiry.default, config.policy, now)
+      : claim.expires_at;
 
   const buildMeta = (slug: string) =>
     newDropMeta({
@@ -149,6 +158,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       manifest: content.manifest,
       state_hash: await stateHash(desired),
       created: desired.created,
+      expires_at: desired.expires_at,
     };
     const claimed = await claimKey(bucket, requestClaimKey(hash), JSON.stringify(record));
     if (!claimed.claimed) {
@@ -166,6 +176,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       if (replayed !== null) return { drop: replayed, created: false };
       identity = { dropId: claim.drop_id, slug: claim.slug, slugClaimedHere: false };
       created = claim.created;
+      expiresAt = claim.expires_at;
       await writeBlobs(bucket, identity.dropId, content.blobs);
     } else {
       claim = record;
