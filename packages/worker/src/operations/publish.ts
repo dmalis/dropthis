@@ -20,7 +20,7 @@
  * the id the first attempt chose, not a fresh one.
  */
 import type { Bucket } from "../bindings.js";
-import type { CreatedBy, Drop, DropMeta } from "../domain/meta.js";
+import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
 import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { ExpiryError, resolveExpiry } from "../domain/expiry.js";
 import { resolvePassword } from "../domain/password.js";
@@ -41,7 +41,8 @@ import {
   sealPassword,
 } from "./idempotency.js";
 import { writeProjections } from "./projections.js";
-import { resolveInlineFiles } from "./resolve-content.js";
+import { resolveFiles } from "./resolve-content.js";
+import { newFetchBudget } from "./fetch-url.js";
 
 /**
  * Where a dev build may abort, to prove a retry converges. Gated on
@@ -100,20 +101,6 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
     ? config.policy.noindex.default
     : (input.noindex ?? config.policy.noindex.default);
 
-  const content = await resolveInlineFiles(input.files);
-
-  // The password is decided before any write: it goes into the desired
-  // `meta.json`, and therefore into the state hash the claim fixes. A retry
-  // adopts the claim's decision rather than generating a second password.
-  const change = await resolvePassword(undefined, input.password, {
-    iterations: config.policy.pbkdf2_iterations,
-    required: config.policy.password.required,
-    default: config.policy.password.default,
-  });
-  let access: Record<string, unknown> =
-    change.kind === "set" ? { password: change.record } : {};
-  let password: string | undefined = change.kind === "set" ? change.password : undefined;
-
   let identity: Identity =
     claim === null
       ? { dropId: newDropId(now), slug: generateSlug(), slugClaimedHere: false }
@@ -126,6 +113,36 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
     claim === null
       ? resolveExpiryOrFail(input.expires ?? config.policy.expiry.default, config.policy, now)
       : claim.expires_at;
+
+  // (0a) content. The drop id is settled first because a `url` body streams to
+  // `drops/<id>/blobs/<sha256>` as it arrives — it is never held in memory —
+  // and a retry re-fetches only what its own claim's blobs are missing.
+  const budget = newFetchBudget();
+  const resolve = async (dropId: string, fixed: ClaimRecord | null) => {
+    const held = fixed === null ? new Map<string, number>() : await heldBlobs(bucket, dropId, fixed);
+    const resolved = await resolveFiles(input.files, {
+      policy: config.policy,
+      held,
+      budget,
+      streamBlob: async (digest, body) =>
+        (await putBlob(bucket, blobKey(dropId, digest), body, digest)).size,
+    });
+    if (fixed !== null) requireSameManifest(fixed, resolved.manifest);
+    return { resolved, held };
+  };
+  let content = await resolve(identity.dropId, claim);
+
+  // The password is decided before any write: it goes into the desired
+  // `meta.json`, and therefore into the state hash the claim fixes. A retry
+  // adopts the claim's decision rather than generating a second password.
+  const change = await resolvePassword(undefined, input.password, {
+    iterations: config.policy.pbkdf2_iterations,
+    required: config.policy.password.required,
+    default: config.policy.password.default,
+  });
+  let access: Record<string, unknown> =
+    change.kind === "set" ? { password: change.record } : {};
+  let password: string | undefined = change.kind === "set" ? change.password : undefined;
   if (claim !== null) {
     access = claim.access;
     password = await openPassword(claim, ctx.secret);
@@ -137,7 +154,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       slug,
       title: input.title ?? null,
       meta: input.meta ?? {},
-      manifest: content.manifest,
+      manifest: content.resolved.manifest,
       expiresAt,
       noindex,
       createdBy: ctx.caller,
@@ -146,8 +163,9 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       created,
     });
 
-  // (0) blobs — unreachable until `meta.json` names them.
-  await writeBlobs(bucket, identity.dropId, content.blobs);
+  // (0b) the blobs the Worker holds in memory — inline entries, and a fetched
+  // body it had to hash itself. Unreachable until `meta.json` names them.
+  await writeBlobs(bucket, identity.dropId, content.resolved.blobs, content.held);
   fault(ctx, "blobs");
 
   // (1) the claim fixes the identity for every retry.
@@ -158,7 +176,7 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       drop_id: identity.dropId,
       slug: identity.slug,
       gen: desired.current_gen,
-      manifest: content.manifest,
+      manifest: content.resolved.manifest,
       state_hash: await stateHash(desired),
       created: desired.created,
       expires_at: desired.expires_at,
@@ -179,7 +197,11 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
       expiresAt = claim.expires_at;
       access = claim.access;
       password = await openPassword(claim, ctx.secret);
-      await writeBlobs(bucket, identity.dropId, content.blobs);
+      // The winner's drop id owns the blob keys, so the content is resolved
+      // again under it — a `url` entry is fetched a second time, and its bytes
+      // must still hash to what the claim fixed.
+      content = await resolve(identity.dropId, claim);
+      await writeBlobs(bucket, identity.dropId, content.resolved.blobs, content.held);
     } else {
       claim = record;
     }
@@ -232,9 +254,50 @@ async function writeBlobs(
   bucket: Bucket,
   dropId: string,
   blobs: Map<string, Uint8Array<ArrayBuffer>>,
+  held: ReadonlyMap<string, number>,
 ): Promise<void> {
   for (const [digest, bytes] of blobs) {
+    if (held.has(digest)) continue;
     await putBlob(bucket, blobKey(dropId, digest), bytes, digest);
+  }
+}
+
+/**
+ * The blobs a resumed attempt already stored, so a retry neither re-fetches a
+ * `url` nor re-writes a body it already wrote. A digest the claim names but
+ * the bucket does not hold is simply absent here, and is fetched again.
+ */
+async function heldBlobs(
+  bucket: Bucket,
+  dropId: string,
+  claim: ClaimRecord,
+): Promise<Map<string, number>> {
+  const held = new Map<string, number>();
+  for (const entry of Object.values(claim.manifest)) {
+    if (held.has(entry.sha256)) continue;
+    if ((await bucket.head(blobKey(dropId, entry.sha256))) !== null) {
+      held.set(entry.sha256, entry.size);
+    }
+  }
+  return held;
+}
+
+/**
+ * Decision #74, applied to fetched content: the claim fixed the manifest, so a
+ * retry whose `url` now answers different bytes is a different call and says
+ * so, rather than storing blobs no manifest names.
+ */
+export function requireSameManifest(claim: ClaimRecord, manifest: Manifest): void {
+  const same =
+    Object.keys(claim.manifest).length === Object.keys(manifest).length &&
+    Object.entries(claim.manifest).every(
+      ([path, entry]) => manifest[path]?.sha256 === entry.sha256,
+    );
+  if (!same) {
+    throw new ApiError(
+      "IDEMPOTENCY_MISMATCH",
+      "A url entry of this retry answers different bytes than the first attempt stored.",
+    );
   }
 }
 

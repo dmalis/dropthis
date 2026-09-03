@@ -84,7 +84,7 @@ describe("fetchPublicUrl", () => {
   });
 
   it("follows a redirect manually and re-validates each hop", async () => {
-    const spy = vi.fn(async (input: RequestInfo | URL) => {
+    const spy = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url === "https://a.example/x") {
         return new Response(null, { status: 302, headers: { location: "https://b.example/y" } });
@@ -99,7 +99,7 @@ describe("fetchPublicUrl", () => {
   });
 
   it("refuses a public URL that redirects to a private one, and does not fetch it", async () => {
-    const spy = vi.fn(async (input: RequestInfo | URL) => {
+    const spy = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === "https://a.example/x") {
         return new Response(null, { status: 302, headers: { location: "http://10.0.0.1/y" } });
       }
@@ -161,7 +161,7 @@ describe("fetchPublicUrl", () => {
 
   it("gives each fetch the timeout the contract states", async () => {
     let seen: AbortSignal | undefined;
-    const spy = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const spy = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       seen = init?.signal ?? undefined;
       return ok();
     });

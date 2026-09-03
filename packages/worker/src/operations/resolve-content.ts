@@ -1,10 +1,21 @@
 /**
- * Step 0 of the write order: turn the caller's inline entries into bytes, a
- * digest per file, and the manifest (AGENTS.md, "Writes and idempotency").
+ * Step 0 of the write order: turn the caller's entries into bytes, a digest
+ * per file, and the manifest (AGENTS.md, "Writes and idempotency").
  *
- * Content is resolved BEFORE anything is written, so a payload that cannot be
- * decoded costs no R2 write and leaves no half-made drop. Blobs are
- * content-addressed, so two paths holding the same bytes are one blob.
+ * Content is resolved BEFORE anything reachable is written, so a payload that
+ * cannot be decoded — or a URL that cannot be fetched — costs no `meta.json`
+ * and leaves no half-made drop. Blobs are content-addressed, so two paths
+ * holding the same bytes are one blob.
+ *
+ * Three entry kinds, never guessed from the bytes:
+ *
+ *   {path, text}            decoded here, typed from the extension table
+ *   {path, base64, sha256?} decoded here; a digest the caller sent is checked
+ *   {path, url, sha256?}    FETCHED here. With a digest the body streams
+ *                           straight to R2 and R2 verifies it, so the Worker
+ *                           spends no CPU on the bytes; without one the Worker
+ *                           must hash in-stream and refuses above
+ *                           `max_unhashed_bytes`.
  *
  * Base64 is decoded with `Uint8Array.fromBase64` where the runtime has it. That
  * is not a micro-optimisation: the measured 4 MiB inline ceiling
@@ -16,20 +27,43 @@ import { sha256Hex } from "../domain/meta.js";
 import type { Manifest } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
 import { ApiError } from "../errors.js";
+import { INITIAL_POLICY } from "../policy/defaults.js";
+import type { ResolvedPolicy } from "../instance-config.js";
 import type { PublishFile } from "../registry/publish.js";
+import { fetchPublicUrl, newFetchBudget } from "./fetch-url.js";
+import type { FetchBudget } from "./fetch-url.js";
 
 export type ResolvedFile = {
   path: string;
-  bytes: Uint8Array<ArrayBuffer>;
+  /** Absent for a body streamed to R2: those bytes never sit in the isolate. */
+  bytes?: Uint8Array<ArrayBuffer>;
   sha256: string;
   contentType: string;
 };
 
 export type ResolvedContent = {
   files: ResolvedFile[];
-  /** One entry per distinct digest: exactly the blobs that must be written. */
+  /** One entry per distinct digest the CALLER must still write from memory. */
   blobs: Map<string, Uint8Array<ArrayBuffer>>;
   manifest: Manifest;
+};
+
+/**
+ * `streamBlob` is how a fetched body reaches its final key without being
+ * buffered: the caller owns the drop id, so it owns the key. `held` names the
+ * digests the drop already stores — those are neither fetched nor written
+ * again, which is what makes "one file changed in a ten-image drop" cost one
+ * fetch.
+ */
+export type ResolveOptions = {
+  policy?: ResolvedPolicy;
+  held?: ReadonlyMap<string, number>;
+  streamBlob?: (
+    sha256: string,
+    body: ReadableStream<Uint8Array>,
+  ) => Promise<number | undefined>;
+  fetchImpl?: typeof fetch;
+  budget?: FetchBudget;
 };
 
 const encoder = new TextEncoder();
@@ -52,7 +86,17 @@ function decodeBase64(text: string, path: string): Uint8Array<ArrayBuffer> {
   }
 }
 
-export async function resolveInlineFiles(entries: readonly PublishFile[]): Promise<ResolvedContent> {
+/** Marks a body that outgrew its cap mid-stream, so the put fails and says why. */
+class Oversize extends Error {}
+
+export async function resolveFiles(
+  entries: readonly PublishFile[],
+  options: ResolveOptions = {},
+): Promise<ResolvedContent> {
+  const policy = options.policy ?? (INITIAL_POLICY as unknown as ResolvedPolicy);
+  const budget = options.budget ?? newFetchBudget();
+  const held = options.held ?? new Map<string, number>();
+
   let paths: string[];
   try {
     paths = normalizeManifestPaths(entries.map((entry) => entry.path));
@@ -67,15 +111,23 @@ export async function resolveInlineFiles(entries: readonly PublishFile[]): Promi
 
   for (const [index, entry] of entries.entries()) {
     const path = paths[index]!;
+
+    if ("url" in entry) {
+      const file = await resolveUrlEntry(entry, path, { policy, budget, held, ...options });
+      if (file.bytes !== undefined) blobs.set(file.sha256, file.bytes);
+      files.push(file);
+      manifest[path] = { sha256: file.sha256, size: file.size, content_type: file.contentType };
+      continue;
+    }
+
     let bytes: Uint8Array<ArrayBuffer>;
     let contentType: string;
-
     if ("text" in entry) {
       const declared = textEntryContentType(path);
       if (declared === null) {
         throw new ApiError(
           "INVALID_INPUT",
-          `${JSON.stringify(path)} names a binary type, so its bytes must be sent as base64, not text.`,
+          `${JSON.stringify(path)} names a binary type, so its bytes must be sent as base64 or fetched from a url, not text.`,
         );
       }
       bytes = encoder.encode(entry.text);
@@ -86,7 +138,8 @@ export async function resolveInlineFiles(entries: readonly PublishFile[]): Promi
     }
 
     const digest = await sha256Hex(bytes);
-    if ("sha256" in entry && entry.sha256 !== undefined && entry.sha256 !== digest) {
+    const sent = "sha256" in entry ? entry.sha256 : undefined;
+    if (sent !== undefined && sent !== digest) {
       throw new ApiError(
         "HASH_MISMATCH",
         `The bytes of ${JSON.stringify(path)} hash to ${digest}, not the sha256 sent with them.`,
@@ -98,4 +151,133 @@ export async function resolveInlineFiles(entries: readonly PublishFile[]): Promi
   }
 
   return { files, blobs, manifest };
+}
+
+type UrlEntry = Extract<PublishFile, { url: string }>;
+type UrlContext = Required<Pick<ResolveOptions, "policy" | "budget" | "held">> & ResolveOptions;
+
+async function resolveUrlEntry(
+  entry: UrlEntry,
+  path: string,
+  ctx: UrlContext,
+): Promise<ResolvedFile & { size: number }> {
+  const contentType = contentTypeForPath(path);
+  const { policy } = ctx;
+
+  // A digest the drop already holds is the whole point of content addressing:
+  // nothing is fetched, nothing is written, and the manifest is unchanged.
+  if (entry.sha256 !== undefined) {
+    const size = ctx.held.get(entry.sha256);
+    if (size !== undefined) {
+      return { path, sha256: entry.sha256, contentType, size };
+    }
+  }
+
+  const response = await fetchPublicUrl(entry.url, {
+    budget: ctx.budget,
+    ...(ctx.fetchImpl === undefined ? {} : { fetchImpl: ctx.fetchImpl }),
+  });
+
+  const declared = Number(response.headers.get("content-length") ?? "");
+  if (Number.isInteger(declared) && declared > policy.max_file_bytes) {
+    throw new ApiError(
+      "PAYLOAD_TOO_LARGE",
+      `${entry.url} is ${declared} bytes; this instance accepts files up to ${policy.max_file_bytes}.`,
+    );
+  }
+  if (response.body === null) {
+    throw new ApiError("FETCH_FAILED", `${entry.url} answered with no body.`);
+  }
+
+  // With a digest and a writer, the bytes go straight to their final key and
+  // R2 verifies them — the Worker never sees them.
+  if (entry.sha256 !== undefined && ctx.streamBlob !== undefined) {
+    let oversize = false;
+    const capped = response.body.pipeThrough(
+      limit(policy.max_file_bytes, () => {
+        oversize = true;
+      }),
+    );
+    let written: number | undefined;
+    try {
+      written = await ctx.streamBlob(entry.sha256, capped as ReadableStream<Uint8Array>);
+    } catch (error) {
+      if (oversize || error instanceof Oversize) {
+        throw new ApiError(
+          "PAYLOAD_TOO_LARGE",
+          `${entry.url} is over ${policy.max_file_bytes} bytes, this instance's max_file_bytes.`,
+        );
+      }
+      throw error;
+    }
+    const size = written ?? (Number.isInteger(declared) ? declared : entry.size);
+    if (size === undefined) {
+      throw new ApiError("INTERNAL", `The stored size of ${entry.url} is unknown.`);
+    }
+    return { path, sha256: entry.sha256, contentType, size };
+  }
+
+  // Otherwise the Worker holds the bytes: capped at `max_unhashed_bytes` when
+  // it must hash them itself, at `max_file_bytes` when it only carries them.
+  const cap = entry.sha256 === undefined ? policy.max_unhashed_bytes : policy.max_file_bytes;
+  const bytes = await readCapped(response.body as ReadableStream<Uint8Array>, cap, entry.url, {
+    unhashed: entry.sha256 === undefined,
+  });
+  const digest = await sha256Hex(bytes);
+  if (entry.sha256 !== undefined && entry.sha256 !== digest) {
+    throw new ApiError(
+      "HASH_MISMATCH",
+      `${entry.url} hashes to ${digest}, not the sha256 sent with it.`,
+    );
+  }
+  return { path, bytes, sha256: digest, contentType, size: bytes.length };
+}
+
+/** Errors the stream past `max` bytes, so an oversized body fails the put. */
+function limit(max: number, onOversize: () => void): TransformStream<Uint8Array, Uint8Array> {
+  let seen = 0;
+  return new TransformStream({
+    transform(chunk, controller) {
+      seen += chunk.byteLength;
+      if (seen > max) {
+        onOversize();
+        controller.error(new Oversize(`body over ${max} bytes`));
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+}
+
+async function readCapped(
+  body: ReadableStream<Uint8Array>,
+  max: number,
+  url: string,
+  what: { unhashed: boolean },
+): Promise<Uint8Array<ArrayBuffer>> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      throw new ApiError(
+        "PAYLOAD_TOO_LARGE",
+        what.unhashed
+          ? `${url} is over ${max} bytes and carries no sha256, so this instance must hash it itself; send sha256 with the entry, or a smaller file.`
+          : `${url} is over ${max} bytes, this instance's max_file_bytes.`,
+      );
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
 }
