@@ -490,3 +490,17 @@ below the hosted product it replaces, it stays a personal tool and no paid plan 
 ## Competitive context
 
 See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained here).
+
+74. **The idempotency claim fixes every clock-derived value, not only the identity
+    (issue #4).** The claim was specified as `{payload_hash, drop_id, slug, gen, manifest,
+    state_hash, created}`. The fault-injection contract tests proved that is not enough:
+    a retry re-resolved `expires: "30d"` against its own clock, produced an `expires_at`
+    a second later than the first attempt's, and so hashed to a different desired state —
+    the CAS-equality check missed and a converging retry answered `409 UPDATE_CONFLICT`
+    instead of the drop. `expires_at` now lives in the claim beside `created`, and a resume
+    skips expiry re-resolution entirely (the payload already matched a claim this instance
+    wrote, so it was valid then; re-validating could also fail an absolute date that has
+    since passed). The general rule, recorded because it will apply to `update` and to the
+    staged commit as well: **anything the first attempt read from the clock belongs to the
+    claim.** Proven by `contract-tests/drops.test.ts`, which aborts after each of blobs,
+    claim, slug, meta and projections and asserts the retry converges on one drop.

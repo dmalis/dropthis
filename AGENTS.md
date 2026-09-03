@@ -125,9 +125,13 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   `drops/<id>/blobs/<sha256>` (unreachable until referenced; one R2 op per new file, none
   for unchanged; R2 verifies the hash via its `sha256` put option, the Worker never hashes
   streamed bodies) and compute the manifest; (1) put the idempotency claim (identity: drop
-  id, slug, gen, manifest, `state_hash` of the whole desired `meta.json`, generated
+  id, slug, gen, manifest, `state_hash` of the whole desired `meta.json`, `created`,
+  the resolved `expires_at`, generated
   password) if a key was given — a retry that finds the claim resumes with that identity,
-  re-fetching a missing `url` blob only if its hash still matches; (2) on publish, claim
+  re-fetching a missing `url` blob only if its hash still matches. **The claim fixes every
+  clock-derived value, not only the id and the slug** (#74): `"30d"` resolved a second later
+  is a different instant, so a retry that re-resolved it would build a different desired
+  state and turn convergence into `UPDATE_CONFLICT`; (2) on publish, claim
   `slugs/<slug>` (a pointer already holding this id counts); (4) compare-and-swap
   `meta.json` (`If-Match: <etag>`; `If-None-Match: *` on create; a CAS failure where the
   stored `meta.json` hashes to the claim's `state_hash` is success — `current_gen` alone
