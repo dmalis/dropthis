@@ -152,6 +152,22 @@ export function devRoutes() {
   });
 
   /**
+   * A calibrated CPU load: `rounds` SHA-256 digests over 1 KB. The plan's CPU
+   * ceiling is found by raising `rounds` until the isolate is killed (the edge
+   * answers 1102) — `Date.now()` inside a Worker only advances on I/O, so the
+   * honest timing is the client's wall clock and the honest ceiling is the kill.
+   */
+  dev.get("/bench/cpu", async (c) => {
+    const rounds = Number(c.req.query("rounds") ?? "100");
+    const block = crypto.getRandomValues(new Uint8Array(1024));
+    let last = new Uint8Array(0);
+    for (let i = 0; i < rounds; i += 1) {
+      last = new Uint8Array(await crypto.subtle.digest("SHA-256", block));
+    }
+    return c.json({ rounds, last_byte: last[0] ?? null });
+  });
+
+  /**
    * The inline-upload ceiling: parse the JSON body, base64-decode every entry
    * and hash the bytes — exactly the work `publish` will do before any R2 write
    * — and report the wall time. A body too large for the plan's CPU budget
@@ -159,16 +175,16 @@ export function devRoutes() {
    * 1102 from the edge. That kill is the measurement.
    */
   dev.post("/bench/inline", async (c) => {
+    const decoder = c.req.query("decoder") ?? "auto";
     const started = Date.now();
     const raw = await c.req.text();
-    const parsedAt = Date.now();
+    const readAt = Date.now();
     const payload = JSON.parse(raw) as { files: Array<{ path: string; base64: string }> };
+    const parsedAt = Date.now();
     let bytes = 0;
     const digests: string[] = [];
     for (const file of payload.files) {
-      const binary = atob(file.base64);
-      const buffer = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) buffer[i] = binary.charCodeAt(i);
+      const buffer = decodeBase64(file.base64, decoder);
       bytes += buffer.length;
       const digest = await crypto.subtle.digest("SHA-256", buffer);
       digests.push(hex(digest).slice(0, 8));
@@ -176,9 +192,11 @@ export function devRoutes() {
     return c.json({
       ok: true,
       files: payload.files.length,
+      decoder: activeDecoder(decoder),
       request_bytes: raw.length,
       decoded_bytes: bytes,
-      read_ms: parsedAt - started,
+      read_ms: readAt - started,
+      parse_ms: parsedAt - readAt,
       total_ms: Date.now() - started,
       digest_prefixes: digests.slice(0, 3),
     });
@@ -201,6 +219,32 @@ export function devRoutes() {
   });
 
   return dev;
+}
+
+/**
+ * Which base64 decoder the runtime gives us. `Uint8Array.fromBase64` is a
+ * native, single-call decode; the `atob` + per-character loop is the portable
+ * fallback and costs an order of magnitude more CPU per megabyte. Which one
+ * `publish` uses decides the inline ceiling, so the benchmark reports it.
+ */
+type Base64Api = { fromBase64?: (text: string) => Uint8Array<ArrayBufferLike> };
+
+function activeDecoder(requested: string): string {
+  const native = (Uint8Array as unknown as Base64Api).fromBase64;
+  if (requested === "charcode") return "charcode";
+  if (requested === "fromBase64") return native ? "fromBase64" : "unavailable";
+  return native ? "fromBase64" : "charcode";
+}
+
+function decodeBase64(text: string, requested: string): Uint8Array<ArrayBuffer> {
+  if (activeDecoder(requested) === "fromBase64") {
+    const native = (Uint8Array as unknown as Required<Base64Api>).fromBase64(text);
+    return new Uint8Array(native.buffer as ArrayBuffer, native.byteOffset, native.byteLength);
+  }
+  const binary = atob(text);
+  const buffer = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) buffer[i] = binary.charCodeAt(i);
+  return buffer;
 }
 
 function hex(buffer: ArrayBuffer): string {

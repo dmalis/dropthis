@@ -169,9 +169,14 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   `/`-separated, NFC, no `.`/`..` segments, no backslash or control characters, unique after
   normalisation. Content type from a frozen extension table (`application/octet-stream`
   fallback); text-typed = `text/*`, JSON, JavaScript, XML, SVG and `+json`/`+xml` types. The
-  single-call ceiling is policy `max_request_bytes` — **2 MB by default**: inline entries
-  are JSON-parsed and base64-decoded by the Worker inside the CPU budget (10 ms on Free —
-  25 MB is impossible there); issue #3 (the R2 truth slice) measures the true Free-safe value; `url` and staged
+  single-call ceiling is policy `max_request_bytes` — **4 MiB by default, measured**
+  (`docs/research/2026-09-03-free-plan-measurements.md`): inline entries are JSON-parsed,
+  base64-decoded and hashed by the Worker, and on the Free plan 4 MiB passes 10/10 at
+  254 ms median with 6 and 8 MiB passing above it. That holds only with
+  `Uint8Array.fromBase64`; with the portable `atob` loop the same size passed 2/10, so
+  `publish` decodes natively. Free's CPU allowance refills rather than capping each
+  request, so the failure (Cloudflare error 1102) is load-dependent, not a clean size
+  ceiling — the measurement shuffles sizes to keep the two apart. `url` and staged
   entries stream to R2 with R2 verifying the hash and cost almost no CPU. `/_skill.md`
   prints the current value and says: text inline, files by `url`. Above it **the CLI — the only staged-path client in v1** — uses
   `POST /_api/v1/uploads` (manifest → `upload_id`, drop id and slug allocated, missing
@@ -181,15 +186,19 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   session's payload hash; verifies the blobs exist, then the write order above; replays the
   stored result on repeat). Nothing is ever copied. MCP and REST publish callers never see
   it.
-- **R2 write rate.** R2 allows about one write per second to the same key. `meta.json` and
-  `slugs/<slug>` are single keys; a second write inside that window returns `429` with
-  `Retry-After` and a stable error code. Serialising through a Durable Object was considered
+- **R2 write rate.** Measured against remote R2 (`docs/research/2026-09-03-free-plan-measurements.md`):
+  writes to one key that are **in flight at once** are refused with
+  `Reduce your concurrent request rate for the same object. (10058)` — roughly half of ten
+  concurrent writes fail — while five writes issued one after another at full speed all
+  succeed. `meta.json` and `slugs/<slug>` are single keys; a refused write returns `429`
+  `R2_RATE_LIMIT` with `Retry-After: 1` and is never retried inside the Worker. Serialising through a Durable Object was considered
   and rejected — one drop updated twice a second is not the product.
 - **R2 facts this relies on** (evidence in `docs/research/`): strong global consistency for
-  reads and `list()`; conditional `put` via `onlyIf` / `Headers` (`If-None-Match: *`,
-  `If-Match`); a per-key write-rate limit; delete is free; `list()` costs an order of
-  magnitude more than a GET. Verify conditional-write behaviour against remote R2 — local
-  Miniflare has had reversed condition logic.
+  reads and `list()`; conditional `put` via `onlyIf` (`If-None-Match: *`, `If-Match`) —
+  **proven against remote R2** by `contract-tests/storage.test.ts`, which also pins that a
+  digest R2 rejects leaves the key absent; a per-key concurrent-write refusal; delete is
+  free; `list()` costs an order of magnitude more than a GET. Never assert R2 behaviour from
+  Miniflare — it has shipped reversed condition logic.
 
 ### The drop model
 
@@ -229,9 +238,10 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   `meta.json` and deletes only if `expires_at + grace ≤ now`.
 - **Password.** `password: "generate"` returns a 16-character random password once in the
   response — the agent's default, the skill says so. A chosen password needs ≥ 8 characters.
-  Stored as PBKDF2-SHA256 at policy `pbkdf2_iterations` (5,000 by default, safe on Free;
-  `doctor`'s `pbkdf2_benchmark` reports the highest count that fits 8 ms in the deployed
-  Worker and the operator raises it with `config set`). Unlock = an HMAC
+  Stored as PBKDF2-SHA256 at policy `pbkdf2_iterations` (**25,000 by default, measured**:
+  6.1 ms per derive on Free, the highest count inside the 8 ms unlock budget — 50,000 costs
+  12.5 ms and workerd refuses 200,000 outright; `doctor`'s `pbkdf2_benchmark` re-measures
+  the deployed instance and the operator raises it with `config set`). Unlock = an HMAC
   cookie signed over `{slug, nonce, expires_at}`: host-only, `Secure`, `HttpOnly`,
   `SameSite=Lax`, `Path=/<slug>/`. `nonce` rotates only when effective access changes (new, generated or removed password;
   re-sending the current password is a no-op), so a real change invalidates every cookie. No attempt rate limiting in v1; `SECURITY.md`
@@ -316,9 +326,9 @@ per-key ownership, no roles beyond `admin`/`user`, no workspaces.
 Two layers: *defaults* applied when the caller says nothing, *rules* enforced regardless.
 Example: `expiry: {default: "30d", max: "90d", allow_never: false}`,
 `password: {default: "generate", required: true}`, `noindex: {default: true, forced: true}`,
-`max_file_bytes` (≤ 100 MB, the request-body cap), `max_request_bytes` (≤ 64 MB encoded so
-the decoded body fits the isolate; in practice far lower on Free, per the measured CPU
-budget), `auto_index` (`list` only in v1),
+`max_file_bytes` (≤ 100 MB, the request-body cap), `max_request_bytes` (4 MiB by default,
+hard ceiling ≤ 64 MB encoded so the decoded body fits the isolate), `auto_index`
+(`list` only in v1),
 `pbkdf2_iterations`, `cron_ops_budget`; `config set` rejects values above the hard
 ceilings. `init` writes frozen Free-safe initial values; nothing is measured during `init`. **Prospective only:** `config set`
 changes what future calls resolve to: defaults fill omitted fields on `publish` only, rules
@@ -366,8 +376,9 @@ projections → weekly reconcile in the same cron. **The cron is hourly and resu
 cursor and is written once per invocation, at the end (one key, one write); every run works
 from the oldest pending date up to today (UTC), re-reads each `meta.json`, leaves
 not-yet-due entries in place, deletes markers that disagree with `meta.json`, never
-checkpoints past a day that is not yet over, stops at policy `cron_ops_budget` (40 R2 ops by default — derived from Free's 10 ms CPU and 50 subrequests
-with headroom, ≈ 8 drops per run, ≈ 190 per day). A crash before the checkpoint replays
+checkpoints past a day that is not yet over, stops at policy `cron_ops_budget` (40 R2 ops by
+default — derived from the Free plan's 50-subrequest limit with headroom, ≈ 8 drops per run,
+≈ 190 per day; still provisional, the cron has no code yet). A crash before the checkpoint replays
 harmlessly next hour (every step re-reads `meta.json`; a deleted drop reads as 404) — a
 missed run is caught up, never stranded. Every 7th day the budget goes to the reconcile:
 unreferenced blobs, orphan pointers and entries, missing entries. `prune --dry-run` and `usage` share one result shape: counts and bytes per
