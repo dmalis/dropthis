@@ -34,12 +34,25 @@ names below are the MCP names; the REST routes are the same five operations.
   the drop's URL or its slug (the 10-character path segment). Nothing is resolved first.
   A URL from another instance is `WRONG_INSTANCE`: send it to the instance that made it.
 - **Always set `title`.** It is what the user sees in lists and on the password page.
-- **Inline first, and stay under the ceiling.** Send text files as `{path, text}` and
-  binaries as `{path, base64}`. The whole call must stay under
-  **{{max_request_bytes}} bytes ({{max_request_mib}} MiB)**, this instance's
-  `max_request_bytes`, or it is `PAYLOAD_TOO_LARGE`. A single call carries
-  at most {{max_files}} files. Anything larger goes through the `dropthis` CLI, which
-  streams files instead of inlining them.
+- **Text inline, everything else by `url`.** A file entry is `{path, text}`,
+  `{path, base64}` or `{path, url}` — exactly one of the three.
+  - `{path, text}` for text you wrote: HTML, CSS, JS, Markdown, JSON, SVG.
+  - `{path, url}` for a picture, PDF, font or archive that already exists at a public
+    http(s) address. This instance fetches it, so **it costs you no tokens**. Add `sha256`
+    when you know it; without one the instance must hash the body itself and refuses above
+    **{{max_unhashed_bytes}} bytes**. With a digest a file may be up to
+    **{{max_file_bytes}} bytes**. A target that is not public, is not http(s), or does not
+    answer, is `FETCH_FAILED`; wrong bytes are `HASH_MISMATCH`. At most {{max_url_entries}}
+    `url` entries per call.
+  - `{path, base64}` **only for small binaries**. The bytes are your own generated tokens:
+    roughly **one output token per byte**, so a 200 KB photo is about 270,000 tokens and you
+    will stall long before you finish typing it. If the image is yours to make, make it
+    sprite-sized first — **128 px or less, JPEG or WebP, a few KB** — and inline that. If it
+    already lives on the web, use `url`.
+  - The whole call must stay under **{{max_request_bytes}} bytes ({{max_request_mib}} MiB)**,
+    this instance's `max_request_bytes`, or it is `PAYLOAD_TOO_LARGE`. A single call carries
+    at most {{max_files}} files. Anything larger goes through the `dropthis` CLI, which
+    streams files instead of inlining them.
 - **`update` replaces the whole file set.** Send every file the drop should have, not only
   the changed ones: `dropthis_get` with `files: true` returns the current text content, so
   read, change, write back. `meta` merges at the top level; a key set to `null` is removed.

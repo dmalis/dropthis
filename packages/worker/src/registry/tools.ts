@@ -64,8 +64,9 @@ export const TOOL_TEXT: Record<string, ToolText> = {
       "Creates a NEW drop and a NEW URL every call — an EXISTING drop is changed with " +
       "dropthis_update; never publish again to change something you already published, that " +
       "makes a duplicate URL. " +
-      "Send text files as {path, text} and binaries as {path, base64}; a single file is served " +
-      "at the drop's root, a folder from its index.html when it has one, else as a file list. " +
+      "The files field says how to send each file — text inline, anything already on the web " +
+      "as {path, url}, base64 only for small binaries; a single file is served at the drop's " +
+      "root, a folder from its index.html when it has one, else as a file list. " +
       "The whole call must stay under this instance's max_request_bytes (see /_skill.md), " +
       "PAYLOAD_TOO_LARGE otherwise. " +
       'expires is "7d", a date, an RFC 3339 instant or "never", inside this instance\'s policy ' +

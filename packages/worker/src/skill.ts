@@ -11,7 +11,7 @@
  */
 import template from "../../../skills/instance-skill.md";
 import type { InstanceConfig } from "./instance-config.js";
-import { MAX_FILES_PER_CALL } from "./registry/fields.js";
+import { MAX_FILES_PER_CALL, MAX_URL_ENTRIES } from "./registry/fields.js";
 import { toolSurface } from "./mcp/tools.js";
 import type { Tool } from "./mcp/tools.js";
 import { TOOL_TEXT } from "./registry/tools.js";
@@ -27,6 +27,9 @@ export function renderSkill(config: InstanceConfig): string {
     max_request_bytes: String(policy.max_request_bytes),
     max_request_mib: mebibytes(policy.max_request_bytes),
     max_files: String(MAX_FILES_PER_CALL),
+    max_unhashed_bytes: String(policy.max_unhashed_bytes),
+    max_file_bytes: String(policy.max_file_bytes),
+    max_url_entries: String(MAX_URL_ENTRIES),
     expiry_default: policy.expiry.default,
     expiry_max: policy.expiry.max,
     allow_never: policy.expiry.allow_never ? "allowed" : "refused",
