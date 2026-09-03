@@ -43,7 +43,7 @@ export function resolveTarget(target: string, origins: InstanceOrigins): string 
   if (!/^[a-z][a-z0-9+.-]*:/i.test(target)) {
     throw new TargetError(
       "INVALID_INPUT",
-      `${JSON.stringify(target)} is neither a 10-character slug nor a URL.`,
+      `${JSON.stringify(target)} is neither a drop slug nor a URL.`,
     );
   }
 
