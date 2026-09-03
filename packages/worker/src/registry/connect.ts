@@ -32,7 +32,6 @@ export type Connect = {
 export type ConnectInput = {
   canonicalUrl: string;
   instanceName: string;
-  label: string;
 };
 
 /**

@@ -204,7 +204,7 @@ function initDocument(result: RunInitResult): Record<string, unknown> {
     ...(result.instancesFile === undefined ? {} : { instances_file: result.instancesFile }),
     ...(result.canonicalUrl === undefined
       ? {}
-      : { connect: connectFor({ canonicalUrl: result.canonicalUrl, instanceName: result.name, label: "admin" }) }),
+      : { connect: connectFor({ canonicalUrl: result.canonicalUrl, instanceName: result.name }) }),
   };
 }
 
