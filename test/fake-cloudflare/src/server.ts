@@ -351,7 +351,9 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
 
   app.get("/client/v4/zones/:zoneId/dns_records", (c) => {
     const zoneId = c.req.param("zoneId");
-    const name = c.req.query("name");
+    // The SDK sends the exact-name filter as `name.exact` (its `Name` filter
+    // object); a bare `name` is what a hand-written call would send.
+    const name = c.req.query("name.exact") ?? c.req.query("name");
     const matching = state.dnsRecords.filter(
       (record) => record.zoneId === zoneId && (name === undefined || record.name === name),
     );

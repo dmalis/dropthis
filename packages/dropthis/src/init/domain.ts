@@ -87,7 +87,7 @@ export async function attachDomain(
     };
   }
 
-  for await (const record of client.dns.records.list({ zone_id: zone.id, name: hostname })) {
+  for await (const record of client.dns.records.list({ zone_id: zone.id, name: { exact: hostname } })) {
     return {
       ok: false,
       detail: `A ${String(record.type)} record already exists at ${hostname}.`,
@@ -100,7 +100,6 @@ export async function attachDomain(
     hostname,
     service: workerName,
     zone_id: zone.id,
-    environment: "production",
   });
 
   return { ok: true, canonicalUrl: `https://${hostname}`, zone, created: true };
