@@ -1,0 +1,13 @@
+{
+  "name": "dropthis",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "dropthis": "dist/cli.cjs" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup"
+  },
+  "devDependencies": {
+    "tsup": "8.5.1"
+  }
+}

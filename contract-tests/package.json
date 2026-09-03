@@ -1,0 +1,9 @@
+{
+  "name": "@dropthis/contract-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "cloudflare": "7.1.0"
+  }
+}
