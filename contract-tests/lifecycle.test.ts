@@ -727,3 +727,112 @@ describe("list", () => {
     expect((await listOk("?limit=1000")).drops.map((d) => d.slug)).toContain(slug);
   });
 })
+
+/**
+ * The expiry state table (docs/spec-v1.md), every row, without waiting.
+ *
+ * The dev build answers a per-request `DEV-Clock` header as "now" — the same
+ * reasoning as the per-request fault point: one deployment covers every row,
+ * and a live drop and an expired one can appear in the same run.
+ */
+describe("the expiry state table", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const at = (base: string, days: number) =>
+    new Date(Date.parse(base) + days * DAY).toISOString();
+  const clock = (instant: string) => ({ "DEV-Clock": instant });
+
+  async function expiringDrop(): Promise<{ drop: Json; slug: string; expiresAt: string }> {
+    const drop = await publishOk({
+      files: [{ path: "index.html", text: "<p>alive</p>" }],
+      title: "Perishable",
+      expires: "7d",
+    });
+    return { drop, slug: drop.slug as string, expiresAt: drop.expires_at as string };
+  }
+
+  it("live: the viewer serves, get is 200, update is free, list shows it", async () => {
+    const { drop, slug } = await expiringDrop();
+    expect((await fetch(drop.url as string, { cache: "no-store" })).status).toBe(200);
+
+    const got = (await (await api(`/_api/v1/drops/${slug}`)).json()) as Json;
+    expect(got.state).toBe("live");
+
+    expect((await updateOk(slug, { title: "Still here" })).state).toBe("live");
+    expect((await listOk("?limit=1000")).drops.map((d) => d.slug)).toContain(slug);
+  });
+
+  it("expired_grace: viewer 410, get 200 with state, list shows it", async () => {
+    const { drop, slug, expiresAt } = await expiringDrop();
+    const inGrace = at(expiresAt, 1);
+
+    const served = await fetch(drop.url as string, {
+      cache: "no-store",
+      headers: clock(inGrace),
+    });
+    expect(served.status).toBe(410);
+    expect(await served.text()).toContain("Expired");
+
+    const got = (await (
+      await api(`/_api/v1/drops/${slug}`, { headers: clock(inGrace) })
+    ).json()) as Json;
+    expect(got.state).toBe("expired_grace");
+
+    const page = await listOk("?limit=1000");
+    expect(page.drops.map((d) => d.slug)).toContain(slug);
+    const row = (await (
+      await api("/_api/v1/drops?limit=1000", { headers: clock(inGrace) })
+    ).json()) as Listing;
+    expect(row.drops.find((d) => d.slug === slug)!.state).toBe("expired_grace");
+  });
+
+  it("expired_grace: update needs a future expires, and that one call revives it", async () => {
+    const { drop, slug, expiresAt } = await expiringDrop();
+    const inGrace = at(expiresAt, 1);
+
+    const refused = await errorOf(await update(slug, { title: "nope" }, { headers: clock(inGrace) }));
+    expect(refused.status).toBe(409);
+    expect(refused.code).toBe("EXPIRED_NEEDS_EXPIRES");
+    expect(JSON.stringify(refused.body)).toContain("expires");
+
+    // "The link died, bring it back" is one call.
+    const revived = await updateOk(slug, { expires: "30d" }, { headers: clock(inGrace) });
+    expect(revived.state).toBe("live");
+    const served = await fetch(drop.url as string, { cache: "no-store", headers: clock(inGrace) });
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe("<p>alive</p>");
+  });
+
+  it("expired_final: viewer 410, get and update 410 EXPIRED_FINAL, list hides it", async () => {
+    const { drop, slug, expiresAt } = await expiringDrop();
+    const pastGrace = at(expiresAt, 8);
+
+    expect(
+      (await fetch(drop.url as string, { cache: "no-store", headers: clock(pastGrace) })).status,
+    ).toBe(410);
+
+    const got = await errorOf(await api(`/_api/v1/drops/${slug}`, { headers: clock(pastGrace) }));
+    expect(got.status).toBe(410);
+    expect(got.code).toBe("EXPIRED_FINAL");
+
+    const patched = await errorOf(
+      await update(slug, { expires: "30d" }, { headers: clock(pastGrace) }),
+    );
+    expect(patched.status).toBe(410);
+    expect(patched.code).toBe("EXPIRED_FINAL");
+
+    const page = (await (
+      await api("/_api/v1/drops?limit=1000", { headers: clock(pastGrace) })
+    ).json()) as Listing;
+    expect(page.drops.map((d) => d.slug)).not.toContain(slug);
+  });
+
+  it("a drop that never expires is live at any instant", async () => {
+    const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }], expires: "never" });
+    const farFuture = at(new Date().toISOString(), 3650);
+    const got = (await (
+      await api(`/_api/v1/drops/${drop.slug as string}`, { headers: clock(farFuture) })
+    ).json()) as Json;
+    expect(got.expires_at).toBeNull();
+    expect(got.state).toBe("live");
+  });
+})

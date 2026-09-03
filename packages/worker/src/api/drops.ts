@@ -39,7 +39,7 @@ export function dropRoutes(hooks: DevHooks) {
       bucket: c.env.BUCKET,
       config,
       caller: attribution(resolveCaller(c.req.raw, c.env)),
-      now: hooks.now(c.env),
+      now: hooks.now(c.env, c.req.raw),
       secret: requireSecret(c.env),
       fault: hooks.faultPoint(c.req.raw, c.env),
     });
@@ -53,7 +53,7 @@ export function dropRoutes(hooks: DevHooks) {
     const page = await listDrops(parseListInput(new URL(c.req.url).searchParams), {
       bucket: c.env.BUCKET,
       config: await loadInstanceConfig(c.env.BUCKET, c.req.url),
-      now: hooks.now(c.env),
+      now: hooks.now(c.env, c.req.raw),
     });
     return c.json(page);
   });
@@ -72,7 +72,7 @@ export function dropRoutes(hooks: DevHooks) {
       bucket: c.env.BUCKET,
       config,
       caller: attribution(resolveCaller(c.req.raw, c.env)),
-      now: hooks.now(c.env),
+      now: hooks.now(c.env, c.req.raw),
       secret: requireSecret(c.env),
       fault: hooks.faultPoint(c.req.raw, c.env),
     });
@@ -96,7 +96,7 @@ export function dropRoutes(hooks: DevHooks) {
     const drop = await getDrop(slug, {
       bucket: c.env.BUCKET,
       config: await loadInstanceConfig(c.env.BUCKET, c.req.url),
-      now: hooks.now(c.env),
+      now: hooks.now(c.env, c.req.raw),
       files: c.req.query("files") === "true",
     });
     return c.json(drop);
