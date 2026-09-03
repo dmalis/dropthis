@@ -91,7 +91,7 @@ describe("publish a single text file", () => {
 
     const served = await fetch(drop.url as string, { cache: "no-store" });
     expect(served.status).toBe(200);
-    expect(served.headers.get("content-type")).toBe("text/html");
+    expect(served.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(served.headers.get("cache-control")).toBe("no-cache, must-revalidate");
     expect(served.headers.get("x-robots-tag")).toBe("noindex, nofollow");
     expect(served.headers.get("content-disposition")).toBe('inline; filename="index.html"');
@@ -127,7 +127,7 @@ describe("publish a single text file", () => {
     for (const url of [drop.url as string, `${drop.url as string}report.txt`]) {
       const served = await fetch(url, { cache: "no-store" });
       expect(served.status).toBe(200);
-      expect(served.headers.get("content-type")).toBe("text/plain");
+      expect(served.headers.get("content-type")).toBe("text/plain; charset=utf-8");
       expect(await served.text()).toBe("body");
     }
   });
@@ -542,4 +542,82 @@ describe("the inline content budget of get(files:true)", () => {
       `${BASE_URL}/_api/v1/drops/${drop.slug as string}/files/small.txt`,
     );
   }, 30_000);
+});
+
+/**
+ * The charset the product assumes, declared where a browser can act on it.
+ *
+ * dropthis does not detect encodings (AGENTS.md, "Non-goals"): every file is
+ * UTF-8. A `text/html` response with no `charset` makes the browser fall back
+ * to a legacy encoding, and a middle dot renders as `Â·` — observed on a real
+ * drop. Every route that emits a type from the frozen table is swept here.
+ */
+describe("text is served as UTF-8", () => {
+  const BODY = "· 90 % · café · naïve ·";
+
+  it("declares charset on the drop root, the file path and the download route", async () => {
+    const drop = await publishOk({
+      files: [
+        { path: "index.html", text: `<p>${BODY}</p>` },
+        { path: "notes.md", text: BODY },
+      ],
+    });
+    const slug = drop.slug as string;
+
+    const urls = [
+      drop.url as string,
+      `${drop.url as string}index.html`,
+      `${drop.url as string}notes.md`,
+      `${BASE_URL}/_api/v1/drops/${slug}/files/notes.md`,
+      `${BASE_URL}/_api/v1/drops/${slug}/files/index.html`,
+    ];
+
+    for (const url of urls) {
+      const served = await fetch(url, { cache: "no-store" });
+      expect(served.status, url).toBe(200);
+      expect(served.headers.get("content-type"), url).toMatch(/; charset=utf-8$/);
+      // The bytes survive the round trip, which is the point of the header.
+      expect(await served.text(), url).toContain(BODY);
+    }
+  });
+
+  it.each([
+    ["a.css", "body{content:'·'}", "text/css; charset=utf-8"],
+    ["a.js", "// ·", "text/javascript; charset=utf-8"],
+    ["a.json", '{"·":1}', "application/json; charset=utf-8"],
+    ["a.csv", "a,·", "text/csv; charset=utf-8"],
+    ["a.svg", "<svg xmlns='http://www.w3.org/2000/svg'><title>·</title></svg>", "image/svg+xml; charset=utf-8"],
+    ["a.xml", "<r>·</r>", "application/xml; charset=utf-8"],
+  ])("declares charset for %s", async (path, text, expected) => {
+    const drop = await publishOk({ files: [{ path, text }] });
+    const served = await fetch(drop.url as string, { cache: "no-store" });
+    expect(served.headers.get("content-type")).toBe(expected);
+    expect(await served.text()).toBe(text);
+  });
+
+  it("adds no charset to binary bytes", async () => {
+    const drop = await publishOk({ files: [{ path: "pixel.png", base64: PNG_BASE64 }] });
+    const served = await fetch(drop.url as string, { cache: "no-store" });
+    expect(served.headers.get("content-type")).toBe("image/png");
+  });
+
+  it("keeps the manifest type bare, so Drop.files is unchanged", async () => {
+    const drop = await publishOk({ files: [{ path: "notes.md", text: BODY }] });
+    const files = drop.files as Array<Record<string, unknown>>;
+    expect(files[0]!.content_type).toBe("text/markdown");
+  });
+
+  it("declares charset on the generated pages too", async () => {
+    const drop = await publishOk({
+      files: [
+        { path: "a.txt", text: "a" },
+        { path: "docs/b.txt", text: "b" },
+      ],
+    });
+    const index = await fetch(drop.url as string, { cache: "no-store" });
+    expect(index.headers.get("content-type")?.toLowerCase()).toContain("charset=utf-8");
+
+    const missing = await fetch(`${BASE_URL}/definitely-not-a-slug/`, { cache: "no-store" });
+    expect(missing.headers.get("content-type")?.toLowerCase()).toContain("charset=utf-8");
+  });
 });

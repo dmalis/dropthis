@@ -11,6 +11,7 @@
  * update or an expiry has to be visible on the visitor's very next request.
  */
 import type { Bucket } from "./bindings.js";
+import { servedContentType } from "./domain/content-type.js";
 import type { ManifestEntry } from "./domain/meta.js";
 
 export const VIEWER_CACHE_CONTROL = "no-cache, must-revalidate";
@@ -77,7 +78,9 @@ export async function serveBlob(
   }
 
   const headers = new Headers({
-    "Content-Type": entry.content_type,
+    // UTF-8 is declared here, not stored in the manifest: the manifest type is
+    // hashed into the drop's state and returned in `Drop.files[]`.
+    "Content-Type": servedContentType(entry.content_type),
     "Content-Disposition": `${options.disposition}; filename="${sanitizeFilename(options.filename)}"`,
     "Cache-Control": VIEWER_CACHE_CONTROL,
     "Accept-Ranges": "bytes",
