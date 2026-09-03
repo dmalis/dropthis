@@ -507,9 +507,12 @@ async function pbkdf2Benchmark(ctx: DoctorContext): Promise<CheckResult> {
       status: "inconclusive",
       evidence:
         `${iterations} iterations: a ${round1(measured.baselineMs)} ms baseline against a ` +
-        `${round1(measured.bracketMs)} ms bracket left too little signal to divide, so this run ` +
-        `measured the instance's own I/O and not a derive (${method}).`,
-      remediation: "Run `doctor` again; this instance was too busy to time a derive.",
+        `${round1(measured.bracketMs)} ms bracket left no signal to divide (${method}). On ` +
+        `Cloudflare this is the expected answer: the clock does not account for CPU time, so a ` +
+        `derive cannot be timed from inside the request that runs it.`,
+      remediation:
+        "Judge pbkdf2_iterations against the measured reference instead: 6.1 ms per derive at " +
+        "25,000 on the Free plan (docs/research/2026-09-03-free-plan-measurements.md).",
     };
   }
 

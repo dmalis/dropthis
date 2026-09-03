@@ -966,29 +966,43 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     entry the caller wrote is what is wrong, and the frozen catalogue's `NOT_FOUND` is about
     the target.
 
-97. **`pbkdf2_benchmark` measures across an I/O bracket, and may answer `inconclusive`
+97. **`pbkdf2_benchmark` cannot be measured from inside the request that runs it
     (issue #16, 2026-09-03).** The check timed one derive with `Date.now()` and reported
-    `0 ms — inside the 8 ms budget` on every deployed instance. A Worker freezes
-    `Date.now()` and `performance.now()` inside a request; the clock catches up only at an
-    I/O boundary. So the one target the check exists for was the one place it measured
-    nothing, and it said "pass" while doing it. Node and Miniflare both hid this: their
-    clocks run free. The rulings the spec left open:
-    (a) **Eight derives per bracket, best of two brackets, minus the fastest of three
-    zero-derive brackets.** Eight at 25,000 iterations is ~50 ms of signal against an R2
-    `head` that costs single-digit milliseconds, so the subtraction is a correction and not
-    the measurement. Two signal brackets rather than the spec's one: at 8 ms of budget a
-    single slow round trip is the difference between `pass` and a false `fail`, and taking
-    the fastest costs eight more derives, not a new mechanism. Both mins are the honest
-    floor, the same rule the old three-round check used.
-    (b) **A fifth check status, `inconclusive`, and it never makes `ok` false.** A busy
-    instance cannot separate the derive from its own I/O; reporting a number then would be
-    the original bug with more arithmetic behind it. `fail` was wrong because nothing is
-    broken, and `skip` was wrong because the check ran. The line is `baseline ≥ signal / 2`,
-    and the remediation is to run `doctor` again.
-    (c) **The I/O is `head` on `system/config.json`.** A key every instance has, one real
-    binding round trip, no write, nothing to clean up — and `doctor` already reads that key.
-    (d) **`evidence` carries the method, not just the number.** Per-derive ms, the derive
-    count, the bracket count and the subtracted baseline, because an operator is being asked
-    to raise `pbkdf2_iterations` on the strength of it. A `pass` that carries 0 ms is now a
-    contract-test failure against the deployed instance, which is where it had to be pinned:
-    the Node seam still measures the laptop.
+    `0 ms — inside the 8 ms budget` on every deployed instance. A Worker freezes `Date.now()`
+    and `performance.now()` inside a request. Issue #16 assumed the clock catches up to real
+    time at an I/O boundary, so bracketing N derives with a binding call would make them
+    measurable. **It does not.** Measured on dev16 (2026-09-03): 32 derives at 25,000
+    iterations cost ~195 ms of real time — the caller's wall clock grows from 88 ms to 248 ms —
+    while the in-Worker bracket stays at ~20 ms across `head`, `get`, `list`, `setTimeout(0)`
+    and a real external `fetch`. The clock advances by what the I/O itself cost and never by
+    the CPU spent before it. Node and Miniflare both hide this: their clocks run free.
+    What was done, and the rulings:
+    (a) **The bracket is built anyway, and it is right.** Read the clock, run
+    `BENCHMARK_DERIVES` derives, await a real binding call, read again; subtract the same
+    bracket with no derives; fastest of two signal brackets and three baselines. It measures
+    correctly on any runtime that has a clock, and it is what proves, on Cloudflare, that
+    there is nothing to measure.
+    (b) **A fifth check status, `inconclusive`, and it never makes `ok` false.** `fail` was
+    wrong because nothing is broken; `skip` was wrong because the check ran. The line is
+    `baseline ≥ signal / 2`. On Cloudflare this is now the standing answer, and the evidence
+    says so in those words rather than telling an operator to try again forever. The
+    remediation points at the measured reference — 6.1 ms per derive at 25,000 on Free
+    (`docs/research/2026-09-03-free-plan-measurements.md`) — which is what
+    `pbkdf2_iterations` is actually judged against.
+    (c) **The finding is pinned by a test, not by this entry.**
+    `contract-tests/worker-clock.test.ts` asserts, against the deployed instance, that the
+    clock is blind to CPU across five kinds of await, and that the caller's wall clock does
+    see the same work. `/_dev/bench/bracket` is the probe behind it.
+    (d) **One shape does work, and it is deliberately NOT built yet.** A subrequest to this
+    Worker that performs the derives is visible to the caller as the duration of its own I/O:
+    measured 3 ms idle against 124 ms for 32 derives. Making `doctor` measure that way costs
+    an external subrequest, a network round trip to the instance's own hostname — which
+    AGENTS.md already treats as unreliable, and is why `mcp_initialize` runs in process — and
+    a route whose only purpose is to spend CPU. That is a product decision (owner), not a
+    slice ruling. The alternatives are: move the benchmark to the CLI, where the clock works,
+    the way account-level checks live in `init`; or drop the check.
+    (e) **`evidence` carries the method, not just the number.** Derive count, bracket count
+    and the subtracted baseline, because an operator is being asked to change
+    `pbkdf2_iterations` on the strength of it. A `pass` that carries 0 ms is now a
+    contract-test failure against the deployed instance; the Node seam still measures the
+    laptop and cannot pin it.
