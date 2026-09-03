@@ -61,23 +61,28 @@ No Postgres, no D1, no queue, no build step. Details in `AGENTS.md`.
 
 ## Install
 
-Honest human count: **4 steps, 3 of them browser-only** (2 if you already have a Cloudflare
-account with R2 enabled). Everything after the token is the agent's job.
+Honest human count: **3 steps, 2 of them browser-only** (1 if you already have a Cloudflare
+account with R2 enabled). There is no API token to create on the human path: `init` signs
+you in through the browser (one Allow click) and opens the exact dashboard page whenever a
+step needs you.
 
 1. *[browser]* Create a Cloudflare account — https://dash.cloudflare.com/sign-up
-2. *[browser]* Enable R2 and add a payment method at `https://dash.cloudflare.com/<account>/r2`.
-   Free tier, nothing is charged at personal volumes, but Cloudflare wants a card on file.
-3. *[browser]* Create an API token at https://dash.cloudflare.com/profile/api-tokens →
-   Create Custom Token, name it `dropthis`: **Workers Scripts — Edit · Workers KV Storage — Edit ·
-   Workers R2 Storage — Edit · Account Settings — Read** (add Zone DNS — Edit and Zone Workers
-   Routes — Edit if you will pass `--domain`).
-4. *[terminal, agent]*
+2. *[browser]* Enable R2 (free tier, but Cloudflare wants a card on file). `init` opens the
+   exact page for your account and waits.
+3. *[terminal]*
 
 ```sh
-CLOUDFLARE_API_TOKEN=<paste> npx dropthis@latest init --name drops --domain drops.example.com --json
+npx dropthis@latest init --name drops --domain drops.example.com --json
 ```
 
-The installer verifies the token, pins the account (refuses to guess between several),
+Automation (agents, CI, n8n) skips the browser entirely: set `CLOUDFLARE_API_TOKEN`
+(create at https://dash.cloudflare.com/profile/api-tokens → Create Custom Token:
+**Workers Scripts — Edit · Workers KV Storage — Edit · Workers R2 Storage — Edit ·
+Account Settings — Read**, plus Zone DNS — Edit and Zone Workers Routes — Edit for
+`--domain`). An env token always wins over browser login.
+
+The installer verifies the credential, pins the account (browser login refuses to run when
+more than one account is visible),
 reconciles the bucket and KV namespace by name (re-runs repair instead of failing), mints the
 admin key and writes its record into the bucket, deploys with `HMAC_SECRET` in the same call,
 adds the lifecycle rules, attaches

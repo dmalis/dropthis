@@ -386,6 +386,25 @@ finish its task.
     then Byrokko (milestone 2). Work is ticketed as GitHub issues #1–#14 (`ready-for-agent`),
     issue numbers = ticket numbers.
 
+## Install DX, 2026-09-03
+
+67. **Browser login for humans; the API token becomes the automation-only path.** The
+    token-creation page (pick 4 permissions, paste a secret) was the worst step of the
+    install. Interactive `init` with no token now signs in with wrangler's OAuth (one
+    Allow click) and guides: it opens the exact dashboard page at each human-only wall
+    (sign-in; R2 enable on `code: 10042` → `https://dash.cloudflare.com/<account-id>/r2`),
+    polls, resumes. Human install drops from 4 steps (3 browser) to 3 steps (2 browser).
+    The safety of the old "token-only, never ambient `wrangler login`" principle survives
+    as guards: an env token always wins; login mode refuses to run when more than one
+    account is visible (`--account-id` or a token required); whichever credential is
+    active is pinned into wrangler's environment and its source printed; non-interactive
+    with no token exits 4 naming the token URL and the four permissions. Mechanics of
+    login-mode provisioning (no parsing of wrangler's human stdout — machine output or
+    REST only) are settled in the installer slice, issue #10. Same session also confirmed
+    the licence stays Apache-2.0 (#52): the requirement was "I sell hosting, others
+    self-host freely", which permissive licensing already grants; blocking competitors was
+    explicitly not wanted.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry

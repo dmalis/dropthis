@@ -409,7 +409,8 @@ servers connected.
   `delete`, `doctor`, `connect` — and `noun verb` for administration — `user add`,
   `config set`, `usage`, `prune`.
 - **Two credentials, two env names, env beats file:** `CLOUDFLARE_API_TOKEN` (+
-  `CLOUDFLARE_ACCOUNT_ID`) for `init` only; `DROPTHIS_URL` + `DROPTHIS_KEY` for everything
+  `CLOUDFLARE_ACCOUNT_ID`) for `init` only (automation; an interactive human may
+  browser-login instead, #67); `DROPTHIS_URL` + `DROPTHIS_KEY` for everything
   else, `doctor` included. `init` writes `~/.config/dropthis/instances.json` (`name → {url, key}`);
   one instance is the default, `--instance <name>` / `DROPTHIS_INSTANCE` selects, the env
   pair overrides all of it (CI, n8n). An unknown instance name errors with the known names.
@@ -430,9 +431,20 @@ servers connected.
 
 ### Installer principles (learned from 15 Cloudflare-hosted projects, `docs/research/`)
 
-- **Token-only, never ambient `wrangler login`.** The installer pins `CLOUDFLARE_API_TOKEN`
-  and `CLOUDFLARE_ACCOUNT_ID` into wrangler's environment so it cannot deploy to the wrong
-  account, and prints which source the token came from.
+- **Two credential modes, one rule: never guess the account.** Automation (agents, CI,
+  n8n) sets `CLOUDFLARE_API_TOKEN` (+ `CLOUDFLARE_ACCOUNT_ID`); an env token always wins.
+  An interactive human with no token gets browser login instead (wrangler's OAuth, one
+  Allow click) — allowed only when exactly one account is visible; more than one → stop
+  and ask for `--account-id` or a token (#67). Whichever credential is active is pinned
+  into wrangler's environment so a deploy cannot land in the wrong account, and `init`
+  prints which source it came from. Non-interactive with no token exits 4 with the exact
+  token URL and the four permissions in the remediation.
+- **Guided preflight: open the exact page, wait, resume.** Interactive `init` opens the
+  browser at each human-only wall instead of printing instructions: not signed in → login;
+  R2 not enabled (`code: 10042`) → open `https://dash.cloudflare.com/<account-id>/r2`,
+  poll until enabled, continue. Non-interactive runs print the same exact URLs in the
+  error remediation and never block. Only Cloudflare can create the account and take the
+  card; everything else is the tool's job (#67).
 - **Reconcile by name, self-heal.** Bucket and KV: saved id → match by name → create. A
   re-run after a dashboard deletion repairs instead of failing. Provisioning goes through the
   Cloudflare REST API (ids come back as JSON); never parse wrangler's stdout for ids or URLs.
