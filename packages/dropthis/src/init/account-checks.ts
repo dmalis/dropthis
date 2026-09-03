@@ -13,6 +13,7 @@
  * mean "this was proved".
  */
 import type Cloudflare from "cloudflare";
+import { getObjectJson } from "./r2-objects.js";
 
 export type AccountCheckId = "lifecycle_rules" | "kv_bound" | "domain_attached";
 export type AccountCheckStatus = "pass" | "fail" | "skip";
@@ -40,10 +41,15 @@ export async function runAccountChecks(
   const bucket = `dropthis-${input.name}-drops`;
   const kvTitle = `dropthis-${input.name}-oauth`;
 
+  // With no --domain, the instance's own config says which hostname it
+  // advertises. An operator checking an instance someone else installed does
+  // not know it, and a `workers.dev` origin means there is nothing to attach.
+  const domain = input.domain ?? (await storedDomain(client, accountId, bucket));
+
   const checks: AccountCheck[] = [
     await lifecycleRules(client, accountId, bucket),
     await kvBound(client, accountId, worker, kvTitle),
-    await domainAttached(client, accountId, worker, input.domain),
+    await domainAttached(client, accountId, worker, domain),
   ];
 
   return { ok: checks.every((check) => check.status !== "fail"), checks };
@@ -171,6 +177,27 @@ async function domainAttached(
     evidence: `${domain} is not attached to any Worker in this account.`,
     remediation: `Run \`dropthis init --domain ${domain}\` for this instance.`,
   };
+}
+
+async function storedDomain(
+  client: Cloudflare,
+  accountId: string,
+  bucket: string,
+): Promise<string | undefined> {
+  const config = await getObjectJson<{ canonical_url?: unknown }>(
+    client,
+    accountId,
+    bucket,
+    "system/config.json",
+  ).catch(() => undefined);
+  if (typeof config?.canonical_url !== "string") return undefined;
+  let host: string;
+  try {
+    host = new URL(config.canonical_url).hostname;
+  } catch {
+    return undefined;
+  }
+  return host.endsWith(".workers.dev") ? undefined : host;
 }
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));

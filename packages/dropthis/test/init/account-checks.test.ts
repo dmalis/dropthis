@@ -3,6 +3,7 @@ import { startFakeCloudflare } from "../../../../test/fake-cloudflare/src/server
 import { runAccountChecks } from "../../src/init/account-checks.js";
 import { applyLifecycleRules } from "../../src/init/lifecycle-rules.js";
 import { makeClient } from "../../src/init/cloudflare-client.js";
+import { putObjectJson } from "../../src/init/r2-objects.js";
 
 const teardown: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -94,6 +95,33 @@ describe("runAccountChecks", () => {
     const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
 
     expect(row(result, "domain_attached")?.status).toBe("pass");
+  });
+
+  it("checks the domain the instance already stores when --domain was not given", async () => {
+    const cf = await fake();
+    await putObjectJson(cf.client, ACCOUNT, "dropthis-main-drops", "system/config.json", {
+      instance_name: "main",
+      canonical_url: "https://drops.example.com",
+      alias_origins: [],
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main" });
+
+    expect(row(result, "domain_attached")?.status).toBe("fail");
+    expect(row(result, "domain_attached")?.evidence).toContain("drops.example.com");
+  });
+
+  it("skips the domain when the instance lives on its workers.dev hostname", async () => {
+    const cf = await fake();
+    await putObjectJson(cf.client, ACCOUNT, "dropthis-main-drops", "system/config.json", {
+      instance_name: "main",
+      canonical_url: "https://dropthis-main.fake-subdomain.workers.dev",
+      alias_origins: [],
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main" });
+
+    expect(row(result, "domain_attached")?.status).toBe("skip");
   });
 
   it("fails when the asked-for domain routes to another Worker", async () => {
