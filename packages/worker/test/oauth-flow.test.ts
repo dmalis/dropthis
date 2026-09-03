@@ -459,6 +459,27 @@ describe("Client ID Metadata Documents", () => {
     expect(await publishedBy(`Bearer ${tokens.access_token}`)).toEqual({ id: "id-anna", label: "anna" });
   });
 
+  /**
+   * claude.ai is a CIMD client, and issue #20 could not tell whether it even
+   * tried to refresh. The refresh grant is pinned here for that kind of
+   * client too: the metadata document is fetched again at refresh time, so
+   * a client that never registered still gets a new access token.
+   */
+  it("exchanges a refresh token for a client_id that is a metadata URL", async () => {
+    serveMetadata(metadata([REDIRECT]));
+    const tokens = await connect(USER_KEY, CLIENT_ID);
+    const refreshed = await post("/_oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token!,
+      client_id: CLIENT_ID,
+    });
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+    const next = (await refreshed.json()) as { access_token: string; expires_in: number };
+    expect(next.access_token).not.toBe(tokens.access_token);
+    expect(next.expires_in).toBe(ACCESS_TOKEN_TTL_SECONDS);
+    expect(await toolNames(`Bearer ${next.access_token}`)).toEqual(USER_TOOLS);
+  });
+
   it("refuses a redirect the document does not list, locally", async () => {
     serveMetadata(metadata(["http://localhost:8976/other"]));
     const { challenge } = await pkce();
