@@ -329,7 +329,9 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     return c.json(ok(script.secrets.map((name) => ({ name, type: "secret_text" }))));
   });
 
-  app.get("/client/v4/accounts/:accountId/workers/scripts/:scriptName/script-settings", (c) => {
+  // The metadata a deploy wrote (bindings, compatibility date). NOT
+  // `/script-settings`, which is logpush and tags.
+  app.get("/client/v4/accounts/:accountId/workers/scripts/:scriptName/settings", (c) => {
     if (c.req.param("accountId") !== state.accountId) {
       return c.json(fail(7003, "Could not route to account"), 404);
     }

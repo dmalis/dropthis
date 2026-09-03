@@ -112,8 +112,13 @@ async function kvBound(
 
   let bindings: Array<Record<string, unknown>>;
   try {
-    const settings = await client.workers.scripts.settings.get(worker, { account_id: accountId });
-    bindings = (settings.bindings ?? []) as Array<Record<string, unknown>>;
+    // `scripts.settings` is a DIFFERENT endpoint (`/script-settings`) and
+    // carries logpush and tags, not bindings. The metadata a deploy actually
+    // wrote is on `/settings`, which the SDK calls scriptAndVersionSettings.
+    const settings = await client.workers.scripts.scriptAndVersionSettings.get(worker, {
+      account_id: accountId,
+    });
+    bindings = (settings.bindings ?? []) as unknown as Array<Record<string, unknown>>;
   } catch (error) {
     return {
       id: "kv_bound",
