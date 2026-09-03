@@ -22,23 +22,38 @@ export type R2Range =
   | { offset?: number; length: number }
   | { suffix: number };
 
+/** What `list()` returns per object; `customMetadata` only when asked for. */
+export type R2ListedObject = R2WriteResult & {
+  key: string;
+  uploaded?: Date;
+  customMetadata?: Record<string, string>;
+};
+
 export type R2Listing = {
-  objects: Array<R2WriteResult & { key: string }>;
+  objects: R2ListedObject[];
   truncated: boolean;
   cursor?: string;
 };
 
+/**
+ * `list()` returns keys only unless `include` asks for more. `list` needs
+ * `customMetadata` on every row, because that is what lets a page cost one
+ * `list()` instead of one `meta.json` read per drop.
+ */
+export type R2ListOptions = {
+  prefix?: string;
+  cursor?: string;
+  limit?: number;
+  /** Exclusive: listing starts at the first key AFTER this one. */
+  startAfter?: string;
+  include?: Array<"httpMetadata" | "customMetadata">;
+};
+
 export type Bucket = R2BucketLike & {
   get(key: string, options?: { range?: R2Range }): Promise<R2ObjectBody | null>;
-  head(key: string): Promise<(R2WriteResult & { key: string }) | null>;
+  head(key: string): Promise<R2ListedObject | null>;
   delete(keys: string | string[]): Promise<void>;
-  list(options?: {
-    prefix?: string;
-    cursor?: string;
-    limit?: number;
-    /** Exclusive: listing starts at the first key AFTER this one. */
-    startAfter?: string;
-  }): Promise<R2Listing>;
+  list(options?: R2ListOptions): Promise<R2Listing>;
 };
 
 export type Env = {

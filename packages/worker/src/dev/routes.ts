@@ -68,7 +68,15 @@ export function devRoutes() {
   dev.post("/r2/head", async (c) => {
     const { key } = await c.req.json<{ key: string }>();
     const object = await c.env.BUCKET.head(key);
-    return object === null ? c.json({ found: false }) : c.json({ found: true, size: object.size });
+    if (object === null) return c.json({ found: false });
+    // `uploaded` is how seam 1 proves a write did NOT happen: an unchanged file
+    // that was re-uploaded would carry a newer instant.
+    return c.json({
+      found: true,
+      size: object.size ?? null,
+      uploaded: object.uploaded?.toISOString() ?? null,
+      customMetadata: object.customMetadata ?? null,
+    });
   });
 
   /**
@@ -217,6 +225,17 @@ export function devRoutes() {
       cursor = listing.truncated ? listing.cursor : undefined;
     } while (cursor !== undefined);
     return c.json({ prefix, keys });
+  });
+
+  /**
+   * Deletes exact keys. Seam 1 uses it to MANUFACTURE the states the write
+   * order is designed to survive — an orphaned `list/` pointer, a lost listing
+   * row — which no ordinary call can produce on purpose.
+   */
+  dev.post("/r2/delete", async (c) => {
+    const { keys } = await c.req.json<{ keys: string[] }>();
+    await c.env.BUCKET.delete(keys);
+    return c.json({ deleted: keys.length });
   });
 
   /** Empties the bucket so a contract run starts from nothing. */

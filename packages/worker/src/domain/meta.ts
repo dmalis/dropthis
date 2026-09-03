@@ -173,3 +173,25 @@ export function toDrop(meta: DropMeta, options: ToDropOptions): Drop {
   };
   return drop;
 }
+
+/**
+ * `update({meta})` — a top-level merge in which `null` deletes a key
+ * (docs/spec-v1.md, "`update` semantics").
+ *
+ * Top-level is the whole rule: a nested object is replaced, not merged, so an
+ * agent can always tell what it will get. `null` deletes only where it appears
+ * as a top-level value; inside an object or an array it is ordinary JSON and is
+ * stored as it is — `meta` holds any JSON, because the archived product
+ * accepted only strings and agents got 422s for it.
+ */
+export function mergeAgentMeta(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete merged[key];
+    else merged[key] = value;
+  }
+  return merged;
+}

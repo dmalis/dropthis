@@ -80,8 +80,10 @@ describe("blob writes with an R2-verified digest", () => {
     const written = await (await dev("/r2/blob", { key, body: BODY, sha256: digest })).json();
     expect(written).toMatchObject({ ok: true });
 
+    // `uploaded` and `customMetadata` also come back from the probe now; this
+    // test is about the size R2 reports for a digest-verified body.
     const head = await (await dev("/r2/head", { key })).json();
-    expect(head).toEqual({ found: true, size: new TextEncoder().encode(BODY).length });
+    expect(head).toMatchObject({ found: true, size: new TextEncoder().encode(BODY).length });
   });
 
   it("rejects a wrong digest as HASH_MISMATCH and leaves the key absent", async () => {

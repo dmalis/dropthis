@@ -10,13 +10,17 @@
 import type { Env } from "../bindings.js";
 
 export type DevHooks = {
-  /** "Now" for expiry. Production has one answer and it is the clock. */
-  now(env: Env): Date;
+  /**
+   * "Now" for expiry. Production has one answer and it is the clock; the dev
+   * build may read the request, so a single deployment can answer for any
+   * instant the expiry table names.
+   */
+  now(env: Env, request?: Request): Date;
   /**
    * The raw `DEV-Fault` header: where THIS request should abort, so a test can
    * prove the retry converges. Each operation names its own points and parses
-   * the value itself, so one seam covers publish, `user add` and whatever
-   * comes next.
+   * the value itself, so one seam covers publish, `update`, `user add` and
+   * whatever comes next.
    */
   fault(request: Request, env: Env): string | undefined;
 };

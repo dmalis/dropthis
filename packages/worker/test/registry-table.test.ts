@@ -73,9 +73,9 @@ describe("operation registry", () => {
     expect(operation("delete").status).toBe(204);
   });
 
-  it("leaves exactly issue #5's operations unimplemented", () => {
+  it("implements every operation it declares", () => {
     const pending = OPERATIONS.filter((op) => op.handler === undefined).map((op) => op.name);
-    expect(pending).toEqual(["update", "list", "delete"]);
+    expect(pending).toEqual([]);
   });
 
   it("keeps only the raw-file route out of the MCP tool list", () => {

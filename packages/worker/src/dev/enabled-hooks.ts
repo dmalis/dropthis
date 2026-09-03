@@ -11,15 +11,20 @@ import type { DevHooks } from "./hooks.js";
 
 export const DEV_HOOKS: DevHooks = {
   /**
-   * Expiry cannot be tested by waiting, so the dev build answers `DEV_CLOCK` as
-   * the current instant when one is set.
+   * Expiry cannot be tested by waiting, so the dev build answers a given
+   * instant as "now".
+   *
+   * A per-request `DEV-Clock` header wins over the deployment-wide `DEV_CLOCK`,
+   * for the reason the fault point is per-request too: one deployment then
+   * covers every row of the expiry table, and a test can put a live drop and an
+   * expired one in the same run without redeploying between them.
    */
-  now(env: Env): Date {
-    if (env.DEV_ROUTES === "1" && typeof env.DEV_CLOCK === "string" && env.DEV_CLOCK.length > 0) {
-      const at = Date.parse(env.DEV_CLOCK);
-      if (!Number.isNaN(at)) return new Date(at);
-    }
-    return new Date();
+  now(env: Env, request?: Request): Date {
+    if (env.DEV_ROUTES !== "1") return new Date();
+
+    const header = request?.headers.get("DEV-Clock");
+    const at = Date.parse(header ?? env.DEV_CLOCK ?? "");
+    return Number.isNaN(at) ? new Date() : new Date(at);
   },
 
   /**
