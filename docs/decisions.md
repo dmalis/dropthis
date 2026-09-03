@@ -828,3 +828,53 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     the bundled `dist/cli.cjs`, and the bundle is what an operator runs. Bundling the built
     Worker into the package is the first-public-release milestone; until then `init` deploys
     from this repository and says so when it cannot find it.
+
+92. **`url` file entries, and saying out loud what inline base64 costs an agent (issue #15).**
+    The reason is a measured product failure, not a limit: on 2026-09-03 a claude.ai session
+    built a page around a product photo, tried to inline it as `{path, base64}`, and gave up —
+    a tool call's arguments are the agent's own generated tokens, so a 200 KB image is roughly
+    270,000 output tokens. It published the page with no image (dev8, drop `9ul4jschtk`). Two
+    changes fix that, and only two places re-teach it, so only two places changed:
+    `FILES_DESCRIPTION` in `registry/fields.ts` and the skill bullet in
+    `skills/instance-skill.md`. Both now say: text inline; anything already at a public
+    http(s) URL as `{path, url}`, which the instance fetches and which costs the agent
+    nothing; base64 only for small binaries, and a photo shrunk to what the page needs
+    (≤ 128 px, JPEG or WebP) before inlining. The rulings this slice needed:
+    (a) **`size` is how a fetched body gets a length, and `Content-Length` is only the
+    fallback (owner ruling, 2026-09-03).** Remote R2 refuses a body of unknown length outright
+    — `Provided readable stream must have a known length (request/response body or readable
+    half of FixedLengthStream)`, measured on dev15, 2026-09-03 — and a drop's own viewer does
+    not always send `Content-Length`. So there are three ways to give R2 a length, in this
+    order: the caller's `size`, wrapped in a `FixedLengthStream`, which streams any size up to
+    `max_file_bytes` and never touches the isolate; the response's own `Content-Length`,
+    streamed through untouched; or nothing, in which case the Worker buffers and
+    `max_unhashed_bytes` is the cap, because holding those bytes is exactly what that limit
+    bounds. A body that turns out shorter or longer than `size` errors the stream, the put
+    fails and the key stays absent: `HASH_MISMATCH`, the same answer a wrong digest gets. That
+    is why the entry carries `size?` and why both the tool text and `/_skill.md` say "give
+    sha256 and size when you know them". Under Node — the unit tests — there is no
+    `FixedLengthStream`, so the same call buffers and checks the length itself; the deployed
+    path is proven in `contract-tests/url-files.test.ts`.
+    (b) **The target rules are literal-host rules, and they are the second layer, not the
+    first.** `checkPublicUrl` refuses a non-http(s) scheme, a port that is not 80 or 443,
+    credentials in the URL, `localhost`/`.localhost`/`.local`/`.internal`/
+    `metadata.google.internal`, and every private, loopback, link-local, carrier-NAT,
+    reserved or non-unicast IPv4 or IPv6 literal — including IPv4-mapped IPv6. A name that
+    RESOLVES to a private address cannot be caught in the Worker, which has no resolver;
+    `global_fetch_strictly_public` (already in `wrangler.jsonc` for CIMD, #90e) is that
+    boundary. This layer exists to give an agent a clear `FETCH_FAILED` for an obvious
+    mistake, and every redirect hop is re-validated by the same function.
+    (c) **The per-call counts are `INVALID_INPUT`, not `POLICY_VIOLATION`.** 20 `url` entries
+    and 45 fetches per call are the Free plan's external-subrequest budget, not an operator's
+    policy: `config get` cannot show them and `config set` cannot change them, so telling an
+    agent to read the instance's limits would be a lie. The file count stays
+    `POLICY_VIOLATION`.
+    (d) **A retry whose `url` answers different bytes is `IDEMPOTENCY_MISMATCH`.** #74 fixes
+    the manifest in the claim; a resumed attempt re-fetches only the blobs its own claim's
+    keys are missing, and the re-fetched manifest must equal the claim's. Otherwise the call
+    would store blobs no manifest names, or serve bytes the first attempt never saw.
+    (e) **A staged manifest entry may carry a `url`, and the instance fetches it at commit.**
+    Such a digest is never in `missing` and gets no signed PUT URL — it is not the client's to
+    upload — and the target is validated when the session opens, so a URL this instance will
+    never fetch fails before anything else is uploaded. The three staged routes stay
+    `restOnly` (#85).

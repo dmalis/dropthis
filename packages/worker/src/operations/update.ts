@@ -42,9 +42,11 @@ import {
   requireSamePayload,
   sealPassword,
 } from "./idempotency.js";
+import { requireSameManifest } from "./publish.js";
 import type { FaultPoint } from "./publish.js";
 import { repairListEntry, writeProjections } from "./projections.js";
-import { resolveInlineFiles } from "./resolve-content.js";
+import { resolveFiles } from "./resolve-content.js";
+import { newFetchBudget } from "./fetch-url.js";
 
 export type UpdateContext = {
   bucket: Bucket;
@@ -97,7 +99,23 @@ export async function updateDrop(
     );
   }
 
-  const content = input.files === undefined ? null : await resolveInlineFiles(input.files);
+  // The digests this drop already stores. A `url` entry naming one of them is
+  // not fetched at all — that is what makes "swap one image in a ten-image
+  // drop" cost one fetch and one blob write.
+  const held = new Map<string, number>(
+    Object.values(current.manifest).map((entry) => [entry.sha256, entry.size] as const),
+  );
+  const content =
+    input.files === undefined
+      ? null
+      : await resolveFiles(input.files, {
+          policy: config.policy,
+          held,
+          budget: newFetchBudget(),
+          streamBlob: async (digest, body) =>
+            (await putBlob(bucket, blobKey(current.id, digest), body, digest)).size,
+        });
+  if (claim !== null && content !== null) requireSameManifest(claim, content.manifest);
   const manifest: Manifest = claim?.manifest ?? content?.manifest ?? current.manifest;
 
   // A `password` the caller did not send changes nothing — policy defaults
@@ -159,7 +177,6 @@ export async function updateDrop(
   // what makes a settings change cost zero blob writes and a one-file change in
   // a hundred-file drop cost one.
   if (content !== null) {
-    const held = new Set(Object.values(current.manifest).map((entry) => entry.sha256));
     for (const [digest, bytes] of content.blobs) {
       if (held.has(digest)) continue;
       await putBlob(bucket, blobKey(current.id, digest), bytes, digest);

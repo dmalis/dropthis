@@ -8,6 +8,9 @@
  */
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { MAX_URL_ENTRIES } from "../operations/fetch-url.js";
+
+export { MAX_URL_ENTRIES } from "../operations/fetch-url.js";
 
 /** Derived from the Free subrequest budget: ~507 internal calls at 500 files. */
 export const MAX_FILES_PER_CALL = 500;
@@ -40,7 +43,12 @@ const textEntry = z.strictObject({
 });
 const base64Entry = z.strictObject({
   path: z.string().describe(PATH_DESCRIPTION),
-  base64: z.string().describe("The file's bytes, base64-encoded. For binaries."),
+  base64: z
+    .string()
+    .describe(
+      "The file's bytes, base64-encoded. For SMALL binaries only: one base64 byte costs you " +
+        "about one output token, so a photo goes by url instead.",
+    ),
   /**
    * Optional: a client that already hashed the bytes (the CLI always does)
    * sends it, and the Worker refuses a mismatch as `HASH_MISMATCH` instead of
@@ -48,16 +56,42 @@ const base64Entry = z.strictObject({
    */
   sha256: z.string().optional(),
 });
+const urlEntry = z.strictObject({
+  path: z.string().describe(PATH_DESCRIPTION),
+  url: z
+    .string()
+    .describe(
+      "A public http(s) URL this instance fetches for you — it costs you no tokens. " +
+        "Give sha256 and size when you know them.",
+    ),
+  sha256: z.string().optional(),
+  size: z
+    .number()
+    .optional()
+    .describe("The file's length in bytes, when you know it: the body is streamed, never buffered."),
+});
 
 /**
- * A union of strict objects, which is how "exactly one of `text` and `base64`"
- * is expressed: an entry with both matches neither branch, and so does an entry
- * with neither.
+ * A union of strict objects, which is how "exactly one of `text`, `base64` and
+ * `url`" is expressed: an entry with two of them matches no branch, and so
+ * does an entry with none.
  */
-export const fileEntry = z.union([textEntry, base64Entry]);
+export const fileEntry = z.union([textEntry, base64Entry, urlEntry]);
 
+/**
+ * The one place an agent is told what a file entry costs IT to send. The
+ * numbers are the reason (decision #86): a tool call's arguments are generated
+ * tokens, so inlining a 200 KB photo is ~270k output tokens and the agent
+ * stalls; the same photo behind a `url` costs the agent nothing.
+ */
 export const FILES_DESCRIPTION =
-  "The files, each {path, text} or {path, base64}, exactly one of the two. On update, the WHOLE set.";
+  "The files, each {path, text}, {path, base64} or {path, url}, exactly one of the three. " +
+  "On update, the WHOLE set. " +
+  "Anything that already exists at a public http(s) URL goes as {path, url}: this instance " +
+  "fetches the bytes and they cost you no tokens — add sha256 and size when you know them. " +
+  "Inline base64 costs you roughly one output token per byte, so keep it for small binaries " +
+  "(a few KB) and shrink a photo to what the page actually needs — a sprite of 128 px or less, " +
+  "JPEG or WebP — before inlining it.";
 
 export type PublishFile = z.infer<typeof fileEntry>;
 
@@ -70,7 +104,7 @@ export function describeIssues(error: z.ZodError, fields: string): string {
     return `Unknown field${issue.keys.length > 1 ? "s" : ""} ${issue.keys.join(", ")}: this operation takes ${fields}.`;
   }
   if (issue.code === "invalid_union") {
-    return `Each entry of ${where} needs a path and exactly one of text or base64.`;
+    return `Each entry of ${where} needs a path and exactly one of text, base64 or url.`;
   }
   return `${where}: ${issue.message}`;
 }
@@ -88,6 +122,15 @@ export function checkFiles(files: readonly unknown[]): void {
     throw new ApiError(
       "POLICY_VIOLATION",
       `A single call carries at most ${MAX_FILES_PER_CALL} files; this one has ${files.length}.`,
+    );
+  }
+  // The `url` ceiling is its own: the Free plan's external-subrequest budget
+  // bounds the fetches, not the file count.
+  const urls = files.filter((entry) => typeof entry === "object" && entry !== null && "url" in entry);
+  if (urls.length > MAX_URL_ENTRIES) {
+    throw new ApiError(
+      "INVALID_INPUT",
+      `A single call fetches at most ${MAX_URL_ENTRIES} url entries; this one has ${urls.length}.`,
     );
   }
 }
