@@ -405,6 +405,15 @@ finish its task.
     self-host freely", which permissive licensing already grants; blocking competitors was
     explicitly not wanted.
 
+68. **Byrokko's instance lives entirely on Byrokko's side: their Cloudflare account AND a
+    hostname in a zone they own** (their designated domain, e.g. under `byrokko.com`) —
+    never a `dropthis.app` subdomain. Reason: the instance runs for their team only, on
+    their infrastructure; and a custom domain must be in the same Cloudflare account as
+    the Worker, so a `dropthis.app` hostname would need unverified cross-account DNS
+    (former assumption A1 — now moot). Amends #66(a): `<client>.dropthis.app` subdomains
+    apply only to instances hosted in the operator's own account (managed hosting), not to
+    client-owned accounts. Amends the #44 milestone-2 wording accordingly.
+
 ## v1 scope (frozen by #44)
 
 In: `publish`, `update`, `get`, `list`, `delete`; generated slugs; `title`, `meta`; expiry
