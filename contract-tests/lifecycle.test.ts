@@ -699,6 +699,36 @@ describe("list", () => {
     expect(await devKeys("list/")).not.toContain(listKey);
   });
 
+  it("rewrites a listing row that went stale, on the next get", async () => {
+    const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }], title: "Stale row" });
+    const slug = drop.slug as string;
+    const listKey = (await devKeys("list/")).find((key) => key.endsWith(`-${slug}`))!;
+
+    // Overwrite the pointer with one that carries no customMetadata at all —
+    // the shape a Worker older than this projection would have written. The
+    // comparison the spec names is `updated`, and this one has none.
+    await api("/_dev/r2/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ keys: [listKey] }),
+    });
+    await api("/_dev/r2/cas", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: listKey, body: "" }),
+    });
+    // A pointer the lister cannot interpret is skipped, never deleted: there
+    // is no proof the drop is gone, and this drop is very much alive.
+    expect((await listOk("?limit=1000")).drops.map((d) => d.slug)).not.toContain(slug);
+    expect((await devHead(listKey)).found).toBe(true);
+
+    expect((await api(`/_api/v1/drops/${slug}`)).status).toBe(200);
+
+    const row = (await listOk("?limit=1000")).drops.find((d) => d.slug === slug)!;
+    expect(row.title).toBe("Stale row");
+    expect(row.updated).toBe(drop.updated);
+  });
+
   it("reflects an update in the listing row", async () => {
     const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }], title: "Before" });
     const updated = await updateOk(drop.slug as string, { title: "After", expires: "60d" });

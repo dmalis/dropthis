@@ -62,9 +62,17 @@ export async function listDrops(input: ListInput, ctx: ListContext): Promise<Lis
     });
 
     const id = object.customMetadata?.id;
-    if (id === undefined || !(await dropRecordExists(ctx.bucket, id))) {
-      // The record is gone; this pointer is the leftover. Remove it here — that
-      // is the lister's half of the repair rule — and never show it.
+    if (id === undefined) {
+      // A pointer this reader cannot interpret — an older Worker's, or one a
+      // half-finished write left behind. It is skipped, never deleted: there is
+      // no proof its drop is gone, and destroying the row of a live drop is the
+      // one mistake a tolerant reader must not make. The next `get`/`update` of
+      // that drop rewrites it, and the reconcile owns whatever is left.
+      continue;
+    }
+    if (!(await dropRecordExists(ctx.bucket, id))) {
+      // Proof: the pointer names a record, and the record is gone. This is the
+      // lister's half of the repair rule — deleted by whoever reads it.
       await ctx.bucket.delete(object.key);
       continue;
     }
