@@ -22,11 +22,15 @@ import type { Bucket } from "../bindings.js";
 import { expiringMarkerDate } from "../domain/expiry.js";
 import type { DropMeta } from "../domain/meta.js";
 import { listEntryMetadata } from "../domain/projections.js";
-import { expiringKey, listKey, metaKey } from "../storage/keys.js";
+import { expiringKey, listKeyForDrop, metaKey } from "../storage/keys.js";
 
-/** The listing pointer's key. `created` never changes, so neither does this. */
+/**
+ * The listing pointer's key. Both halves are immutable — the drop id and the
+ * slug — so this is the same string for the life of the drop, and `update`,
+ * `delete` and the repair all address the one pointer `publish` wrote.
+ */
 export function listKeyOf(meta: DropMeta): string {
-  return listKey(Date.parse(meta.created), meta.slug);
+  return listKeyForDrop(meta.id, meta.slug);
 }
 
 export function expiringKeyOf(meta: DropMeta): string | null {

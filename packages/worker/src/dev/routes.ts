@@ -227,6 +227,17 @@ export function devRoutes() {
     return c.json({ prefix, keys });
   });
 
+  /**
+   * Deletes exact keys. Seam 1 uses it to MANUFACTURE the states the write
+   * order is designed to survive — an orphaned `list/` pointer, a lost listing
+   * row — which no ordinary call can produce on purpose.
+   */
+  dev.post("/r2/delete", async (c) => {
+    const { keys } = await c.req.json<{ keys: string[] }>();
+    await c.env.BUCKET.delete(keys);
+    return c.json({ deleted: keys.length });
+  });
+
   /** Empties the bucket so a contract run starts from nothing. */
   dev.post("/reset", async (c) => {
     let deleted = 0;

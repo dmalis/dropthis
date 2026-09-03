@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { newDropMeta, toDrop } from "../src/domain/meta.js";
 import type { DropMeta } from "../src/domain/meta.js";
 import { dropFromListEntry, listEntryMetadata, slugOfListKey } from "../src/domain/projections.js";
-import { listKey } from "../src/storage/keys.js";
+import { listKey, listKeyForDrop } from "../src/storage/keys.js";
 
 const NOW = new Date("2026-09-03T12:00:00Z");
 const CANONICAL = "https://drops.example.com";
@@ -31,7 +31,7 @@ async function meta(overrides: Partial<DropMeta> = {}): Promise<DropMeta> {
 describe("the list/ projection round-trips to the Drop list shape", () => {
   it("reproduces toDrop exactly, without meta and without files", async () => {
     const record = await meta();
-    const key = listKey(Date.parse(record.created), record.slug);
+    const key = listKeyForDrop(record.id, record.slug);
     const projected = dropFromListEntry(key, listEntryMetadata(record), {
       canonicalUrl: CANONICAL,
       now: NOW,
@@ -41,7 +41,7 @@ describe("the list/ projection round-trips to the Drop list shape", () => {
 
   it("round-trips a drop with no title and no expiry", async () => {
     const record = await meta({ title: null, expires_at: null });
-    const key = listKey(Date.parse(record.created), record.slug);
+    const key = listKeyForDrop(record.id, record.slug);
     const projected = dropFromListEntry(key, listEntryMetadata(record), {
       canonicalUrl: CANONICAL,
       now: NOW,
@@ -53,7 +53,7 @@ describe("the list/ projection round-trips to the Drop list shape", () => {
 
   it("round-trips has_password and noindex", async () => {
     const record = await meta({ noindex: false, access: { password: { algorithm: "pbkdf2-sha256" } } });
-    const key = listKey(Date.parse(record.created), record.slug);
+    const key = listKeyForDrop(record.id, record.slug);
     const projected = dropFromListEntry(key, listEntryMetadata(record), {
       canonicalUrl: CANONICAL,
       now: NOW,
@@ -64,7 +64,7 @@ describe("the list/ projection round-trips to the Drop list shape", () => {
 
   it("derives the state at list time, not at write time", async () => {
     const record = await meta({ expires_at: "2026-09-01T00:00:00Z" });
-    const key = listKey(Date.parse(record.created), record.slug);
+    const key = listKeyForDrop(record.id, record.slug);
     const entry = listEntryMetadata(record);
 
     expect(dropFromListEntry(key, entry, { canonicalUrl: CANONICAL, now: NOW }).state).toBe(
