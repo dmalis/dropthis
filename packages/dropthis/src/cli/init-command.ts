@@ -27,6 +27,7 @@ import { isInteractive } from "./interactive.js";
 import { jsonLine } from "./output.js";
 import { modeOf } from "./run.js";
 import { browserLogin } from "../init/browser-login.js";
+import { InstanceNameError, normalizeInstanceName } from "../init/instance-name.js";
 import { connectFor } from "../../../worker/src/registry/connect.js";
 
 export type InitInput = {
@@ -60,6 +61,23 @@ function probeOverride(env: Record<string, string | undefined>): string | undefi
 
 export async function runInitCommand(input: InitInput, globals: Globals, io: RunIo): Promise<number> {
   const mode = modeOf(globals);
+
+  // Before the credential, and so before a browser login: the name becomes a
+  // Worker, a bucket, a KV namespace and a DIRECTORY under the config home,
+  // so a raw value is a path traversal as well as a bad resource name.
+  let name: string;
+  try {
+    name = input.name === undefined ? "main" : normalizeInstanceName(input.name);
+  } catch (error) {
+    if (!(error instanceof InstanceNameError)) throw error;
+    throw new CliError(
+      "INVALID_INPUT",
+      error.message,
+      "Pass --name with 3 to 30 characters of a-z, 0-9 and -.",
+      false,
+    );
+  }
+
   const interactive = await isInteractive({
     env: io.env,
     stdin: io.stdin,
@@ -88,7 +106,6 @@ export async function runInitCommand(input: InitInput, globals: Globals, io: Run
     return credential.exitCode;
   }
 
-  const name = input.name ?? "main";
   const apiBase = io.env.CLOUDFLARE_BASE_URL;
   const creds = {
     apiToken: credential.token,

@@ -260,6 +260,53 @@ describe("init --json", () => {
     expect(document.admin_key).toBeUndefined();
   });
 
+  it("normalises --name before it reaches a resource name or a path", async () => {
+    const cf = await fake();
+    const env = {
+      ...(await home()),
+      PATH: process.env.PATH,
+      CLOUDFLARE_API_TOKEN: "fake-token",
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+      CLOUDFLARE_BASE_URL: cf.apiBase,
+      DROPTHIS_WRANGLER: await stubWranglerBinary(cf.origin),
+      DROPTHIS_INIT_PROBE_URL: cf.instanceUrl,
+      DROPTHIS_INIT_POLL_MS: "10",
+    };
+
+    const result = await run(["init", "--name", "  Client X ", "--json"], { env });
+
+    const document = oneDocument(result.stdout);
+    expect(document.name).toBe("client-x");
+    expect(document.bucket).toBe("dropthis-client-x-drops");
+    expect(cf.state.buckets).toEqual(["dropthis-client-x-drops"]);
+    const stored = JSON.parse(await readFile(String(document.instances_file), "utf8")) as {
+      instances: Record<string, unknown>;
+    };
+    expect(Object.keys(stored.instances)).toEqual(["client-x"]);
+  });
+
+  it("refuses a --name that would escape the config home, before touching the account", async () => {
+    const cf = await fake();
+    const env = {
+      ...(await home()),
+      PATH: process.env.PATH,
+      CLOUDFLARE_API_TOKEN: "fake-token",
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+      CLOUDFLARE_BASE_URL: cf.apiBase,
+      DROPTHIS_WRANGLER: await stubWranglerBinary(cf.origin),
+      DROPTHIS_INIT_PROBE_URL: cf.instanceUrl,
+      DROPTHIS_INIT_POLL_MS: "10",
+    };
+
+    const result = await run(["init", "--name", "../../evil", "--json"], { env });
+
+    expect(result.code).toBe(1);
+    expect(oneDocument(result.stderr).code).toBe("INVALID_INPUT");
+    expect(result.stdout).toBe("");
+    expect(cf.state.buckets).toEqual([]);
+    expect(cf.state.calls).toEqual([]);
+  });
+
   it("exits 4 with the token page and the four permissions when no credential is set", async () => {
     const env = { ...(await home()), PATH: process.env.PATH };
 

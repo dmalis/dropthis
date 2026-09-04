@@ -23,6 +23,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { Env } from "../cli/credentials.js";
 import { instancesPath } from "../cli/credentials.js";
+import { normalizeInstanceName } from "./instance-name.js";
 import type { RenderedWranglerConfig } from "./plan-render.js";
 
 export type DeployOptions = {
@@ -45,9 +46,15 @@ export type DeployOptions = {
   log?: Writable;
 };
 
-/** `~/.config/dropthis/<name>/` — beside `instances.json`, never in the cwd. */
+/**
+ * `~/.config/dropthis/<name>/` — beside `instances.json`, never in the cwd.
+ *
+ * The name is normalised here as well as at the command: this function turns a
+ * string into a path, and a caller that has not normalised would write outside
+ * the config home.
+ */
 export function instanceConfigDir(env: Env, name: string): string {
-  return join(instancesPath(env), "..", name);
+  return join(instancesPath(env), "..", normalizeInstanceName(name));
 }
 
 export async function wranglerDeploy(options: DeployOptions): Promise<void> {

@@ -10,6 +10,7 @@ import { pollHealth, runRemoteDoctor, type PollOptions } from "./probe.js";
 import { reconcileBucket, reconcileNamespace } from "./reconcile.js";
 import { getObjectJson } from "./r2-objects.js";
 import { rotateAdminKey } from "./rotate.js";
+import { normalizeInstanceName } from "./instance-name.js";
 import { generateHmacSecret, secretsFilePayload } from "./secrets.js";
 import { workerSecretNames } from "./worker-secrets.js";
 import type { Env } from "../cli/credentials.js";
@@ -108,7 +109,9 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     options.onStep?.(step);
     return step;
   };
-  const instanceName = options.name ?? "main";
+  // The engine normalises too: `runInitCommand` is one caller, and every
+  // resource name below is derived from this string.
+  const instanceName = options.name === undefined ? "main" : normalizeInstanceName(options.name);
   const worker = `dropthis-${instanceName}`;
   const bucket = `dropthis-${instanceName}-drops`;
   const kvNamespace = `dropthis-${instanceName}-oauth`;
