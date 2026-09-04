@@ -16,8 +16,32 @@
  * it into the error its surface uses.
  */
 
-/** Hostname suffixes that never name a public host. */
+/** Names that never belong to a public host, exactly or as a suffix. */
+const PRIVATE_NAMES = new Set(["localhost", "metadata.google.internal", "metadata"]);
 const PRIVATE_SUFFIXES = [".localhost", ".local", ".internal", ".home.arpa"];
+
+/**
+ * THE literal-host classifier — the one place that answers "could this
+ * hostname belong to the public internet?" for every outbound fetch the Worker
+ * makes (a `url` file entry, an OAuth Client ID Metadata Document).
+ *
+ * There was one of these per caller once, and they had already drifted: one
+ * missed `.home.arpa`, both admitted `2001:db8::/32` (issue #24, finding 14).
+ * Now the schemes and ports differ per caller and the HOST rule is shared.
+ */
+export function privateHostProblem(hostname: string): string | null {
+  // `URL` keeps an IPv6 literal in its brackets; the parsers below want it bare.
+  const host = hostname.toLowerCase().replace(/\.$/, "").replace(/^\[(.*)\]$/, "$1");
+  if (PRIVATE_NAMES.has(host) || PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
+    return `${host} is not a public host`;
+  }
+
+  const address = host.includes(":") ? parseIpv6(host) : parseIpv4Loose(host);
+  if (address !== null && !isPublicAddress(address)) {
+    return `${host} is not a public address`;
+  }
+  return null;
+}
 
 export function publicHttpsUrlProblem(candidate: string): string | null {
   let url: URL;
@@ -33,17 +57,7 @@ export function publicHttpsUrlProblem(candidate: string): string | null {
   // `URL` drops a default port, so anything left is an explicit non-443 port.
   if (url.port !== "") return "The URL must use port 443.";
 
-  // `URL` keeps an IPv6 literal in its brackets; the parsers below want it bare.
-  const host = url.hostname.toLowerCase().replace(/\.$/, "").replace(/^\[(.*)\]$/, "$1");
-  if (host === "localhost" || PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
-    return "The URL names a private host.";
-  }
-
-  const address = parseIpv4Loose(host) ?? parseIpv6(host);
-  if (address !== null && !isPublicAddress(address)) {
-    return "The URL names a private address.";
-  }
-  return null;
+  return privateHostProblem(url.hostname) === null ? null : "The URL names a private host.";
 }
 
 type Ip = { v: 4; bytes: [number, number, number, number] } | { v: 6; words: number[] };
@@ -119,15 +133,27 @@ function isPublicAddress(ip: Ip): boolean {
   if ((w0 & 0xfe00) === 0xfc00) return false; // fc00::/7 unique local
   if ((w0 & 0xffc0) === 0xfe80) return false; // fe80::/10 link-local
   if ((w0 & 0xff00) === 0xff00) return false; // ff00::/8 multicast
+  // The rest of what IANA marks as anything but global unicast, so "reserved or
+  // non-unicast" (#92b) is the whole rule and not a sample of it.
+  if (w0 === 0x0100 && w1 === 0 && w2 === 0 && w3 === 0) return false; // 100::/64 discard
+  if (w0 === 0x2001 && w1 === 0x0db8) return false; // 2001:db8::/32 documentation
+  if (w0 === 0x2001 && w1 === 0) return false; // 2001::/32 Teredo
+  if (w0 === 0x2002) return false; // 2002::/16 6to4
+  if (w0 === 0x3fff) return false; // 3fff::/20 documentation (RFC 9637)
   return true;
 }
 
-function isPublicIpv4([a, b]: readonly number[]): boolean {
+function isPublicIpv4([a, b, c]: readonly number[]): boolean {
   if (a === 0 || a === 10 || a === 127) return false;
   if (a === 100 && b! >= 64 && b! <= 127) return false; // carrier-grade NAT
   if (a === 169 && b === 254) return false; // link-local + cloud metadata
   if (a === 172 && b! >= 16 && b! <= 31) return false;
+  if (a === 192 && b === 0) return false; // 192.0.0.0/24 special, 192.0.2.0/24 TEST-NET-1
   if (a === 192 && b === 168) return false;
-  if (a! >= 224) return false; // multicast and reserved
+  if (a === 192 && b === 88 && c === 99) return false; // 6to4 relay anycast
+  if (a === 198 && (b === 18 || b === 19)) return false; // benchmarking
+  if (a === 198 && b === 51 && c === 100) return false; // TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return false; // TEST-NET-3
+  if (a! >= 224) return false; // multicast, reserved 240/4 and broadcast
   return true;
 }

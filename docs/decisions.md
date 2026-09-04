@@ -1097,3 +1097,11 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `customMetadata` passes, and a pointer with no readable instant was never owned. Reading
     `uploads/<id>/session.json` to confirm would cost one R2 operation per pointer inside the
     cron's 40-op budget and prove nothing the pointer does not already say.
+    (e) **One literal-host classifier, in `domain/public-url.ts`.** `checkPublicUrl` (the `url`
+    file entry) and `publicHttpsUrlProblem` (the OAuth Client ID Metadata Document) each had
+    their own, and they had already drifted: one missed `.home.arpa`, both admitted
+    `2001:db8::/32`, one missed the TEST-NETs. `privateHostProblem(hostname)` is now the only
+    answer to "could this host be on the public internet?", and #92b's "every private,
+    loopback, link-local, carrier-NAT, reserved or non-unicast IPv4 or IPv6 literal" is
+    enumerated in one place. Scheme and port stay per caller — the OAuth fetch is https/443
+    only, a `url` entry is http(s) on 80 or 443.

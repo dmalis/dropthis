@@ -54,6 +54,20 @@ describe("checkPublicUrl", () => {
     ["link-local IPv6 fe80::/10", "http://[fe80::1]/a.jpg"],
     ["an IPv4-mapped IPv6 loopback", "http://[::ffff:127.0.0.1]/a.jpg"],
     ["a URL that is not a URL", "not a url"],
+    // The same classifier as `publicHttpsUrlProblem`, so the two cannot drift
+    // (issue #24, finding 14 and standards finding 3).
+    ["a .home.arpa name", "http://box.home.arpa/a.jpg"],
+    ["an .internal name", "http://host.internal/a.jpg"],
+    ["IPv6 documentation space 2001:db8::/32", "http://[2001:db8::1]/a.jpg"],
+    ["the IPv6 discard prefix 100::/64", "http://[100::1]/a.jpg"],
+    ["IPv4 special-purpose 192.0.0.0/24", "http://192.0.0.1/a.jpg"],
+    ["IPv4 TEST-NET-1", "http://192.0.2.5/a.jpg"],
+    ["IPv4 TEST-NET-2", "http://198.51.100.5/a.jpg"],
+    ["IPv4 TEST-NET-3", "http://203.0.113.5/a.jpg"],
+    ["IPv4 benchmarking 198.18/15", "http://198.19.0.1/a.jpg"],
+    ["IPv4 reserved 240/4", "http://240.0.0.1/a.jpg"],
+    ["a shorthand loopback the URL parser expands", "http://127.1/a.jpg"],
+    ["a hexadecimal loopback", "http://0x7f000001/a.jpg"],
   ];
 
   for (const [what, url] of forbidden) {
