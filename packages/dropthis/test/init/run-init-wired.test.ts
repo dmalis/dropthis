@@ -222,6 +222,79 @@ describe("runInit — --domain", () => {
     expect(step(result.steps, "domain")?.detail).toMatch(/A record/);
     expect(calls).toHaveLength(0);
   });
+
+  it("reports the workers.dev origin everywhere when the domain attach fails", async () => {
+    const cf = await fake();
+    // The hostname is already routed to somebody else's Worker: the read-only
+    // half cannot see that (there is no DNS record yet), so the attach is what
+    // fails — after the deploy.
+    cf.state.workerDomains.push({
+      id: "d1",
+      hostname: "drops.example.com",
+      service: "someone-elses-worker",
+      zone_id: "z-example",
+    });
+    const { deploy } = stubDeploy(cf, teardown);
+    const env = await home();
+    const workersDev = "https://dropthis-main.fake-subdomain.workers.dev";
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      env,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "domain")?.status).toBe("error");
+    // The instance answers on workers.dev and nowhere else, so nothing this
+    // run reports or stores may name the hostname it failed to attach.
+    expect(result.canonicalUrl).toBe(workersDev);
+    expect(result.aliasOrigins).toEqual([]);
+    expect(result.domain).toBeUndefined();
+    const file = await readInstancesFile(env);
+    expect(file?.instances.main?.url).toBe(workersDev);
+  });
+
+  it("names the missing zone permission before it provisions anything", async () => {
+    const cf = await fake({ missingScopes: ["workers-routes"] });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "permissions")?.status).toBe("error");
+    expect(step(result.steps, "permissions")?.detail).toContain("Zone Workers Routes");
+    expect(calls).toHaveLength(0);
+    expect(cf.state.buckets).toEqual([]);
+  });
+
+  it("names the missing DNS permission before it provisions anything", async () => {
+    const cf = await fake({ missingScopes: ["zone-dns"] });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "permissions")?.status).toBe("error");
+    expect(step(result.steps, "permissions")?.detail).toContain("Zone DNS");
+    expect(calls).toHaveLength(0);
+    expect(cf.state.buckets).toEqual([]);
+  });
 });
 
 describe("runInit — --rotate-admin-key", () => {

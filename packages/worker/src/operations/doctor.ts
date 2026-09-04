@@ -541,9 +541,12 @@ function round1(value: number): number {
 
 /**
  * `--rotate-admin-key` is crash-safe, not atomic: it writes `users/admin` as
- * `{id, previous}` and clears `previous` on a LATER run. A `previous` still
- * present means the old key's records may still exist — so the old key may
- * still work, which is the one thing a rotation had to end.
+ * `{id, pending}` before the new key exists and `{id, previous}` after the
+ * switch, and clears the marker on a LATER run. Either marker still present
+ * means a run died with a key it had to account for: `previous` means the old
+ * key's records may still exist, so the old key may still work — the one thing
+ * a rotation had to end; `pending` means a key that nothing names may already
+ * open the instance.
  */
 async function adminRotationClean(ctx: DoctorContext): Promise<CheckResult> {
   const object = await ctx.bucket.get(userKey("admin"));
@@ -556,19 +559,26 @@ async function adminRotationClean(ctx: DoctorContext): Promise<CheckResult> {
     };
   }
   try {
-    const parsed = JSON.parse(await object.text()) as { id?: unknown; previous?: unknown };
-    if (typeof parsed.previous === "string" && parsed.previous.length > 0) {
+    const parsed = JSON.parse(await object.text()) as {
+      id?: unknown;
+      previous?: unknown;
+      pending?: unknown;
+    };
+    const marker = (["previous", "pending"] as const).find(
+      (field) => typeof parsed[field] === "string" && (parsed[field] as string).length > 0,
+    );
+    if (marker !== undefined) {
       return {
         id: "admin_rotation_clean",
         status: "fail",
-        evidence: `users/admin still names a previous key id, so a rotation did not finish.`,
+        evidence: `users/admin still names a ${marker} key id, so a rotation did not finish.`,
         remediation: "Rerun `dropthis init --rotate-admin-key`; it finishes the deletes first.",
       };
     }
     return {
       id: "admin_rotation_clean",
       status: "pass",
-      evidence: `users/admin names one key id and no previous one.`,
+      evidence: `users/admin names one key id and no pending or previous one.`,
     };
   } catch {
     return {

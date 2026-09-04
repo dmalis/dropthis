@@ -96,6 +96,46 @@ export async function checkPermissions(client: Cloudflare, accountId: string): P
 }
 
 /**
+ * `--domain` needs two permissions the account-level probes never touch, and
+ * both are only exercised AFTER a deploy (the DNS look-up and the custom-domain
+ * attach). One cheap read each, before anything is provisioned — the same
+ * convention as `checkPermissions`, and the same limit: a read proves the
+ * resource group is in the token's scope, not that it carries Edit.
+ */
+export async function checkDomainPermissions(
+  client: Cloudflare,
+  accountId: string,
+  zoneId: string,
+  hostname: string,
+): Promise<PermissionsCheck> {
+  const probes: Array<{ permission: string; run: () => Promise<unknown> }> = [
+    {
+      permission: "Zone DNS — Edit",
+      run: async () => {
+        for await (const _record of client.dns.records.list({ zone_id: zoneId, per_page: 1 })) break;
+      },
+    },
+    {
+      permission: "Zone Workers Routes — Edit",
+      run: async () => {
+        for await (const _domain of client.workers.domains.list({ account_id: accountId, hostname })) break;
+      },
+    },
+  ];
+
+  const missing: MissingPermission[] = [];
+  for (const probe of probes) {
+    try {
+      await probe.run();
+    } catch (error) {
+      if (isForbidden(error)) missing.push({ permission: probe.permission });
+      else throw error;
+    }
+  }
+  return { ok: missing.length === 0, missing };
+}
+
+/**
  * The `cloudflare` package ships both ESM and CJS builds, so `instanceof
  * APIError` is unreliable depending on which build resolved a given import
  * (a classic dual-package hazard) — duck-type on the SDK's own error shape

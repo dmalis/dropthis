@@ -29,6 +29,57 @@ export function isClientName(value: unknown): value is ClientName {
   return typeof value === "string" && (CLIENTS as readonly string[]).includes(value);
 }
 
+/**
+ * One entry per client, and the type makes it exhaustive: a new client is one
+ * entry, and the compiler names the file if you forget half of it. Each entry
+ * answers the three questions this command asks — does it write a file, what
+ * goes in the `--json` document, and what does a person read.
+ */
+type ClientStrategy = {
+  /** The file this client's registration lands in, if any. */
+  apply?: (io: RunIo, connect: Connect) => Promise<string>;
+  payload: (connect: Connect, instanceName: string) => Record<string, unknown>;
+  plain: (context: {
+    payload: Record<string, unknown>;
+    instanceName: string;
+    applied: string | undefined;
+  }) => string;
+};
+
+const STRATEGIES: Record<ClientName, ClientStrategy> = {
+  "claude-code": {
+    apply: (io, connect) => writeMcpJson(io.cwd, connect),
+    payload: (connect) => ({ mcp_json: connect.clients.claude_code.mcp_json }),
+    plain: ({ instanceName, applied }) =>
+      `Registered the dropthis MCP server in ${String(applied)}. The key stays in your instances file; the entry calls \`dropthis auth-header --instance ${instanceName}\` for it.`,
+  },
+  cursor: {
+    payload: (connect, instanceName) => ({
+      mcp_json: connect.clients.cursor.mcp_json,
+      shell_profile_line: connect.clients.cursor.shell_profile_line,
+      key_env_var: keyEnvVar(instanceName),
+    }),
+    plain: ({ payload }) =>
+      `${String(payload.shell_profile_line)}\n\n${JSON.stringify(payload.mcp_json, null, 2)}`,
+  },
+  codex: {
+    payload: (connect, instanceName) => ({
+      config_toml: connect.clients.codex.config_toml,
+      shell_profile_line: connect.clients.codex.shell_profile_line,
+      key_env_var: keyEnvVar(instanceName),
+    }),
+    plain: ({ payload }) => `${String(payload.shell_profile_line)}\n\n${String(payload.config_toml)}`,
+  },
+  "claude-ai": {
+    payload: (connect) => ({
+      connector_url: connect.clients.claude_ai.connector_url,
+      steps: connect.clients.claude_ai.steps,
+      message: onboardingMessage(connect, "you"),
+    }),
+    plain: ({ payload }) => String(payload.message),
+  },
+};
+
 export async function runConnectCommand(client: ClientName, globals: Globals, io: RunIo): Promise<number> {
   const credentials = resolveCredentials({
     env: io.env,
@@ -38,65 +89,23 @@ export async function runConnectCommand(client: ClientName, globals: Globals, io
   const instanceName = credentials.instance ?? "main";
   const connect = connectFor({ canonicalUrl: credentials.url, instanceName });
   const mode = modeOf(globals);
+  const strategy = STRATEGIES[client];
 
-  const applied = client === "claude-code" ? await writeMcpJson(io.cwd, connect) : undefined;
+  const applied = await strategy.apply?.(io, connect);
+  const payload = strategy.payload(connect, instanceName);
   const document = {
     instance: instanceName,
     client,
     ...(applied === undefined ? {} : { applied_to: applied }),
-    ...clientPayload(client, connect, instanceName),
+    ...payload,
   };
 
   if (mode !== "plain") {
     io.stdout.write(jsonLine(document));
     return EXIT_OK;
   }
-  io.stdout.write(`${plain(client, connect, instanceName, applied)}\n`);
+  io.stdout.write(`${strategy.plain({ payload, instanceName, applied })}\n`);
   return EXIT_OK;
-}
-
-function clientPayload(client: ClientName, connect: Connect, instanceName: string): Record<string, unknown> {
-  switch (client) {
-    case "claude-code":
-      return { mcp_json: connect.clients.claude_code.mcp_json };
-    case "cursor":
-      return {
-        mcp_json: connect.clients.cursor.mcp_json,
-        shell_profile_line: connect.clients.cursor.shell_profile_line,
-        key_env_var: keyEnvVar(instanceName),
-      };
-    case "codex":
-      return {
-        config_toml: connect.clients.codex.config_toml,
-        shell_profile_line: connect.clients.codex.shell_profile_line,
-        key_env_var: keyEnvVar(instanceName),
-      };
-    default:
-      return {
-        connector_url: connect.clients.claude_ai.connector_url,
-        steps: connect.clients.claude_ai.steps,
-        message: onboardingMessage(connect, "you"),
-      };
-  }
-}
-
-function plain(
-  client: ClientName,
-  connect: Connect,
-  instanceName: string,
-  applied: string | undefined,
-): string {
-  const payload = clientPayload(client, connect, instanceName);
-  switch (client) {
-    case "claude-code":
-      return `Registered the dropthis MCP server in ${String(applied)}. The key stays in your instances file; the entry calls \`dropthis auth-header --instance ${instanceName}\` for it.`;
-    case "cursor":
-      return `${String(payload.shell_profile_line)}\n\n${JSON.stringify(payload.mcp_json, null, 2)}`;
-    case "codex":
-      return `${String(payload.shell_profile_line)}\n\n${String(payload.config_toml)}`;
-    default:
-      return String(payload.message);
-  }
 }
 
 /**

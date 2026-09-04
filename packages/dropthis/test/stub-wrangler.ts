@@ -8,8 +8,19 @@ import { join } from "node:path";
  * the KV-binding check answerable offline.
  */
 export async function stubWranglerBinary(cfOrigin: string): Promise<string> {
+  return (await stubWrangler(cfOrigin)).path;
+}
+
+/**
+ * The same stub, plus the file it records its argv and environment into — so
+ * a test can assert WHICH account a deploy was pinned to, which is the only
+ * place that pin is observable (AGENTS.md, "Installer principles": the active
+ * credential is pinned into wrangler's environment).
+ */
+export async function stubWrangler(cfOrigin: string): Promise<{ path: string; recordPath: string }> {
   const dir = await mkdtemp(join(tmpdir(), "dropthis-wr-"));
   const path = join(dir, "wrangler.js");
+  const recordPath = join(dir, "record.json");
   await writeFile(
     path,
     [
@@ -18,10 +29,11 @@ export async function stubWranglerBinary(cfOrigin: string): Promise<string> {
       // is exactly the bug this seam exists to catch.
       "console.log(' \\u26c5\\ufe0f wrangler 0.0.0-stub');",
       "console.log('Uploaded a Worker');",
-      "const { readFileSync } = require('node:fs');",
+      "const { readFileSync, writeFileSync } = require('node:fs');",
       "const argv = process.argv.slice(2);",
       "const at = (flag) => { const i = argv.indexOf(flag); return i === -1 ? null : argv[i + 1]; };",
       "const config = JSON.parse(readFileSync(at('-c'), 'utf8'));",
+      `writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify({ argv, env: process.env }));`,
       "const secretsPath = at('--secrets-file');",
       "const secrets = secretsPath ? Object.keys(JSON.parse(readFileSync(secretsPath, 'utf8'))) : [];",
       `fetch(${JSON.stringify(`${cfOrigin}/__deploy`)}, {`,
@@ -34,5 +46,5 @@ export async function stubWranglerBinary(cfOrigin: string): Promise<string> {
     ].join("\n"),
     "utf8",
   );
-  return path;
+  return { path, recordPath };
 }

@@ -226,6 +226,18 @@ describe("doctor", () => {
     expect(report.ok).toBe(false);
   });
 
+  it("fails while a rotation stopped before its new key was named", async () => {
+    // `pending` is the intent the installer writes BEFORE the new key can open
+    // anything: still present means a run died and a usable key may exist.
+    bucket.seed(userKey("admin"), JSON.stringify({ id: "admin", pending: "admin-2" }));
+    const report = await run();
+
+    const check = checkOf(report, "admin_rotation_clean");
+    expect(check.status).toBe("fail");
+    expect(check.evidence).toContain("pending");
+    expect(report.ok).toBe(false);
+  });
+
   it("fails when the instance does not know its own canonical origin", async () => {
     bucket.seed(CONFIG_KEY, JSON.stringify({ ...INITIAL_POLICY, instance_name: "acme" }));
     const report = await run();
