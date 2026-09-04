@@ -227,8 +227,15 @@ async function resolveUrlEntry(
     ...(ctx.fetchImpl === undefined ? {} : { fetchImpl: ctx.fetchImpl }),
   });
 
-  const declared = contentLength(response);
-  if (declared !== undefined) tooLarge(entry.url, declared, policy.max_file_bytes);
+  // The caller's `size` is the declared length when it is there; the response's
+  // own header is only the fallback (#92a). Enforcing the header first let a
+  // remote server's number refuse a call the caller had described honestly —
+  // and the body is measured against the caller's number either way, so a lie
+  // is still caught, as `HASH_MISMATCH` (issue #24, finding 20).
+  if (entry.size === undefined) {
+    const declared = contentLength(response);
+    if (declared !== undefined) tooLarge(entry.url, declared, policy.max_file_bytes);
+  }
   if (response.body === null) {
     throw new ApiError("FETCH_FAILED", `${entry.url} answered with no body.`);
   }

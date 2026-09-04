@@ -22,7 +22,7 @@
 import type { Bucket } from "../bindings.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
 import { canonicalJson, newDropMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
-import { ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import { resolveExpiryOrFail } from "../domain/expiry.js";
 import { resolvePassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
 import { ApiError } from "../errors.js";
@@ -244,14 +244,6 @@ export async function publish(input: PublishInput, ctx: PublishContext): Promise
   return { drop, created: true };
 }
 
-function resolveExpiryOrFail(value: string, policy: ResolvedPolicy, now: Date): string | null {
-  try {
-    return resolveExpiry(value, { max: policy.expiry.max, allowNever: policy.expiry.allow_never }, now);
-  } catch (error) {
-    if (error instanceof ExpiryError) throw new ApiError(error.code, error.message);
-    throw error;
-  }
-}
 
 /**
  * The payload's identity for idempotency. It is the canonical JSON of the

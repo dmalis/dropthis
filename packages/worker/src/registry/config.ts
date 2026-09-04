@@ -19,6 +19,7 @@ export const configGet: Operation<z.infer<typeof getSchema>> = {
   path: "/config",
   scope: "admin",
   summary: "Read this instance's policy: the defaults it fills in and the rules it enforces.",
+  resultLine: () => "The instance policy.",
   schema: getSchema,
   handler: async (_input, ctx) => ({ value: configView(ctx.config) }),
 };
@@ -29,6 +30,7 @@ export const configSet: Operation<Record<string, unknown>> = {
   path: "/config",
   scope: "admin",
   summary: "Change policy fields; the change applies to future calls only.",
+  resultLine: () => "Policy changed; it applies to future calls only.",
   schema: setSchema,
   handler: async (input, ctx) => ({
     value: {

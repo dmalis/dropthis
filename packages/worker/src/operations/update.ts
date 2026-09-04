@@ -23,7 +23,7 @@
 import type { Bucket } from "../bindings.js";
 import { canonicalJson, mergeAgentMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
-import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import { dropState, resolveExpiryOrFail } from "../domain/expiry.js";
 import { resolvePassword, storedPassword } from "../domain/password.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig, ResolvedPolicy } from "../instance-config.js";
@@ -343,19 +343,6 @@ async function commit(
     if ((await stateHash(stored)) === desiredHash) return { ours: false, meta: stored };
   }
   throw new ApiError("UPDATE_CONFLICT", "Another write reached this drop first.");
-}
-
-function resolveExpiryOrFail(value: string, policy: ResolvedPolicy, now: Date): string | null {
-  try {
-    return resolveExpiry(
-      value,
-      { max: policy.expiry.max, allowNever: policy.expiry.allow_never },
-      now,
-    );
-  } catch (error) {
-    if (error instanceof ExpiryError) throw new ApiError(error.code, error.message);
-    throw error;
-  }
 }
 
 function fault(ctx: UpdateContext, point: FaultPoint): void {

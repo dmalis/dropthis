@@ -23,6 +23,7 @@ import {
   TITLE_DESCRIPTION,
   describeIssues,
 } from "./fields.js";
+import { asDrop, count } from "./result-line.js";
 import type { Operation, OperationContext } from "./types.js";
 
 const manifestEntry = z.strictObject({
@@ -114,6 +115,12 @@ export const uploadCreate: Operation<SessionInput> = {
   path: "/uploads",
   scope: "user",
   summary: "Open a staged upload: allocate the drop and get a signed PUT URL per missing blob.",
+  // No next hint (#51): the tool text owns the three-step dance, and repeating
+  // it in every session response spends the agent's context to re-teach it.
+  resultLine: (_input, value) => {
+    const session = value as { upload_id: string; missing: string[] };
+    return `Upload ${session.upload_id}: PUT ${count(session.missing.length, "file")}`;
+  },
   schema: uploadCreateSchema as unknown as z.ZodType<SessionInput>,
   parse: parseWith(uploadCreateSchema, "target, manifest and idempotency_key"),
   status: 201,
@@ -148,6 +155,7 @@ export const uploadCommit: Operation<CommitRequest> = {
   path: "/uploads/:id/commit",
   scope: "user",
   summary: "Commit a staged upload with the settings publish takes; replays on repeat.",
+  resultLine: (_input, value) => `Published: ${asDrop(value).url}`,
   schema: uploadCommitSchema as unknown as z.ZodType<CommitRequest>,
   parse: parseWith(uploadCommitSchema, "title, meta, password, expires and noindex"),
   params: ["id"],

@@ -24,7 +24,7 @@
 import type { Bucket } from "../bindings.js";
 import type { Caller } from "../auth/caller.js";
 import { contentTypeForPath } from "../domain/content-type.js";
-import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import { dropState, resolveExpiryOrFail } from "../domain/expiry.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
 import { canonicalJson, newDropMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
@@ -792,14 +792,6 @@ function requireSamePayload(claim: CommitClaim, payloadHash: string): void {
   }
 }
 
-function resolveExpiryOrFail(value: string, policy: ResolvedPolicy, now: Date): string | null {
-  try {
-    return resolveExpiry(value, { max: policy.expiry.max, allowNever: policy.expiry.allow_never }, now);
-  } catch (error) {
-    if (error instanceof ExpiryError) throw new ApiError(error.code, error.message);
-    throw error;
-  }
-}
 
 function fault(ctx: UploadContext, point: FaultPoint): void {
   if (ctx.fault === point) throw new Error(`DEV_FAULT: aborted after ${point}.`);

@@ -253,6 +253,45 @@ describe("resolveFiles with url entries", () => {
     ).toBe("PAYLOAD_TOO_LARGE");
   });
 
+  /**
+   * Decision #92a's order: the caller's `size` first, the response's
+   * `Content-Length` only as the fallback, buffering last. The header was
+   * being enforced before the caller's size was even looked at, so an honest
+   * caller could be refused for a number a remote server made up (issue #24,
+   * finding 20).
+   */
+  it("believes the caller's size over a Content-Length the server made up", async () => {
+    const lying = (async () =>
+      new Response(new Blob([png as Uint8Array<ArrayBuffer>]).stream(), {
+        status: 200,
+        headers: { "content-length": "999999" },
+      })) as unknown as typeof fetch;
+    const tiny = { ...policy, max_file_bytes: 1024 } as ResolvedPolicy;
+
+    const resolved = await resolveFiles(
+      [{ path: "logo.png", url: "https://a.example/x", sha256: pngDigest, size: 8 }],
+      { policy: tiny, fetchImpl: lying, streamBlob: async () => undefined },
+    );
+    expect(resolved.manifest["logo.png"]!.size).toBe(8);
+  });
+
+  it("still measures the body against the caller's size, and refuses a mismatch", async () => {
+    const lying = (async () =>
+      new Response(new Blob([png as Uint8Array<ArrayBuffer>]).stream(), {
+        status: 200,
+        headers: { "content-length": "999999" },
+      })) as unknown as typeof fetch;
+    expect(
+      await codeOf(() =>
+        resolveFiles([{ path: "logo.png", url: "https://a.example/x", sha256: pngDigest, size: 9 }], {
+          policy,
+          fetchImpl: lying,
+          streamBlob: async () => undefined,
+        }),
+      ),
+    ).toBe("HASH_MISMATCH");
+  });
+
   it("refuses bytes that do not hash to the digest the caller sent", async () => {
     expect(
       await codeOf(() =>

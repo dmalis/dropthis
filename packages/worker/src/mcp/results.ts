@@ -14,50 +14,15 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { errorBody } from "../errors.js";
 import type { ApiError } from "../errors.js";
-
-type Line = (input: Record<string, unknown>, value: unknown) => string;
-
-const asDrop = (value: unknown) => value as { url: string; state: string };
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
-/** The one line per operation a text-only client must see. */
-const LINES: Record<string, Line> = {
-  publish: (_input, value) => `Published: ${asDrop(value).url}`,
-  update: (_input, value) => `Updated: ${asDrop(value).url}`,
-  get: (_input, value) => `Drop: ${asDrop(value).url} (${asDrop(value).state})`,
-  list: (_input, value) => {
-    const page = value as { drops: unknown[]; has_more: boolean };
-    return `${count(page.drops.length, "drop")}${page.has_more ? ", more on the next page" : ""}`;
-  },
-  delete: (input) => `Deleted: ${String(input.target)}`,
-  "upload.create": (_input, value) => {
-    const session = value as { upload_id: string; missing: string[] };
-    return `Upload ${session.upload_id}: PUT ${count(session.missing.length, "file")}, then dropthis_commit.`;
-  },
-  "upload.commit": (_input, value) => `Published: ${asDrop(value).url}`,
-  "user.add": (_input, value) =>
-    `Added ${(value as { user: { label: string } }).user.label}; the key is in this response once.`,
-  "user.list": (_input, value) => count((value as { users: unknown[] }).users.length, "key"),
-  "user.remove": (input) => `Removed ${String(input.label)}; their key no longer works.`,
-  "config.get": () => "The instance policy.",
-  "config.set": () => "Policy changed; it applies to future calls only.",
-  usage: (_input, value) => `Usage: ${count((value as { total: { count: number } }).total.count, "drop")}`,
-  prune: (input, value) => {
-    const report = value as { total: { count: number } };
-    return input.dry_run === false
-      ? `Pruned; ${count(report.total.count, "drop")} remain`
-      : `Prune, dry run: ${count(report.total.count, "drop")} counted, nothing deleted`;
-  },
-  doctor: (_input, value) => ((value as { ok: boolean }).ok ? "Doctor: ok" : "Doctor: FAILED"),
-  "doctor.checks": (_input, value) => count((value as { checks: unknown[] }).checks.length, "check"),
-};
+import { OPERATIONS } from "../registry/index.js";
 
 export function successResult(
   operation: string,
   input: Record<string, unknown>,
   value: unknown,
 ): CallToolResult {
-  const line = LINES[operation];
+  // The line lives ON the operation entry: one registry, not two.
+  const line = OPERATIONS.find((op) => op.name === operation)?.resultLine;
   if (line === undefined) throw new Error(`Operation ${operation} has no result line.`);
   const head = line(input, value);
 
