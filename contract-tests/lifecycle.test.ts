@@ -770,6 +770,24 @@ describe("list", () => {
     expect(await devKeys("list/")).toContain(listKey);
     expect((await listOk("?limit=1000")).drops.map((d) => d.slug)).toContain(slug);
   });
+
+  it("rebuilds an expiring/ marker that was lost, on the next get (#100c)", async () => {
+    const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }], expires: "30d" });
+    const slug = drop.slug as string;
+    const dropId = await dropIdOf(slug);
+    const marker = (await devKeys("expiring/")).find((key) => key.endsWith(`/${dropId}`))!;
+    expect(marker).toBeDefined();
+
+    await api("/_dev/r2/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ keys: [marker] }),
+    });
+    expect(await devKeys("expiring/")).not.toContain(marker);
+
+    expect((await api(`/_api/v1/drops/${slug}`)).status).toBe(200);
+    expect(await devKeys("expiring/")).toContain(marker);
+  });
 })
 
 /**

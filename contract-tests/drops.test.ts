@@ -435,6 +435,36 @@ describe("refusals", () => {
     expect(error.code).toBe("PAYLOAD_TOO_LARGE");
   });
 
+  /**
+   * Issue #24, finding 15. The ceiling is in BYTES, and it has to hold for a
+   * client that sends no `Content-Length` — which is every client that
+   * streams. `String.length` counted UTF-16 code units, so a body of
+   * three-byte characters passed at three times the cap.
+   */
+  it("rejects a chunked body over the ceiling, counting UTF-8 bytes", async () => {
+    // 2 MiB of euro signs: 2 Mi code units, 6 MiB on the wire.
+    const text = JSON.stringify({ files: [{ path: "big.txt", text: "€".repeat(2 * 1024 * 1024) }] });
+    const bytes = new TextEncoder().encode(text);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let at = 0; at < bytes.length; at += 64 * 1024) {
+          controller.enqueue(bytes.slice(at, at + 64 * 1024));
+        }
+        controller.close();
+      },
+    });
+
+    const response = await api("/_api/v1/drops", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    const error = await errorOf(response);
+    expect(error.status).toBe(413);
+    expect(error.code).toBe("PAYLOAD_TOO_LARGE");
+  });
+
   it("rejects a body that is not JSON", async () => {
     const response = await api("/_api/v1/drops", {
       method: "POST",

@@ -292,4 +292,33 @@ describe("update by staging", () => {
     expect(await errorOf(await commit(third.upload_id, {}))).toMatchObject({ status: 409, code: "UPDATE_CONFLICT" });
     expect(await (await fetch(v1.url as string, { cache: "no-store" })).text()).toBe("<p>v2</p>");
   }, 90_000);
+
+  /**
+   * Issue #24, finding 11: a retry that finds `meta.json` already flipped by
+   * its own first attempt still owes step (7). The base generation it needs is
+   * in the commit claim, so the orphaned blob goes on the retry and not never.
+   */
+  it("deletes the base generation's blobs on a retry that finds the flip done", async () => {
+    const index = file("index.html", Buffer.from("<p>gc-v1</p>"));
+    const keep = file("keep.txt", Buffer.from("gc-keep"));
+    const first = await open([index, keep]);
+    await putAll(first, [index, keep]);
+    const v1 = (await (await commit(first.upload_id, { title: "GC", expires: "30d" })).json()) as Json;
+
+    const index2 = file("index.html", Buffer.from("<p>gc-v2</p>"));
+    const second = await open([index2, keep], { target: v1.slug });
+    await putAll(second, [index2, keep]);
+
+    const aborted = await commit(second.upload_id, { expires: "60d" }, { headers: { "DEV-Fault": "meta" } });
+    expect(aborted.status).toBe(500);
+
+    const retried = await commit(second.upload_id, { expires: "60d" });
+    expect(retried.status, await retried.clone().text()).toBe(200);
+
+    expect(await devKeys(`drops/${first.drop_id}/blobs/`)).toEqual(
+      [index2, keep].map((f) => `drops/${first.drop_id}/blobs/${f.sha256}`).sort(),
+    );
+    // And exactly one marker: the old one moved with the expiry.
+    expect((await devKeys("expiring/")).filter((k) => k.endsWith(`/${first.drop_id}`))).toHaveLength(1);
+  }, 90_000);
 });
