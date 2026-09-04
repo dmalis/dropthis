@@ -44,7 +44,7 @@ import {
 } from "./idempotency.js";
 import { requireSameManifest } from "./publish.js";
 import type { FaultPoint } from "./publish.js";
-import { repairListEntry, writeProjections } from "./projections.js";
+import { repairProjections, writeProjections } from "./projections.js";
 import { resolveFiles } from "./resolve-content.js";
 import { newFetchBudget } from "./fetch-url.js";
 
@@ -162,7 +162,7 @@ export async function updateDrop(
   // writes NOTHING — not the record, not a claim, not a result. A repeat of the
   // same no-op is another no-op, so convergence needs no bookkeeping.
   if (desiredHash === (await stateHash(current))) {
-    await repairListEntry(bucket, current);
+    await repairProjections(bucket, current);
     const drop = toDrop(current, { canonicalUrl: config.canonicalUrl, now });
     // A retry whose first attempt committed the CAS and then died before its
     // result was stored lands here. It is still that call, so it still gets the
@@ -224,10 +224,18 @@ export async function updateDrop(
   fault(ctx, "meta");
 
   if (!committed.ours) {
-    // Another writer stored exactly this state. It owns the cleanup for the
-    // record it wrote, and our view of "unreferenced" came from a `meta.json`
-    // that is no longer current.
-    return toDrop(committed.meta, { canonicalUrl: config.canonicalUrl, now });
+    // Another writer stored exactly this state — our own twin, retrying the
+    // same idempotent call. It may have died before its projections or its
+    // result, so this call finishes both; every step is idempotent. What it
+    // does NOT do is delete blobs: our view of "unreferenced" came from a
+    // `meta.json` that is no longer current, and the writer that won owns it.
+    await writeProjections(bucket, committed.meta, current.expires_at);
+    const twin = toDrop(committed.meta, { canonicalUrl: config.canonicalUrl, now });
+    // Still this call, so it is still owed the password once (AGENTS.md,
+    // "A generated password is returned once").
+    if (password !== undefined) twin.password = password;
+    if (hash !== undefined) await putResult(bucket, hash, ctx.secret, twin);
+    return twin;
   }
 
   // (5) projections. The marker moves with the expiry; `never` deletes it.

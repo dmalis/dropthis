@@ -20,7 +20,7 @@ import { encodePathForUrl } from "../domain/url-path.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig } from "../instance-config.js";
 import { blobKey, metaKey, slugKey } from "../storage/keys.js";
-import { repairListEntry } from "./projections.js";
+import { repairProjections } from "./projections.js";
 
 /** The total bytes `get(files: true)` will inline across all files. */
 export const INLINE_CONTENT_BUDGET = 1024 * 1024;
@@ -60,10 +60,12 @@ export async function getDrop(slug: string, options: GetOptions): Promise<Drop> 
     throw new ApiError("EXPIRED_FINAL", `The drop at ${slug} is past recovery.`);
   }
 
-  // "A `meta.json` whose `list/` entry is missing or stale is repaired by the
-  // next `get`" (AGENTS.md). It costs one `head`, and it is the only reason a
-  // listing can be answered from pointers alone.
-  await repairListEntry(options.bucket, loaded.meta);
+  // "`list/` and `expiring/` … a missing or stale entry is repaired by the next
+  // `get`/`update`" (AGENTS.md). Two `head`s, and a write only when one of the
+  // two projections is actually wrong. The listing row is the reason `list` can
+  // be answered from pointers alone; the marker is the reason the cron ever
+  // looks at this drop.
+  await repairProjections(options.bucket, loaded.meta);
 
   const drop = toDrop(loaded.meta, { canonicalUrl: options.config.canonicalUrl, now: options.now });
   if (!options.files) return drop;
