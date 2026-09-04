@@ -1,26 +1,34 @@
 /**
  * `init --rotate-admin-key` — replace the admin credential without ever
- * leaving the instance without one (AGENTS.md, "Installer principles").
+ * leaving the instance without one, and without ever leaving a usable key
+ * nothing knows about (AGENTS.md, "Installer principles").
  *
- * The order is the whole design, because there is no transaction across four
- * objects:
+ * There is no transaction across four objects and, unlike the Worker's R2
+ * binding, the Cloudflare R2 management API this installer writes through has
+ * no conditional write: `If-Match` on its object-upload endpoint is IGNORED
+ * (measured against real R2, 2026-09-04: a put with a bogus etag answered 200
+ * and replaced the object). So the safety comes from the ORDER plus a written
+ * intent, not from a compare-and-swap:
  *
- *   1. write the NEW record and its `keyhash/` pointer   (new key works; old still works)
- *   2. write `users/admin` = {id: new, previous: old}    (the switch, and the repair note)
- *   3. delete the OLD `keyhash/` pointer                 (the revocation — old key stops working)
- *   4. delete the OLD record
- *   5. write `users/admin` = {id: new}                   (the rotation is finished)
+ *   1. write `users/admin` = {id: old, pending: new}   (the intent — nothing changed yet)
+ *   2. write the NEW record and its `keyhash/`         (new key works; old still works)
+ *   3. write `users/admin` = {id: new, previous: old}  (the switch, and the repair note)
+ *   4. delete the OLD `keyhash/`                       (the revocation — old key stops working)
+ *   5. delete the OLD record
+ *   6. write `users/admin` = {id: new}                 (the rotation is finished)
  *
- * A crash anywhere leaves state a later run can finish: `previous` names the
- * records still to remove, and a rerun does the deletes BEFORE minting
- * anything, so a chain of interrupted rotations cannot leave two live keys.
- * The one order that is never allowed is deleting before writing — that is the
- * window in which nobody can administer the instance.
+ * Every crash leaves state a later run can finish, and `users/admin` names
+ * every key that can open the instance at every instant: `pending` names one
+ * about to become usable, `previous` names one still to remove. A rerun does
+ * both repairs BEFORE minting anything, so a chain of interrupted rotations
+ * cannot leave two live keys. The two orders that are never allowed are
+ * minting before the intent (a usable key nothing names) and deleting before
+ * writing (a window in which nobody can administer the instance).
  *
- * Step 5 is a second write of one key in the same run. AGENTS.md's measured
+ * Steps 1, 3 and 6 write one key three times in a run. AGENTS.md's measured
  * R2 rule is about writes IN FLIGHT at once ("five writes issued one after
  * another at full speed all succeed"), and these are strictly sequential; if
- * it is refused anyway, `previous` simply stays and the next run clears it,
+ * one is refused anyway, the marker simply stays and the next run clears it,
  * which is the same repair the crash path uses.
  */
 import { createHash, randomBytes } from "node:crypto";
@@ -30,12 +38,16 @@ import { deleteObject, getObjectJson, putObjectJson } from "./r2-objects.js";
 export type RotateResult = { id: string; key: string; previousId: string };
 
 export type RotateOptions = {
-  /** Fault injection: stop mid-rotation so a test can prove the repair path. */
-  stopAfter?: "claim";
+  /**
+   * Fault injection: stop mid-rotation so a test can prove each repair path.
+   * `intent` = after the note and before the key exists; `mint` = after the
+   * new key works and before it is named; `claim` = after the switch.
+   */
+  stopAfter?: "intent" | "mint" | "claim";
 };
 
 type KeyRecord = { id: string; label: string; scope: string; hash: string; created: string };
-type UserPointer = { id: string; previous?: string };
+type UserPointer = { id: string; previous?: string; pending?: string };
 
 export async function rotateAdminKey(
   client: Cloudflare,
@@ -51,15 +63,17 @@ export async function rotateAdminKey(
   }
 
   // A rerun finishes the previous rotation before starting one of its own.
-  if (typeof pointer.previous === "string" && pointer.previous.length > 0) {
-    await revoke(client, accountId, bucket, pointer.previous);
-    await putObjectJson(client, accountId, bucket, "users/admin", { id: pointer.id });
-  }
+  const previousId = await finishRotation(client, accountId, bucket, pointer);
 
-  const previousId = pointer.id;
   const id = `admin-${randomBytes(8).toString("hex")}`;
   const key = randomBytes(32).toString("hex");
   const hash = createHash("sha256").update(key).digest("hex");
+  const result: RotateResult = { id, key, previousId };
+
+  // The intent, before the key can open anything: a crash from here on always
+  // leaves the new id written down, so a rerun can revoke it.
+  await putObjectJson(client, accountId, bucket, "users/admin", { id: previousId, pending: id });
+  if (options.stopAfter === "intent") return result;
 
   await putObjectJson(client, accountId, bucket, `keys/${id}.json`, {
     id,
@@ -69,14 +83,38 @@ export async function rotateAdminKey(
     created: new Date().toISOString(),
   } satisfies KeyRecord);
   await putObjectJson(client, accountId, bucket, `keyhash/${hash}`, { id });
+  if (options.stopAfter === "mint") return result;
 
   await putObjectJson(client, accountId, bucket, "users/admin", { id, previous: previousId });
-  if (options.stopAfter === "claim") return { id, key, previousId };
+  if (options.stopAfter === "claim") return result;
 
   await revoke(client, accountId, bucket, previousId);
   await putObjectJson(client, accountId, bucket, "users/admin", { id });
 
-  return { id, key, previousId };
+  return result;
+}
+
+/**
+ * Clear whatever a crashed run left behind and return the id that is actually
+ * the admin key now. `pending` is revoked (it was never switched to, so the
+ * pointer's own id is still the admin); `previous` is revoked (the switch
+ * happened, so the pointer's id is the admin). Both revokes tolerate a key
+ * that was never written — `pending` names an intent, not a fact.
+ */
+async function finishRotation(
+  client: Cloudflare,
+  accountId: string,
+  bucket: string,
+  pointer: UserPointer,
+): Promise<string> {
+  const stale = [pointer.pending, pointer.previous].filter(
+    (id): id is string => typeof id === "string" && id.length > 0 && id !== pointer.id,
+  );
+  if (stale.length === 0) return pointer.id;
+
+  for (const id of stale) await revoke(client, accountId, bucket, id);
+  await putObjectJson(client, accountId, bucket, "users/admin", { id: pointer.id });
+  return pointer.id;
 }
 
 /** Revocation first (`keyhash/`), then the record: the reverse leaves a live key. */
