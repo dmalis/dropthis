@@ -27,7 +27,7 @@ const PINS: Record<string, string> = {
   dropthis_get: "4964c34dbb9531847016f669a634fbd86f1a1db1daee5d5c10e69255fdeee128",
   dropthis_list: "90c3017b61f72f78444e144555906de1efb1e5c6528fd1d76d902736e0dfdab4",
   dropthis_delete: "297d5fd6825dbc9c7fc91d2206d2a5713062be3ab1157fc2f4ede1c662021722",
-  dropthis_upload: "1dd247be334ab6dbdc1eb1064d47e3e578160dd1058a9678f90a5d0041751e2f",
+  dropthis_upload: "4170281dc1f8cf70976129fac71a9f505c0ea631e5bfe5847d29fadb3fc78497",
   dropthis_commit: "60064affedcd46147915dcda0f525b9ced9bf1b1622abcb32189d8d0e412c3ae",
   dropthis_user_add: "12e76b4fd3d95998568f5f51f19f2dbbdaf9cfa9d484505d913a5a7018c59f33",
   dropthis_user_list: "5e86d3fd30de497f07f8daa6fa7d4d5d6cf82903f945e0f165f5880014041981",
@@ -36,7 +36,7 @@ const PINS: Record<string, string> = {
   dropthis_config_set: "7ec7ebb55eaa6104da331a17b06352012f6d058cb467267ceeedb49cc581b667",
   dropthis_usage: "3a8864d34972377be74579f692f5acfb1f05a089d371e2ef8998b6f512d2e89f",
   dropthis_prune: "8322da7de02f98016357bdb74051a505196d4a1fe903ed7ae03c00c9fef0caeb",
-  dropthis_doctor: "08f60e9e0f2a9058beeab6dc64c2e6120404e0f0d491be2dc72dd5e8d51e1d1e",
+  dropthis_doctor: "e5522b1b4435ffd44e6ddca86da3c7ca53d2af73d86db13c1e83bdaab45d8dda",
   dropthis_doctor_checks: "52bff4d52780da4aecdf237320b34acd46682f5300298b70732b9b208b0b0c5d",
 };
 
@@ -111,6 +111,18 @@ describe("the MCP tool surface", () => {
 
   it("never sends a next hint: no description promises one on success", () => {
     for (const tool of surface) expect(tool.description, tool.name).not.toMatch(/\bnext\b:/);
+  });
+
+  /**
+   * Decision #97b added `inconclusive` and said it never makes `ok` false.
+   * The doctor tool advertised three statuses, so an agent reading the tool
+   * list could not know what a fourth one meant (issue #24, finding 21).
+   */
+  it("names every doctor check status the tool can answer", () => {
+    const doctor = surface.find((t) => t.name === "dropthis_doctor")!;
+    for (const status of ["pass", "fail", "skip", "inconclusive"]) {
+      expect(doctor.description).toContain(status);
+    }
   });
 
   it("gives every tool an explicit tri-state annotation set and a short title", () => {
@@ -207,6 +219,18 @@ describe("the MCP tool surface", () => {
       expect(upload().description).toContain("dropthis_commit");
       expect(commit().description).toContain("dropthis_upload");
       expect(upload().description).toContain("put_urls");
+    });
+
+    /**
+     * Issue #24, finding 19: "documentation is an API". The manifest takes
+     * three shapes and the prose named one, so an agent reading only the tool
+     * list could not spell a keep or a url entry.
+     */
+    it("names every manifest shape the session accepts", () => {
+      const body = upload().description;
+      expect(body).toContain("{path, size, sha256}");
+      expect(body).toContain("{path, sha256}");
+      expect(body).toContain("{path, size, sha256, url}");
     });
 
     it("takes target as the drop's URL or slug, and the session id on commit", () => {

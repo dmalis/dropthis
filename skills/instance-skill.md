@@ -10,8 +10,9 @@ one URL out. You are the only kind of caller: the human talks to you, you call d
 the human sees what you relay — a URL, a password, a ready-to-send message.
 
 Connect over MCP at `{{mcp_url}}` (bearer key, or the paste-key login page for claude.ai),
-or call REST under `{{base_url}}/_api/v1` with `Authorization: Bearer <key>`. The tool
-names below are the MCP names; the REST routes are the same five operations.
+or call REST under `{{base_url}}/_api/v1` with `Authorization: Bearer <key>`. The tool names
+below are the MCP names; the REST routes are the same
+five core operations plus the two staged-upload steps.
 
 ## What the user says, and what you call
 

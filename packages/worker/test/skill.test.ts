@@ -68,6 +68,16 @@ describe("GET /_skill.md", () => {
    * Issue #19: an agent that cannot inline a photo must be told the third
    * way out — curl to a signed PUT URL — and told what it costs to try it.
    */
+  /**
+   * Issue #24, finding 22: the staged path added two drop operations, so "the
+   * same five operations" was wrong the day `dropthis_upload` shipped.
+   */
+  it("counts the drop operations the way the surface actually has them", async () => {
+    const text = await (await skill()).text();
+    expect(text).not.toContain("the same five operations");
+    expect(text).toContain("five core operations plus the two staged-upload steps");
+  });
+
   it("names all three ways to move bytes, curl included", async () => {
     const text = await (await skill()).text();
     expect(text).toContain("dropthis_upload");
