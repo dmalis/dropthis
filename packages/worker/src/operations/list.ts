@@ -10,10 +10,13 @@
  *   - the pointer's `customMetadata` carries every field of the listing row, so
  *     a page of 100 drops does not become 100 reads of the truth.
  *
- * One read per row remains: a `head` of `drops/<id>/meta.json`, which is what
- * lets the lister do its half of the repair rule — "an entry without
- * `meta.json` is deleted by whoever reads it". It is a `head`, not a `get`: the
- * record is never read here, only shown to exist.
+ * Nothing else is read. Verifying each row against `drops/<id>/meta.json` would
+ * put one R2 operation per row back — measured at ~10 s for a 100-row page —
+ * which is the exact cost the projection exists to remove, so an orphaned row
+ * is the RECONCILE's (AGENTS.md, "Pruning": orphan pointers and stale
+ * projections). `delete` writes the projections away BEFORE `meta.json`, so a
+ * crashed delete leaves a live drop missing its row — which the next
+ * `get`/`update` repairs — and never a row with nothing behind it (#100).
  *
  * `q` filters WITHIN the page, after the page has been fetched. So a page can
  * come back empty while `has_more` is true, and the skill says so — the
@@ -30,7 +33,6 @@ import { matchesTitleQuery } from "../domain/search.js";
 import type { InstanceConfig } from "../instance-config.js";
 import type { ListInput } from "../registry/list.js";
 import { LIST_PREFIX } from "../storage/keys.js";
-import { dropRecordExists } from "./projections.js";
 
 export type ListContext = {
   bucket: Bucket;
@@ -61,19 +63,12 @@ export async function listDrops(input: ListInput, ctx: ListContext): Promise<Lis
       now: ctx.now,
     });
 
-    const id = object.customMetadata?.id;
-    if (id === undefined) {
+    if (object.customMetadata?.id === undefined) {
       // A pointer this reader cannot interpret — an older Worker's, or one a
       // half-finished write left behind. It is skipped, never deleted: there is
       // no proof its drop is gone, and destroying the row of a live drop is the
       // one mistake a tolerant reader must not make. The next `get`/`update` of
       // that drop rewrites it, and the reconcile owns whatever is left.
-      continue;
-    }
-    if (!(await dropRecordExists(ctx.bucket, id))) {
-      // Proof: the pointer names a record, and the record is gone. This is the
-      // lister's half of the repair rule — deleted by whoever reads it.
-      await ctx.bucket.delete(object.key);
       continue;
     }
 

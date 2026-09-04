@@ -676,16 +676,29 @@ describe("list", () => {
     expect((await listOk("?limit=1000")).drops.map((d) => d.slug)).not.toContain(drop.slug);
   });
 
-  it("removes a listing pointer whose drop is gone, and does not show it", async () => {
-    // An orphan can only be manufactured: the write order writes the pointer
-    // after `meta.json`, so one without a record is a lost delete or a fault.
-    const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }], title: "Orphaned" });
+  it("deletes the listing row before meta.json, so a crashed delete leaves no orphan row", async () => {
+    // Decision #100: `list` answers from pointers alone and never verifies a
+    // row against the truth, so `delete` removes the projections FIRST. What a
+    // crash can leave is a live drop with no row — which `get` repairs — and
+    // never a row with nothing behind it.
+    const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }], title: "Ordered" });
     const slug = drop.slug as string;
     const dropId = await dropIdOf(slug);
     const listKey = (await devKeys("list/")).find((key) => key.endsWith(`-${slug}`))!;
     expect(listKey).toBeDefined();
 
-    // Delete the record only, leaving the pointer behind.
+    await api(`/_api/v1/drops/${slug}`, { method: "DELETE" });
+    expect(await devKeys("list/")).not.toContain(listKey);
+    expect(await devKeys(`drops/${dropId}/meta.json`)).toEqual([]);
+  });
+
+  it("shows a manufactured orphan row until the reconcile takes it, and never 500s", async () => {
+    // An orphan row can now only be manufactured. `list` is one `list()` and no
+    // reads of the truth, so it shows the row; `get` on it is the honest 404.
+    const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }], title: "Orphaned" });
+    const slug = drop.slug as string;
+    const dropId = await dropIdOf(slug);
+
     await api("/_dev/r2/delete", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -693,8 +706,11 @@ describe("list", () => {
     });
 
     const page = await listOk("?limit=1000");
-    expect(page.drops.map((d) => d.slug)).not.toContain(slug);
-    expect(await devKeys("list/")).not.toContain(listKey);
+    expect(page.drops.map((d) => d.slug)).toContain(slug);
+    expect((await api(`/_api/v1/drops/${slug}`)).status).toBe(404);
+
+    // Tidy up, so the next file in this run does not measure this row.
+    await api(`/_api/v1/drops/${slug}`, { method: "DELETE" });
   });
 
   it("rewrites a listing row that went stale, on the next get", async () => {

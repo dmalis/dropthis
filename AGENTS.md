@@ -101,10 +101,11 @@ list/<inv-created-ms>-<slug>         listing pointer; the ms come from the drop 
                                      created_by_label} — every field of the listing row, so a page
                                      costs ONE list() and no meta.json reads; state is derived at
                                      list time. R2 lists keys in order, so ONE list() over this
-                                     prefix is newest-first with a cursor. A pointer is deleted by
-                                     a reader only on PROOF its record is gone (it names an id and
-                                     the id has no meta.json); one this reader cannot interpret is
-                                     skipped, never destroyed
+                                     prefix is newest-first with a cursor. `list` verifies no row
+                                     against the truth: an orphan row is the reconcile's, and
+                                     `delete` removes the projections BEFORE meta.json so a crash
+                                     cannot make one (#100a, #100b); a pointer this reader cannot
+                                     interpret is skipped, never destroyed
 keys/<id>.json                       {id, label, scope, hash, created}; the admin key is one of these
 keyhash/<sha256(key)>                pointer → key id (the auth lookup)
 users/<normalized-label>             pointer → key id, claimed with If-None-Match: * → labels unique
@@ -151,9 +152,11 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   Fault-injection tests abort after each step and assert the retry converges. Half-uploaded state is never served. Equality for the no-op rule
   is canonical `meta.json` minus `updated`. `slugs/` is never repaired lazily — it exists
   before `meta.json` by construction; a pointer with no `meta.json` is 404 and the reconcile
-  removes it. `list/` and `expiring/` are repaired both ways: an entry without `meta.json`
-  is deleted by whoever reads it; a missing or stale entry (compared on `updated`) is
-  repaired by the next `get`/`update` and by the reconcile. A CAS failure is `409
+  removes it. `list/` and `expiring/` are repaired both ways: a missing or stale entry
+  (compared on `updated`) is repaired by the next `get`/`update` and by the reconcile — a
+  read puts a MISSING `expiring/` marker back but never moves a stale one, whose date only
+  the previous `expires_at` names (#100c); an entry with no `meta.json` behind it is the
+  reconcile's alone (#100a). A CAS failure is `409
   UPDATE_CONFLICT` (retryable).
 - **Idempotency is explicit.** `publish`, `update` and `user add` accept `idempotency_key`
   (Stripe pattern). The claim is put with `If-None-Match: *` before any side effect and
