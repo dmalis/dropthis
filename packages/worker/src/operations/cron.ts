@@ -527,7 +527,7 @@ async function reconcilePhase(
     } else {
       for (const object of listing.objects) {
         const name = object.key.slice(prefix.length);
-        if (!(await reconcilePointer(bucket, phase, object.key, name, budget, report))) {
+        if (!(await reconcilePointer(bucket, now, phase, object.key, name, budget, report))) {
           return after;
         }
         after = name;
@@ -635,6 +635,7 @@ async function repairProjections(
  */
 async function reconcilePointer(
   bucket: Bucket,
+  now: Date,
   phase: Phase,
   key: string,
   name: string,
@@ -647,9 +648,15 @@ async function reconcilePointer(
     if (!budget.take()) return false;
     const pointer = await bucket.get(key);
     if (pointer === null) return true;
-    // A slug claimed by a staged upload that is still running owns its name:
-    // its `meta.json` does not exist yet, and removing it would strand it.
-    if (pointer.customMetadata?.pending_upload !== undefined) return true;
+    // A slug claimed by a staged upload that is STILL RUNNING owns its name:
+    // its `meta.json` does not exist yet, and removing it would strand it. The
+    // ownership ends with the session — one day — so the pointer carries that
+    // instant, and one whose session has run out, or that names no readable
+    // instant at all, is owned by nobody and falls through to the ordinary
+    // "is there a `meta.json`?" question (issue #24, finding 12).
+    if (pointer.customMetadata?.pending_upload !== undefined) {
+      if (sessionStillOwns(pointer.customMetadata.expires, now)) return true;
+    }
     dropId = (await pointer.text()).trim();
   } else if (phase === "expiring") {
     const slash = name.indexOf("/");
@@ -670,4 +677,11 @@ async function reconcilePointer(
   report.deleted.pointers += 1;
   report.deleted.objects += 1;
   return true;
+}
+
+/** Is a pending slug pointer's upload session still alive at `now`? */
+function sessionStillOwns(expires: string | undefined, now: Date): boolean {
+  if (expires === undefined) return false;
+  const at = Date.parse(expires);
+  return Number.isFinite(at) && at > now.getTime();
 }

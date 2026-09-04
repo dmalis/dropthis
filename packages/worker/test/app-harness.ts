@@ -47,7 +47,7 @@ export async function harness(policy: Partial<typeof INITIAL_POLICY> = {}): Prom
     DEV_ROUTES: "1",
   };
 
-  const call: Harness["call"] = (path, init = {}, key = ADMIN_KEY) =>
+  const call: Harness["call"] = async (path, init = {}, key = ADMIN_KEY) =>
     createApp(DEV_HOOKS).fetch(
       new Request(`${ORIGIN}${path}`, {
         ...init,
