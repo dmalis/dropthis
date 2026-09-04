@@ -1,6 +1,6 @@
 import { bootstrapAdminKey } from "./admin-bootstrap.js";
 import { makeClient, type CloudflareCreds } from "./cloudflare-client.js";
-import { writeInstanceConfig } from "./config-write.js";
+import { claimBucketForInstance, writeInstanceConfig } from "./config-write.js";
 import { attachDomain, matchZone } from "./domain.js";
 import { saveInstance } from "./instances-file.js";
 import { applyLifecycleRules } from "./lifecycle-rules.js";
@@ -197,13 +197,23 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
 
 
   const bucketResult = await reconcileBucket(client, accountId, bucket, { dryRun: options.dryRun });
+  if (bucketResult.status === "created") {
+    // The ownership marker, written before anything else in this run can fail:
+    // a bucket with no config reads as a stranger's, and a run that died here
+    // would leave every rerun answering NAME_TAKEN.
+    await claimBucketForInstance(client, accountId, bucket, instanceName);
+  }
   if (bucketResult.status === "ok") {
     // Pre-existing bucket: only a real rerun of THIS instance if it already
     // carries our config. Otherwise the derived name collided with something
     // dropthis never provisioned (spec-v1.md "Instance resource names").
     const existingConfig = await getObjectJson(client, accountId, bucket, "system/config.json");
     if (!existingConfig) {
-      push({ id: "bucket", status: "error", detail: "NAME_TAKEN: bucket exists, not a dropthis instance" });
+      push({
+        id: "bucket",
+        status: "error",
+        detail: `NAME_TAKEN: the bucket ${bucket} exists but holds no system/config.json, so dropthis did not create it. Rename this instance with --name <other>, or delete that bucket if it is an empty leftover.`,
+      });
       return failure();
     }
   }
