@@ -21,9 +21,9 @@
  * nothing: the same files with a different title are a different state.
  */
 import type { Bucket } from "../bindings.js";
-import { canonicalJson, mergeAgentMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
+import { canonicalJson, mergeAgentMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
-import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import { dropState, resolveExpiryOrFail } from "../domain/expiry.js";
 import { resolvePassword, storedPassword } from "../domain/password.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig, ResolvedPolicy } from "../instance-config.js";
@@ -44,7 +44,7 @@ import {
 } from "./idempotency.js";
 import { requireSameManifest } from "./publish.js";
 import type { FaultPoint } from "./publish.js";
-import { repairListEntry, writeProjections } from "./projections.js";
+import { repairProjections, writeProjections } from "./projections.js";
 import { resolveFiles } from "./resolve-content.js";
 import { newFetchBudget } from "./fetch-url.js";
 
@@ -162,7 +162,7 @@ export async function updateDrop(
   // writes NOTHING — not the record, not a claim, not a result. A repeat of the
   // same no-op is another no-op, so convergence needs no bookkeeping.
   if (desiredHash === (await stateHash(current))) {
-    await repairListEntry(bucket, current);
+    await repairProjections(bucket, current);
     const drop = toDrop(current, { canonicalUrl: config.canonicalUrl, now });
     // A retry whose first attempt committed the CAS and then died before its
     // result was stored lands here. It is still that call, so it still gets the
@@ -224,10 +224,18 @@ export async function updateDrop(
   fault(ctx, "meta");
 
   if (!committed.ours) {
-    // Another writer stored exactly this state. It owns the cleanup for the
-    // record it wrote, and our view of "unreferenced" came from a `meta.json`
-    // that is no longer current.
-    return toDrop(committed.meta, { canonicalUrl: config.canonicalUrl, now });
+    // Another writer stored exactly this state — our own twin, retrying the
+    // same idempotent call. It may have died before its projections or its
+    // result, so this call finishes both; every step is idempotent. What it
+    // does NOT do is delete blobs: our view of "unreferenced" came from a
+    // `meta.json` that is no longer current, and the writer that won owns it.
+    await writeProjections(bucket, committed.meta, current.expires_at);
+    const twin = toDrop(committed.meta, { canonicalUrl: config.canonicalUrl, now });
+    // Still this call, so it is still owed the password once (AGENTS.md,
+    // "A generated password is returned once").
+    if (password !== undefined) twin.password = password;
+    if (hash !== undefined) await putResult(bucket, hash, ctx.secret, twin);
+    return twin;
   }
 
   // (5) projections. The marker moves with the expiry; `never` deletes it.
@@ -330,23 +338,11 @@ async function commit(
 
   const existing = await bucket.get(metaKey(desired.id));
   if (existing !== null) {
-    const stored = JSON.parse(await existing.text()) as DropMeta;
+    const stored = parseDropMeta(await existing.text());
+    if (stored === null) throw new ApiError("UPDATE_CONFLICT", "Another write reached this drop first.");
     if ((await stateHash(stored)) === desiredHash) return { ours: false, meta: stored };
   }
   throw new ApiError("UPDATE_CONFLICT", "Another write reached this drop first.");
-}
-
-function resolveExpiryOrFail(value: string, policy: ResolvedPolicy, now: Date): string | null {
-  try {
-    return resolveExpiry(
-      value,
-      { max: policy.expiry.max, allowNever: policy.expiry.allow_never },
-      now,
-    );
-  } catch (error) {
-    if (error instanceof ExpiryError) throw new ApiError(error.code, error.message);
-    throw error;
-  }
 }
 
 function fault(ctx: UpdateContext, point: FaultPoint): void {

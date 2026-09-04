@@ -12,6 +12,7 @@
  * `expiring/<date>/` marker it would create could land behind the cron's
  * `oldest_pending_date` and never be swept.
  */
+import { ApiError } from "../errors.js";
 
 /** How long an expired drop can still be revived with one `update`. */
 export const GRACE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -117,4 +118,27 @@ export function dropState(expiresAt: string | null, now: Date): DropState {
  */
 export function expiringMarkerDate(expiresAt: string): string {
   return new Date(Date.parse(expiresAt) + GRACE_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * `resolveExpiry`, with its domain error already translated into the wire
+ * error every operation was translating it into by hand (issue #24, standards
+ * finding 6). `publish`, `update` and the staged commit all resolve the same
+ * value against the same policy; three copies of the adapter were three places
+ * for the code to drift.
+ *
+ * It lives here rather than in an operations helper because the translation is
+ * about this module's own error type.
+ */
+export function resolveExpiryOrFail(
+  value: string,
+  policy: { expiry: { max: string; allow_never: boolean } },
+  now: Date,
+): string | null {
+  try {
+    return resolveExpiry(value, { max: policy.expiry.max, allowNever: policy.expiry.allow_never }, now);
+  } catch (error) {
+    if (error instanceof ExpiryError) throw new ApiError(error.code, error.message);
+    throw error;
+  }
 }

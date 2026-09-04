@@ -88,6 +88,29 @@ describe("publish a single text file", () => {
     expect(await served.text()).toBe("<h1>hello</h1>");
   });
 
+  it("leaves X-Robots-Tag off a drop published with noindex: false", async () => {
+    // docs/spec-v1.md, story 45: the header is sent WHEN `noindex` is on. A
+    // header on every response made the field mean nothing (issue #24, f17).
+    const drop = await publishOk({
+      files: [{ path: "index.html", text: "<h1>public</h1>" }],
+      noindex: false,
+    });
+    expect(drop.noindex).toBe(false);
+
+    const served = await fetch(drop.url as string, { cache: "no-store" });
+    expect(served.status).toBe(200);
+    expect(served.headers.get("x-robots-tag")).toBeNull();
+
+    // Back on with one update, on the same URL.
+    await api(`/_api/v1/drops/${drop.slug as string}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ noindex: true }),
+    });
+    const again = await fetch(drop.url as string, { cache: "no-store" });
+    expect(again.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+  });
+
   it("applies the instance defaults when the caller says nothing", async () => {
     const before = Date.now();
     const drop = await publishOk({ files: [{ path: "a.txt", text: "x" }] });
@@ -407,6 +430,36 @@ describe("refusals", () => {
   it("rejects a body over the instance's request ceiling", async () => {
     const files = [{ path: "big.txt", text: "x".repeat(4 * 1024 * 1024 + 1024) }];
     const response = await publish({ files });
+    const error = await errorOf(response);
+    expect(error.status).toBe(413);
+    expect(error.code).toBe("PAYLOAD_TOO_LARGE");
+  });
+
+  /**
+   * Issue #24, finding 15. The ceiling is in BYTES, and it has to hold for a
+   * client that sends no `Content-Length` — which is every client that
+   * streams. `String.length` counted UTF-16 code units, so a body of
+   * three-byte characters passed at three times the cap.
+   */
+  it("rejects a chunked body over the ceiling, counting UTF-8 bytes", async () => {
+    // 2 MiB of euro signs: 2 Mi code units, 6 MiB on the wire.
+    const text = JSON.stringify({ files: [{ path: "big.txt", text: "€".repeat(2 * 1024 * 1024) }] });
+    const bytes = new TextEncoder().encode(text);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let at = 0; at < bytes.length; at += 64 * 1024) {
+          controller.enqueue(bytes.slice(at, at + 64 * 1024));
+        }
+        controller.close();
+      },
+    });
+
+    const response = await api("/_api/v1/drops", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      duplex: "half",
+    } as RequestInit);
     const error = await errorOf(response);
     expect(error.status).toBe(413);
     expect(error.code).toBe("PAYLOAD_TOO_LARGE");

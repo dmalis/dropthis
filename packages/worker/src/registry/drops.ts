@@ -29,6 +29,7 @@ import { boolParam } from "./params.js";
 import { parsePublishInput, publishSchema } from "./publish.js";
 import type { PublishInput } from "./publish.js";
 import { parseUpdateInput, updateSchema } from "./update.js";
+import { asDrop, count } from "./result-line.js";
 import type { Operation } from "./types.js";
 
 const slugParam = z.string();
@@ -72,6 +73,7 @@ export const publishOp: Operation<PublishInput> = {
   path: "/drops",
   scope: "user",
   summary: "Publish files as a new drop and return its permanent URL.",
+  resultLine: (_input, value) => `Published: ${asDrop(value).url}`,
   schema: publishSchema,
   parse: parsePublishInput,
   handler: async (input, ctx) => {
@@ -93,6 +95,7 @@ export const updateOp: Operation<UpdateRequest> = {
   path: "/drops/:slug",
   scope: "user",
   summary: "Change only the fields given; files replace the whole set.",
+  resultLine: (_input, value) => `Updated: ${asDrop(value).url}`,
   schema: updateRequestSchema,
   parse: (raw) => {
     const { slug, ...body } = (raw ?? {}) as Record<string, unknown>;
@@ -120,6 +123,7 @@ export const getOp: Operation<z.infer<typeof getSchema>> = {
   path: "/drops/:slug",
   scope: "user",
   summary: "Read a drop; with files, its text content comes back inline.",
+  resultLine: (_input, value) => `Drop: ${asDrop(value).url} (${asDrop(value).state})`,
   schema: getSchema,
   params: ["slug"],
   query: ["files"],
@@ -139,6 +143,10 @@ export const listOp: Operation<ListInput> = {
   path: "/drops",
   scope: "user",
   summary: "One page of this instance's drops, newest first.",
+  resultLine: (_input, value) => {
+    const page = value as { drops: unknown[]; has_more: boolean };
+    return `${count(page.drops.length, "drop")}${page.has_more ? ", more on the next page" : ""}`;
+  },
   schema: listSchema,
   parse: parseListInput,
   query: ["cursor", "limit", "q"],
@@ -153,6 +161,7 @@ export const deleteOp: Operation<z.infer<typeof deleteSchema>> = {
   path: "/drops/:slug",
   scope: "user",
   summary: "Delete a drop and its files immediately.",
+  resultLine: (input) => `Deleted: ${String(input.target)}`,
   schema: deleteSchema,
   params: ["slug"],
   status: 204,

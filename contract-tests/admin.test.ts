@@ -165,8 +165,13 @@ describe("doctor", () => {
     expect(failed, JSON.stringify(failed)).toEqual([]);
     expect(report.ok).toBe(true);
 
-    const skipped = report.checks.filter((check) => check.status === "skip").map((c) => c.id);
-    expect(skipped).toEqual([]);
+    // `cron_state` skips until the cron has written its first checkpoint —
+    // "a doctor check whose subject does not exist is skip" (#29e, and issue
+    // #24 finding 23). Nothing else may skip, and a skip never fails `ok`.
+    const skipped = report.checks.filter((check) => check.status === "skip");
+    expect(skipped.map((c) => c.id).filter((id) => id !== "cron_state")).toEqual([]);
+    const cron = report.checks.find((check) => check.id === "cron_state")!;
+    if (cron.status === "skip") expect(cron.evidence).toContain("has not run yet");
     const mcp = report.checks.find((check) => check.id === "mcp_initialize")!;
     expect(mcp.status, mcp.evidence).toBe("pass");
     expect(mcp.evidence).toContain("tools/list offers");

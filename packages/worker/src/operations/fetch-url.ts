@@ -11,8 +11,10 @@
  * SSRF shape, so every target passes these rules BEFORE any byte moves:
  *
  *   - `http` or `https` only, on port 80 or 443 only, no credentials;
- *   - no loopback, private, link-local, carrier-NAT or metadata target that a
- *     literal host can name — and no `localhost`/`.local` name;
+ *   - no loopback, private, link-local, carrier-NAT, reserved or non-unicast
+ *     target a literal host can name, and no private NAME — the rule itself is
+ *     `domain/public-url.ts`, shared with the OAuth client-metadata fetch so
+ *     the two cannot drift (issue #24, finding 14);
  *   - every redirect hop re-validated, at most three, followed manually.
  *
  * Names that RESOLVE to a private address cannot be caught here — the Worker
@@ -22,6 +24,7 @@
  * the agent a clear `FETCH_FAILED` for an obvious mistake, that one is the
  * boundary.
  */
+import { privateHostProblem } from "../domain/public-url.js";
 import { ApiError } from "../errors.js";
 
 /** `url` entries per call: the Free plan allows 50 external subrequests. */
@@ -49,58 +52,6 @@ function refuse(message: string): never {
   throw new ApiError("FETCH_FAILED", message);
 }
 
-const FORBIDDEN_NAMES = new Set(["localhost", "metadata.google.internal", "metadata"]);
-
-/**
- * The literal-address classes a URL may not name. Hostnames are checked as
- * written: this is the honest half of the guard, not the whole of it.
- */
-function forbiddenHost(hostname: string): string | null {
-  const host = hostname.toLowerCase().replace(/\.$/, "");
-  if (FORBIDDEN_NAMES.has(host)) return `${host} is not a public host`;
-  if (host.endsWith(".localhost")) return `${host} is a loopback name`;
-  if (host.endsWith(".local") || host.endsWith(".internal")) return `${host} is a local name`;
-
-  // A URL's IPv6 literal keeps its brackets in `hostname` off some parsers;
-  // WHATWG strips them, so handle both.
-  const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  if (bare.includes(":")) return forbiddenIpv6(bare);
-  if (/^\d+(\.\d+){3}$/.test(bare)) return forbiddenIpv4(bare);
-  return null;
-}
-
-function forbiddenIpv4(address: string): string | null {
-  const parts = address.split(".").map(Number);
-  if (parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return `${address} is not a valid address`;
-  }
-  const [a, b] = parts as [number, number, number, number];
-  if (a === 0) return `${address} is not a routable address`;
-  if (a === 10) return `${address} is a private address`;
-  if (a === 127) return `${address} is a loopback address`;
-  if (a === 172 && b >= 16 && b <= 31) return `${address} is a private address`;
-  if (a === 192 && b === 168) return `${address} is a private address`;
-  if (a === 169 && b === 254) return `${address} is a link-local address`;
-  if (a === 100 && b >= 64 && b <= 127) return `${address} is a carrier-NAT address`;
-  if (a === 192 && b === 0) return `${address} is a reserved address`;
-  if (a === 198 && (b === 18 || b === 19)) return `${address} is a benchmarking address`;
-  if (a >= 224) return `${address} is not a unicast address`;
-  return null;
-}
-
-function forbiddenIpv6(address: string): string | null {
-  const lower = address.toLowerCase();
-  // `::ffff:127.0.0.1` and `::ffff:7f00:1` are the same loopback wearing a hat.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-  if (mapped !== null) return forbiddenIpv4(mapped[1]!);
-  if (lower === "::" || lower === "::1") return `${address} is a loopback address`;
-  if (/^f[cd]/.test(lower)) return `${address} is a unique-local address`;
-  if (/^fe[89ab]/.test(lower)) return `${address} is a link-local address`;
-  if (lower.startsWith("ff")) return `${address} is not a unicast address`;
-  if (lower.startsWith("::ffff:")) return `${address} is an IPv4-mapped address`;
-  return null;
-}
-
 /**
  * The whole target rule, as one function, so validation of the first URL and
  * of every redirect hop is literally the same code.
@@ -121,7 +72,7 @@ export function checkPublicUrl(raw: string): URL {
   if (url.port !== "" && url.port !== "80" && url.port !== "443") {
     return refuse(`Port ${url.port} is not fetched; use 80 or 443.`);
   }
-  const bad = forbiddenHost(url.hostname);
+  const bad = privateHostProblem(url.hostname);
   if (bad !== null) return refuse(`${bad}: this instance fetches public targets only.`);
   return url;
 }

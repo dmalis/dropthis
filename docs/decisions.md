@@ -1158,3 +1158,44 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     serialising rotations through a Durable Object (two concurrent `init --rotate-admin-key`
     runs against one instance is not a case the product needs to survive, and the operator
     who starts them is one person at one terminal).
+
+100. **The whole-project Codex review, Worker half (issue #24, 2026-09-04).** Fifteen findings
+    against the deployed contract, each reproduced by a failing test before it was fixed. Most
+    were bugs against a sentence that was already right and needed no decision. Five needed a
+    ruling, and those are here.
+    (a) **A `list` page is ONE `list()` and no per-row read of the truth, and orphan rows
+    belong to the reconcile.** AGENTS.md said both "a page costs ONE `list()` and no
+    `meta.json` reads" and "an entry without `meta.json` is deleted by whoever reads it"; the
+    code obeyed the second at the price of the first — one `head` per row, measured at ~10 s
+    for a 100-row page (the note in `vitest.config.ts`). The cost sentence wins: it comes
+    straight from principle 2, it is measured, and the deletion sentence is a GUARD on
+    deleting ("only on PROOF"), not an instruction to go looking for proof. `list` now reads
+    nothing but its own page, and the reconcile — the component AGENTS.md already gives orphan
+    pointers and stale projections to — is the only thing that removes an orphan row.
+    (b) **`delete` writes the projections away BEFORE `meta.json`.** That is what makes (a)
+    safe. In the old order a crash between step 1 and step 2 left a listing row with nothing
+    behind it, which no reader would notice once `list` stopped verifying. In the new order the
+    same crash leaves a LIVE drop with no listing row, which the next `get`/`update` repairs on
+    its own. `meta.json` still goes before the slug pointer and the blobs, for the reason it
+    always did: every read path resolves through it, so the drop must stop existing everywhere
+    in one write and never file by file.
+    (c) **A read repairs only a MISSING `expiring/` marker, never a stale one.** AGENTS.md says
+    both projections are "repaired by the next `get`/`update`", and `get` now does put a missing
+    marker back — two `head`s, and a write only when something is wrong. It cannot remove a
+    stale one: that key is dated from the drop's PREVIOUS `expires_at`, which a read has no way
+    to compute. Moving a marker stays `update`'s job, which knows both values, and the
+    reconcile's.
+    (d) **A pending slug pointer is owned by its session's `expires`, and by nothing else.**
+    The reconcile kept every pointer carrying `pending_upload` forever, so an abandoned session
+    held its slug for good. Ownership now ends when the instant in the pointer's own
+    `customMetadata` passes, and a pointer with no readable instant was never owned. Reading
+    `uploads/<id>/session.json` to confirm would cost one R2 operation per pointer inside the
+    cron's 40-op budget and prove nothing the pointer does not already say.
+    (e) **One literal-host classifier, in `domain/public-url.ts`.** `checkPublicUrl` (the `url`
+    file entry) and `publicHttpsUrlProblem` (the OAuth Client ID Metadata Document) each had
+    their own, and they had already drifted: one missed `.home.arpa`, both admitted
+    `2001:db8::/32`, one missed the TEST-NETs. `privateHostProblem(hostname)` is now the only
+    answer to "could this host be on the public internet?", and #92b's "every private,
+    loopback, link-local, carrier-NAT, reserved or non-unicast IPv4 or IPv6 literal" is
+    enumerated in one place. Scheme and port stay per caller — the OAuth fetch is https/443
+    only, a `url` entry is http(s) on 80 or 443.

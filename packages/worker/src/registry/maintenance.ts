@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { prune, usage } from "../operations/usage.js";
 import { boolParam } from "./params.js";
+import { count } from "./result-line.js";
 import type { Operation } from "./types.js";
 
 const CURSOR_DESCRIPTION = "The cursor of an incomplete previous call, to continue the scan.";
@@ -29,6 +30,8 @@ export const usageOp: Operation<z.infer<typeof usageSchema>> = {
   path: "/usage",
   scope: "admin",
   summary: "Count the drops and the bytes this instance holds, per state.",
+  resultLine: (_input, value) =>
+    `Usage: ${count((value as { total: { count: number } }).total.count, "drop")}`,
   schema: usageSchema,
   query: ["cursor"],
   handler: async (input, ctx) => ({
@@ -47,6 +50,12 @@ export const pruneOp: Operation<z.infer<typeof pruneSchema>> = {
   path: "/prune",
   scope: "admin",
   summary: "Delete drops that are past their grace window; dry_run only reports.",
+  resultLine: (input, value) => {
+    const report = value as { total: { count: number } };
+    return input.dry_run === false
+      ? `Pruned; ${count(report.total.count, "drop")} remain`
+      : `Prune, dry run: ${count(report.total.count, "drop")} counted, nothing deleted`;
+  },
   schema: pruneSchema,
   handler: async (input, ctx) => ({
     value: await prune({

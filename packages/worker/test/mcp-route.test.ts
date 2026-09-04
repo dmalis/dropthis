@@ -351,6 +351,8 @@ describe("dropthis_upload resolves target the way every other drop tool does", (
     // The signature is the PUT's only credential; the key is never in the URL.
     expect(url).toContain("sig=");
     expect(url).not.toContain(USER_KEY);
-    expect(textOf(session)).toContain("then dropthis_commit");
+    // No next hint on success (#51; issue #24, standards finding 1): the line
+    // says what happened, and the tool text owns the three-step dance.
+    expect(textOf(session)).not.toContain("dropthis_commit");
   });
 });

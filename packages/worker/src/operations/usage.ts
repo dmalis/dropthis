@@ -19,6 +19,7 @@
 import type { Bucket } from "../bindings.js";
 import { dropState } from "../domain/expiry.js";
 import type { DropMeta } from "../domain/meta.js";
+import { parseDropMeta } from "../domain/meta.js";
 import { expiringKeyOf, listKeyOf } from "./projections.js";
 import { DROPS_PREFIX, UPLOADS_PREFIX, slugKey } from "../storage/keys.js";
 
@@ -237,10 +238,8 @@ async function classify(
     return 1;
   }
 
-  let meta: DropMeta;
-  try {
-    meta = JSON.parse(await object.text()) as DropMeta;
-  } catch {
+  const meta = parseDropMeta(await object.text());
+  if (meta === null) {
     states.orphan.count += 1;
     states.orphan.bytes += drop.bytes;
     return 1;

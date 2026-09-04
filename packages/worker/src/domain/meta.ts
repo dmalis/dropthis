@@ -16,6 +16,7 @@
  * by the time they get here, at input validation.
  */
 import canonicalizeModule from "canonicalize";
+import { contentTypeForPath } from "./content-type.js";
 import { dropState } from "./expiry.js";
 import type { DropState } from "./expiry.js";
 import { dropUrl } from "./target.js";
@@ -144,6 +145,88 @@ export async function newDropMeta(input: NewDropInput): Promise<DropMeta> {
     created,
     updated: created,
   };
+}
+
+/**
+ * THE reader of `meta.json` — the one place a stored record becomes a
+ * `DropMeta` (AGENTS.md, "Data durability").
+ *
+ * `JSON.parse(...) as DropMeta` was a promise the type system cannot keep: a
+ * record written by another version of this Worker has no reason to carry
+ * today's field set, and the cast turned that into `undefined` reaching code
+ * that had no idea it could. This does the two things a cast cannot:
+ *
+ *   - a MISSING field gets the value the product documents. `noindex` defaults
+ *     to true because that is the product default and the safe answer; a
+ *     manifest entry with no `content_type` is typed from its path, by the same
+ *     frozen table that typed it when it was published.
+ *   - an UNKNOWN field is CARRIED. "Readers ignore unknown fields" means they
+ *     do not act on them — not that they throw them away. A record a newer
+ *     Worker wrote must survive being read and rewritten by an older one.
+ *
+ * `null` is the one refusal: a record with no `id` or no `slug` cannot name its
+ * own drop, and a reader that invented one would serve the wrong bytes.
+ */
+export function parseDropMeta(text: string): DropMeta | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+
+  const id = str(record.id);
+  const slug = str(record.slug);
+  if (id === null || slug === null) return null;
+
+  return {
+    // Unknown keys first, so every field this Worker knows wins over them and
+    // one it does not know rides along untouched.
+    ...record,
+    schema: typeof record.schema === "number" ? record.schema : META_SCHEMA,
+    id,
+    slug,
+    title: str(record.title),
+    meta: obj(record.meta),
+    access: obj(record.access),
+    current_gen: str(record.current_gen) ?? "",
+    manifest: parseManifest(record.manifest),
+    expires_at: str(record.expires_at),
+    noindex: typeof record.noindex === "boolean" ? record.noindex : true,
+    created_by: parseCreatedBy(record.created_by),
+    created: str(record.created) ?? "",
+    updated: str(record.updated) ?? str(record.created) ?? "",
+  };
+}
+
+const str = (value: unknown): string | null => (typeof value === "string" ? value : null);
+
+const obj = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+function parseManifest(value: unknown): Manifest {
+  const manifest: Manifest = {};
+  for (const [path, entry] of Object.entries(obj(value))) {
+    const fields = obj(entry);
+    const sha256 = str(fields.sha256);
+    // No digest, no body to fetch: the entry names nothing this drop holds.
+    if (sha256 === null) continue;
+    manifest[path] = {
+      sha256,
+      size: typeof fields.size === "number" ? fields.size : 0,
+      content_type: str(fields.content_type) ?? contentTypeForPath(path),
+    };
+  }
+  return manifest;
+}
+
+function parseCreatedBy(value: unknown): CreatedBy {
+  const fields = obj(value);
+  return { id: str(fields.id) ?? "", label: str(fields.label) ?? "" };
 }
 
 export function dropFiles(manifest: Manifest): DropFile[] {

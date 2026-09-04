@@ -49,6 +49,16 @@ export type OperationContext = {
   self(request: Request): Promise<Response>;
 };
 
+/**
+ * The ONE line a text-only MCP client must see: what happened, in words, above
+ * the same JSON structured clients read. It is a field on the operation and not
+ * a map keyed by operation name, because a second table keyed by name is a
+ * second registry, and the one that drifts is the one nobody remembers.
+ *
+ * It never tells the agent what to call next (#51).
+ */
+export type ResultLine = (input: Record<string, unknown>, value: unknown) => string;
+
 export type Operation<I = never> = {
   /** The registry name: `publish`, `user.add`. MCP prefixes it `dropthis_`. */
   name: string;
@@ -89,6 +99,11 @@ export type Operation<I = never> = {
    * router parses. The router leaves `request.body` untouched.
    */
   rawBody?: boolean;
+  /**
+   * The MCP result's opening line. Required of every operation that IS a tool;
+   * `mcp-results.test.ts` pins that.
+   */
+  resultLine?: ResultLine;
 };
 
 /**

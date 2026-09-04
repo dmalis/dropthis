@@ -155,12 +155,46 @@ describe("pointers with nothing behind them", () => {
 
   it("keeps a slug pointer a staged upload still owns", async () => {
     const bucket = memoryBucket();
-    bucket.seed(slugKey("zzzzzzzzzz"), "PENDING", { pending_upload: "u1" });
+    bucket.seed(slugKey("zzzzzzzzzz"), "PENDING", {
+      pending_upload: "1",
+      expires: rfc(NOW.getTime() + DAY),
+    });
     reconcileDueState(bucket);
 
     await reconcileNow(bucket);
 
     expect(bucket.read(slugKey("zzzzzzzzzz"))).not.toBeNull();
+  });
+
+  /**
+   * Issue #24, finding 12: "the reconcile removes a meta-less pointer only when
+   * no LIVE session owns it." A session lasts a day; a pointer whose session
+   * has expired — or that carries no readable expiry at all — is owned by
+   * nobody and holds a slug hostage forever.
+   */
+  it("removes a pending pointer whose session has expired", async () => {
+    const bucket = memoryBucket();
+    bucket.seed(slugKey("zzzzzzzzzz"), "PENDING", {
+      pending_upload: "1",
+      expires: rfc(NOW.getTime() - 1000),
+    });
+    reconcileDueState(bucket);
+
+    await reconcileNow(bucket);
+
+    expect(bucket.read(slugKey("zzzzzzzzzz"))).toBeNull();
+  });
+
+  it("removes a pending pointer with no readable expiry", async () => {
+    const bucket = memoryBucket();
+    bucket.seed(slugKey("yyyyyyyyyy"), "PENDING", { pending_upload: "1" });
+    bucket.seed(slugKey("xxxxxxxxxx"), "PENDING", { pending_upload: "1", expires: "soon" });
+    reconcileDueState(bucket);
+
+    await reconcileNow(bucket);
+
+    expect(bucket.read(slugKey("yyyyyyyyyy"))).toBeNull();
+    expect(bucket.read(slugKey("xxxxxxxxxx"))).toBeNull();
   });
 
   it("removes a listing entry and an expiring marker whose drop is gone", async () => {

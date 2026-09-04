@@ -19,7 +19,7 @@
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { Env } from "./bindings.js";
+import type { AppEnv } from "./bindings.js";
 import type { DevHooks } from "./dev/hooks.js";
 import { dropState } from "./domain/expiry.js";
 import type { DropMeta } from "./domain/meta.js";
@@ -46,7 +46,7 @@ import {
 const MAX_UNLOCK_BODY_BYTES = 4096;
 
 export function viewerRoutes(hooks: DevHooks) {
-  const viewer = new Hono<{ Bindings: Env }>();
+  const viewer = new Hono<AppEnv>();
 
   viewer.get("/:slug", (c, next) => {
     // A drop is a directory: `/<slug>` redirects to `/<slug>/` so that relative
@@ -148,12 +148,16 @@ type Gate =
   | { kind: "not_a_drop" }
   | { kind: "not_found" };
 
-async function openGate(c: Context<{ Bindings: Env }>, hooks: DevHooks): Promise<Gate> {
+async function openGate(c: Context<AppEnv>, hooks: DevHooks): Promise<Gate> {
   const slug = c.req.param("slug") ?? "";
   if (!isSlug(slug)) return { kind: "not_a_drop" };
 
   const loaded = await loadDrop(c.env.BUCKET, slug);
   if (loaded === null) return { kind: "not_found" };
+
+  // From here every answer is ABOUT this drop — the file, the auto-index, the
+  // unlock page, the 410 — so the drop's own setting decides the header.
+  if (!loaded.meta.noindex) c.set("indexable", true);
 
   // Expiry is checked before anything is resolved: an expired drop tells the
   // visitor it is gone, and never which paths it had.

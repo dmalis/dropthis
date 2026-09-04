@@ -283,7 +283,9 @@ describe("the staged upload, over MCP only", () => {
     expect(opened.isError, textOf(opened)).toBeFalsy();
     const session = opened.structuredContent as unknown as Session;
     expect(session.missing.sort()).toEqual([sha(page), sha(photo)].sort());
-    expect(textOf(opened)).toContain("dropthis_commit");
+    // No next hint on success (#51; issue #24, standards finding 1): the line
+    // says what happened, and the tool text owns the three-step dance.
+    expect(textOf(opened)).not.toContain("dropthis_commit");
 
     // Every URL is absolute on the canonical origin and carries no key.
     for (const url of Object.values(session.put_urls)) {

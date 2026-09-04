@@ -24,9 +24,9 @@
 import type { Bucket } from "../bindings.js";
 import type { Caller } from "../auth/caller.js";
 import { contentTypeForPath } from "../domain/content-type.js";
-import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
+import { dropState, resolveExpiryOrFail } from "../domain/expiry.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
-import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
+import { canonicalJson, newDropMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
 import { resolvePassword, storedPassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
@@ -130,6 +130,16 @@ type CommitClaim = {
   access: Record<string, unknown>;
   /** That password, AES-GCM sealed, so a retry can rebuild the one response. */
   password_enc?: string;
+  /**
+   * The generation this commit is replacing, on an update: enough of the base
+   * `meta.json` to finish steps (5) and (7) — move the `expiring/` marker and
+   * delete the blobs the new manifest no longer names.
+   *
+   * It lives in the CLAIM and not in the session because the base is what the
+   * FIRST commit attempt read, and a retry that finds `meta.json` already
+   * flipped can no longer read it anywhere else (issue #24, finding 11).
+   */
+  previous?: { manifest: Manifest; expires_at: string | null };
 };
 
 export type SessionResult = {
@@ -554,8 +564,17 @@ export async function commitSession(
 
     if (claim !== null && loaded.etag !== session.base_etag) {
       if ((await stateHash(loaded.meta)) === claim.state_hash) {
+        // Our own earlier attempt flipped `meta.json` and died. Steps (5)-(7)
+        // are still owed, and the base generation they need is in the claim.
         return {
-          drop: await finish(bucket, ctx, uploadId, loaded.meta, null, await openPassword(claim, ctx.secret)),
+          drop: await finish(
+            bucket,
+            ctx,
+            uploadId,
+            loaded.meta,
+            claim.previous ?? null,
+            await openPassword(claim, ctx.secret),
+          ),
           created: false,
         };
       }
@@ -641,6 +660,14 @@ export async function commitSession(
       expires_at: desired.expires_at,
       access: desired.access,
       ...(await sealPassword(ctx.secret, password)),
+      ...(current === null
+        ? {}
+        : {
+            previous: {
+              manifest: current.meta.manifest,
+              expires_at: current.meta.expires_at,
+            },
+          }),
     };
     const claimed = await claimKey(bucket, uploadCommitKey(uploadId), JSON.stringify(record));
     if (claimed.claimed) {
@@ -693,14 +720,10 @@ export async function commitSession(
   }
   fault(ctx, "meta");
 
-  const drop = await finish(
-    bucket,
-    ctx,
-    uploadId,
-    stored,
-    ours && current !== null ? current.meta : null,
-    password,
-  );
+  // The base generation, whoever won the flip: both writers stored the same
+  // state, so "referenced" comes from `stored` and the cleanup is the same set.
+  const previous = claim?.previous ?? (current === null ? null : current.meta);
+  const drop = await finish(bucket, ctx, uploadId, stored, previous, password);
   return { drop, created: isCreate && ours };
 }
 
@@ -714,7 +737,7 @@ async function finish(
   ctx: UploadContext,
   uploadId: string,
   stored: DropMeta,
-  previous: DropMeta | null,
+  previous: { manifest: Manifest; expires_at: string | null } | null,
   password: string | undefined,
 ): Promise<Drop> {
   await writeProjections(bucket, stored, previous === null ? undefined : previous.expires_at);
@@ -741,7 +764,7 @@ async function finish(
 
 async function readMeta(bucket: Bucket, dropId: string): Promise<DropMeta | null> {
   const object = await bucket.get(metaKey(dropId));
-  return object === null ? null : (JSON.parse(await object.text()) as DropMeta);
+  return object === null ? null : parseDropMeta(await object.text());
 }
 
 async function readClaim(bucket: Bucket, uploadId: string): Promise<CommitClaim | null> {
@@ -769,14 +792,6 @@ function requireSamePayload(claim: CommitClaim, payloadHash: string): void {
   }
 }
 
-function resolveExpiryOrFail(value: string, policy: ResolvedPolicy, now: Date): string | null {
-  try {
-    return resolveExpiry(value, { max: policy.expiry.max, allowNever: policy.expiry.allow_never }, now);
-  } catch (error) {
-    if (error instanceof ExpiryError) throw new ApiError(error.code, error.message);
-    throw error;
-  }
-}
 
 function fault(ctx: UploadContext, point: FaultPoint): void {
   if (ctx.fault === point) throw new Error(`DEV_FAULT: aborted after ${point}.`);

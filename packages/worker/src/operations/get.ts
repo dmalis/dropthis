@@ -15,12 +15,12 @@ import type { Bucket } from "../bindings.js";
 import { isTextTyped } from "../domain/content-type.js";
 import { dropState } from "../domain/expiry.js";
 import type { Drop, DropFile, DropMeta } from "../domain/meta.js";
-import { toDrop } from "../domain/meta.js";
+import { parseDropMeta, toDrop } from "../domain/meta.js";
 import { encodePathForUrl } from "../domain/url-path.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig } from "../instance-config.js";
 import { blobKey, metaKey, slugKey } from "../storage/keys.js";
-import { repairListEntry } from "./projections.js";
+import { repairProjections } from "./projections.js";
 
 /** The total bytes `get(files: true)` will inline across all files. */
 export const INLINE_CONTENT_BUDGET = 1024 * 1024;
@@ -40,7 +40,11 @@ export async function loadDrop(bucket: Bucket, slug: string): Promise<LoadedDrop
 
   const record = await bucket.get(metaKey(dropId));
   if (record === null) return null;
-  return { dropId, meta: JSON.parse(await record.text()) as DropMeta, etag: record.etag };
+  // A record this Worker cannot read at all is a 404, not a 500: the pointer
+  // is dangling as far as every read path is concerned.
+  const meta = parseDropMeta(await record.text());
+  if (meta === null) return null;
+  return { dropId, meta, etag: record.etag };
 }
 
 export type GetOptions = {
@@ -60,10 +64,12 @@ export async function getDrop(slug: string, options: GetOptions): Promise<Drop> 
     throw new ApiError("EXPIRED_FINAL", `The drop at ${slug} is past recovery.`);
   }
 
-  // "A `meta.json` whose `list/` entry is missing or stale is repaired by the
-  // next `get`" (AGENTS.md). It costs one `head`, and it is the only reason a
-  // listing can be answered from pointers alone.
-  await repairListEntry(options.bucket, loaded.meta);
+  // "`list/` and `expiring/` … a missing or stale entry is repaired by the next
+  // `get`/`update`" (AGENTS.md). Two `head`s, and a write only when one of the
+  // two projections is actually wrong. The listing row is the reason `list` can
+  // be answered from pointers alone; the marker is the reason the cron ever
+  // looks at this drop.
+  await repairProjections(options.bucket, loaded.meta);
 
   const drop = toDrop(loaded.meta, { canonicalUrl: options.config.canonicalUrl, now: options.now });
   if (!options.files) return drop;

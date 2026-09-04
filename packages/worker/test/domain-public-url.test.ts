@@ -46,6 +46,20 @@ describe("publicHttpsUrlProblem", () => {
     ["https://2130706433/x", "private"],
     ["https://0x7f000001/x", "private"],
     ["https://0177.0.0.1/x", "private"],
+    // Reserved and documentation ranges — decision #92b: "every private,
+    // loopback, link-local, carrier-NAT, RESERVED or NON-UNICAST IPv4 or IPv6
+    // literal" (issue #24, finding 14).
+    ["https://192.0.0.1/x", "private"],
+    ["https://192.0.2.5/x", "private"],
+    ["https://198.51.100.5/x", "private"],
+    ["https://203.0.113.5/x", "private"],
+    ["https://198.18.0.1/x", "private"],
+    ["https://240.0.0.1/x", "private"],
+    ["https://255.255.255.255/x", "private"],
+    ["https://[2001:db8::1]/x", "private"],
+    ["https://[100::1]/x", "private"],
+    ["https://box.home.arpa/x", "private"],
+    ["https://host.internal/x", "private"],
   ])("refuses %s (%s)", (url, reason) => {
     expect(publicHttpsUrlProblem(url)).toContain(reason);
   });

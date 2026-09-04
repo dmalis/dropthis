@@ -199,17 +199,19 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
 /**
  * Has the cron run, and is it keeping up?
  *
- * A checkpoint that has never been written is not a failure: a fresh instance
- * has simply not had its first hour yet. A checkpoint stuck days in the past
- * is, because it means either the trigger is gone or `cron_ops_budget` is too
- * small for the bucket — and either way expired drops are piling up.
+ * A checkpoint that has never been written is not a failure and not a pass
+ * either: there is nothing to judge. "A doctor check whose subject does not
+ * exist is `skip`" (#29e), and a fresh instance has simply not had its first
+ * hour yet. A checkpoint stuck days in the past IS a failure, because it means
+ * either the trigger is gone or `cron_ops_budget` is too small for the bucket —
+ * and either way expired drops are piling up.
  */
 async function cronState(ctx: DoctorContext): Promise<CheckResult> {
   const object = await ctx.bucket.get(PRUNE_STATE_KEY);
   if (object === null) {
     return {
       id: "cron_state",
-      status: "pass",
+      status: "skip",
       evidence: "The cron has not run yet; it has no checkpoint to be stranded at.",
     };
   }

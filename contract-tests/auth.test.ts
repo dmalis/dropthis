@@ -237,14 +237,17 @@ describe("user remove", () => {
     expect(second.key).not.toBe(first.key);
   });
 
-  it("is safe to repeat: the second call finds nothing left", async () => {
+  it("is safe to repeat: the second call is 204 too", async () => {
+    // Issue #24, finding 16: the tool text promises "succeeds when the label is
+    // already gone", and DELETE is idempotent everywhere else here.
     const name = label("ken");
     await addUser(name);
 
     expect((await api(`/_api/v1/users/${name}`, { method: "DELETE" })).status).toBe(204);
-    expect(
-      await errorOf(await api(`/_api/v1/users/${name}`, { method: "DELETE" })),
-    ).toMatchObject({ status: 404, code: "NOT_FOUND" });
+    expect((await api(`/_api/v1/users/${name}`, { method: "DELETE" })).status).toBe(204);
+    expect((await api(`/_api/v1/users/${label("never-added")}`, { method: "DELETE" })).status).toBe(
+      204,
+    );
   });
 
   it("refuses to remove the admin key", async () => {
