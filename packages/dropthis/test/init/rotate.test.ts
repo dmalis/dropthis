@@ -30,6 +30,8 @@ async function serveBucket(cf: Awaited<ReturnType<typeof fake>>) {
   return started;
 }
 
+type UserPointer = { id: string; previous?: string; pending?: string };
+
 const keys = (cf: Awaited<ReturnType<typeof fake>>) => [...(cf.state.objects.get(BUCKET)?.keys() ?? [])];
 
 describe("rotateAdminKey", () => {
@@ -85,6 +87,57 @@ describe("rotateAdminKey", () => {
       fetch(`${instance.url}/_api/v1/config`, { headers: { authorization: `Bearer ${key}` } });
     expect((await call(first.key)).status).toBe(401);
     expect((await call(halfway.key)).status).toBe(401);
+    expect((await call(finished.key)).status).toBe(200);
+  });
+
+  it("a crash between minting and the switch leaves no key a rerun cannot revoke", async () => {
+    const cf = await fake();
+    const first = await bootstrapAdminKey(cf.client, ACCOUNT, BUCKET);
+    if (first.status !== "created") throw new Error("bootstrap did not mint a key");
+    // A run that died after the new key became usable but before `users/admin`
+    // named it: without a written-down intent nothing knows that key exists.
+    const orphan = await rotateAdminKey(cf.client, ACCOUNT, BUCKET, { stopAfter: "mint" });
+    expect(keys(cf).filter((key) => key.startsWith("keyhash/"))).toHaveLength(2);
+
+    const finished = await rotateAdminKey(cf.client, ACCOUNT, BUCKET);
+
+    expect(keys(cf).filter((key) => key.startsWith("keyhash/"))).toHaveLength(1);
+    expect(keys(cf).filter((key) => key.startsWith("keys/"))).toHaveLength(1);
+    const instance = await serveBucket(cf);
+    const call = (key: string) =>
+      fetch(`${instance.url}/_api/v1/config`, { headers: { authorization: `Bearer ${key}` } });
+    expect((await call(orphan.key)).status).toBe(401);
+    expect((await call(first.key)).status).toBe(401);
+    expect((await call(finished.key)).status).toBe(200);
+  });
+
+  it("a crash before the new key exists leaves the old key working and a clean rerun", async () => {
+    const cf = await fake();
+    const first = await bootstrapAdminKey(cf.client, ACCOUNT, BUCKET);
+    if (first.status !== "created") throw new Error("bootstrap did not mint a key");
+    // The intent was written and then the run died: nothing changed yet, so
+    // the old key must still administer the instance.
+    await rotateAdminKey(cf.client, ACCOUNT, BUCKET, { stopAfter: "intent" });
+    const halfway = await serveBucket(cf);
+    expect(
+      (
+        await fetch(`${halfway.url}/_api/v1/config`, {
+          headers: { authorization: `Bearer ${first.key}` },
+        })
+      ).status,
+    ).toBe(200);
+
+    const finished = await rotateAdminKey(cf.client, ACCOUNT, BUCKET);
+
+    expect(keys(cf).filter((key) => key.startsWith("keyhash/"))).toHaveLength(1);
+    expect(keys(cf).filter((key) => key.startsWith("keys/"))).toHaveLength(1);
+    const user = await getObjectJson<UserPointer>(cf.client, ACCOUNT, BUCKET, "users/admin");
+    expect(user).toEqual({ id: finished.id });
+
+    const instance = await serveBucket(cf);
+    const call = (key: string) =>
+      fetch(`${instance.url}/_api/v1/config`, { headers: { authorization: `Bearer ${key}` } });
+    expect((await call(first.key)).status).toBe(401);
     expect((await call(finished.key)).status).toBe(200);
   });
 
