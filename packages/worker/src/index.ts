@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { mcpRoutes } from "./api/mcp.js";
 import { apiRoutes } from "./api/router.js";
-import type { Env } from "./bindings.js";
+import type { AppEnv, Env } from "./bindings.js";
 import { aliasRedirect } from "./canonical.js";
 import { renderConnectPage } from "./connect-page.js";
 import { PRODUCTION_HOOKS } from "./dev/hooks.js";
@@ -36,11 +36,15 @@ const NOT_FOUND_PAGE = `<!doctype html>
  * so no dev variable is ever named in the code a production bundle contains.
  */
 export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
-  const app = new Hono<{ Bindings: Env }>();
+  const app = new Hono<AppEnv>();
 
-  // Every response, without exception: drops are not for search engines.
+  // Drops are not for search engines, and neither is the control plane. The one
+  // exception is a drop whose own `noindex` is off — the field would mean
+  // nothing otherwise (docs/spec-v1.md, story 45) — and the viewer says so by
+  // setting `indexable` once it has resolved the drop.
   app.use("*", async (c, next) => {
     await next();
+    if (c.get("indexable") === true) return;
     c.res.headers.set("X-Robots-Tag", "noindex, nofollow");
   });
 
@@ -128,7 +132,7 @@ export function createWorker(hooks: DevHooks = PRODUCTION_HOOKS) {
   return workerOf(createApp(hooks), hooks);
 }
 
-export function workerOf(app: Hono<{ Bindings: Env }>, hooks: DevHooks) {
+export function workerOf(app: Hono<AppEnv>, hooks: DevHooks) {
   return {
     fetch: (request: Request, env: Env, ctx: WaitUntil) =>
       app.fetch(request, env, ctx as Parameters<typeof app.fetch>[2]),

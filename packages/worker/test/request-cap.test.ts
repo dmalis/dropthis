@@ -23,7 +23,7 @@ beforeEach(async () => {
 const encoder = new TextEncoder();
 
 /** A body with no `Content-Length`: the shape a streaming client sends. */
-function streamed(text: string): BodyInit {
+function streamed(text: string): ReadableStream<Uint8Array> {
   const bytes = encoder.encode(text);
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -35,7 +35,7 @@ function streamed(text: string): BodyInit {
   });
 }
 
-const post = (body: BodyInit) =>
+const post = (body: ReadableStream<Uint8Array>) =>
   h.call(
     "/_api/v1/drops",
     { method: "POST", headers: { "content-type": "application/json" }, body, duplex: "half" } as RequestInit,

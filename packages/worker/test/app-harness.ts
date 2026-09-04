@@ -10,6 +10,7 @@ import { hashKey } from "../src/auth/key.js";
 import type { Env } from "../src/bindings.js";
 import { DEV_HOOKS } from "../src/dev/enabled-hooks.js";
 import { createApp } from "../src/index.js";
+import type { ResolvedPolicy } from "../src/instance-config.js";
 import { INITIAL_POLICY } from "../src/policy/defaults.js";
 import { CONFIG_KEY, keyHashKey, keyRecordKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
@@ -32,7 +33,7 @@ export type Harness = {
   body<T>(response: Response): Promise<T>;
 };
 
-export async function harness(policy: Partial<typeof INITIAL_POLICY> = {}): Promise<Harness> {
+export async function harness(policy: Partial<ResolvedPolicy> = {}): Promise<Harness> {
   const bucket = memoryBucket();
   bucket.seed(
     CONFIG_KEY,

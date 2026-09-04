@@ -79,3 +79,14 @@ export type Env = {
    */
   DEV_CLOCK?: string;
 };
+
+/**
+ * The Hono context variables the app carries. One so far: whether the response
+ * being built belongs to a drop whose `noindex` is OFF, which is the only case
+ * in which `X-Robots-Tag` is not sent (docs/spec-v1.md, story 45).
+ */
+export type AppVariables = {
+  indexable?: boolean;
+};
+
+export type AppEnv = { Bindings: Env; Variables: AppVariables };
