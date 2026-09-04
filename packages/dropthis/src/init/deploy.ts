@@ -51,6 +51,11 @@ export function instanceConfigDir(env: Env, name: string): string {
 }
 
 export async function wranglerDeploy(options: DeployOptions): Promise<void> {
+  // An empty account id is worse than none: wrangler then picks an account on
+  // its own, which is exactly the wrong-account deploy the pin exists to stop.
+  if (options.accountId.length === 0) {
+    throw new Error("wranglerDeploy needs the account id preflight pinned; it was empty.");
+  }
   const dir = instanceConfigDir(options.env, options.name);
   await mkdir(dir, { recursive: true });
 

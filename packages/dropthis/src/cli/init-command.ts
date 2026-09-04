@@ -121,14 +121,16 @@ export async function runInitCommand(input: InitInput, globals: Globals, io: Run
     },
     ...(interactive ? { onWall: (wall: InitWall) => waitAtWall(wall, io.stderr) } : {}),
     ...pollOptions(io.env),
-    deploy: async (config, secrets) => {
+    deploy: async (config, secrets, context) => {
       await wranglerDeploy({
         env: io.env,
         name,
         config,
         secrets,
         token: credential.token,
-        accountId: credential.accountId ?? "",
+        // The account preflight pinned, never the one the caller supplied:
+        // token-only runs have no caller account at all.
+        accountId: context.accountId,
         cwd: io.cwd,
         log: io.stderr,
         ...(io.env.DROPTHIS_WRANGLER === undefined ? {} : { wranglerPath: io.env.DROPTHIS_WRANGLER }),

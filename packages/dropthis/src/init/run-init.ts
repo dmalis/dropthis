@@ -27,6 +27,15 @@ export type InitStep = { id: string; status: InitStepStatus; detail?: string };
  */
 export type DeployOutcome = { url?: string } | void;
 
+/**
+ * What the deploy is told about the run it belongs to. `accountId` is the one
+ * preflight PINNED, not the one the caller happened to have: with a token that
+ * sees exactly one account the caller has none, and a deploy that inherits an
+ * empty `CLOUDFLARE_ACCOUNT_ID` lets wrangler choose an account for itself —
+ * the one thing AGENTS.md's "never guess the account" rule forbids.
+ */
+export type DeployContext = { accountId: string };
+
 /** Something only a person with a browser can clear. */
 export type InitWall = { id: "r2_subscription"; url: string };
 
@@ -60,6 +69,7 @@ export type RunInitOptions = {
   deploy: (
     config: RenderedWranglerConfig,
     secrets: Record<string, string> | undefined,
+    context: DeployContext,
   ) => Promise<DeployOutcome>;
 };
 
@@ -251,7 +261,7 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   const secretNames = await workerSecretNames(client, accountId, worker);
   const shipSecret = secretNames === undefined || !secretNames.includes("HMAC_SECRET");
   const secrets = shipSecret ? secretsFilePayload(generateHmacSecret()) : undefined;
-  const deployed = await options.deploy(renderedConfig, secrets);
+  const deployed = await options.deploy(renderedConfig, secrets, { accountId });
   push({
     id: "deploy",
     status: "ok",
