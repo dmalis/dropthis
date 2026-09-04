@@ -117,3 +117,68 @@ describe("bootstrapAdminKey — crash between writes", () => {
     expect(keyRecord!.hash).not.toBe(orphanHash);
   });
 });
+
+describe("bootstrapAdminKey — a broken admin chain", () => {
+  const seed = async (
+    client: ReturnType<typeof makeClient>,
+    entries: Array<[string, unknown]>,
+  ): Promise<void> => {
+    const { putObjectJson } = await import("../../src/init/r2-objects.js");
+    for (const [key, value] of entries) await putObjectJson(client, ACCOUNT, BUCKET, key, value);
+  };
+
+  it("repairs a missing keyhash pointer from the key record it still has", async () => {
+    const cf = await fake({ buckets: [BUCKET] });
+    const client = makeClient({ apiToken: "fake-token", accountId: ACCOUNT, apiBase: cf.apiBase });
+    const first = await bootstrapAdminKey(client, ACCOUNT, BUCKET);
+    const hash = createHash("sha256").update(first.key!).digest("hex");
+    const { deleteObject } = await import("../../src/init/r2-objects.js");
+    await deleteObject(client, ACCOUNT, BUCKET, `keyhash/${hash}`);
+
+    const result = await bootstrapAdminKey(client, ACCOUNT, BUCKET);
+
+    expect(result.status).toBe("repaired");
+    expect(result.key).toBeUndefined();
+    expect(await getObjectJson<{ id: string }>(client, ACCOUNT, BUCKET, `keyhash/${hash}`)).toEqual({
+      id: "admin",
+    });
+  });
+
+  it("fails loudly, before any deploy, when the admin key record is gone", async () => {
+    const cf = await fake({ buckets: [BUCKET] });
+    const client = makeClient({ apiToken: "fake-token", accountId: ACCOUNT, apiBase: cf.apiBase });
+    await bootstrapAdminKey(client, ACCOUNT, BUCKET);
+    const { deleteObject } = await import("../../src/init/r2-objects.js");
+    await deleteObject(client, ACCOUNT, BUCKET, "keys/admin.json");
+
+    const result = await bootstrapAdminKey(client, ACCOUNT, BUCKET);
+
+    expect(result.status).toBe("broken");
+    expect(result.status === "broken" && result.detail).toContain("keys/admin.json");
+    expect(result.status === "broken" && result.remediation).toContain("--rotate-admin-key");
+    expect(result.key).toBeUndefined();
+  });
+
+  it("fails loudly when the key record contradicts the pointer that names it", async () => {
+    const cf = await fake({ buckets: [BUCKET] });
+    const client = makeClient({ apiToken: "fake-token", accountId: ACCOUNT, apiBase: cf.apiBase });
+    await bootstrapAdminKey(client, ACCOUNT, BUCKET);
+    await seed(client, [
+      ["keys/admin.json", { id: "somebody-else", label: "admin", scope: "user", hash: "x", created: "" }],
+    ]);
+
+    const result = await bootstrapAdminKey(client, ACCOUNT, BUCKET);
+
+    expect(result.status).toBe("broken");
+  });
+
+  it("fails loudly when users/admin is not a key id at all", async () => {
+    const cf = await fake({ buckets: [BUCKET] });
+    const client = makeClient({ apiToken: "fake-token", accountId: ACCOUNT, apiBase: cf.apiBase });
+    await seed(client, [["users/admin", { note: "hand-edited" }]]);
+
+    const result = await bootstrapAdminKey(client, ACCOUNT, BUCKET);
+
+    expect(result.status).toBe("broken");
+  });
+});

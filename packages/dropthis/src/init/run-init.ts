@@ -240,9 +240,20 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     push({ id: "admin_key", status: "created", detail: "rotated" });
   } else {
     const bootstrap = await bootstrapAdminKey(client, accountId, bucket);
+    // A chain that cannot open the instance is a broken deploy, and no key
+    // here can be re-derived: AGENTS.md, "A missing key file fails loudly;
+    // rotation is explicit." So the run stops, before wrangler is called.
+    if (bootstrap.status === "broken") {
+      push({ id: "admin_key", status: "error", detail: `${bootstrap.detail} ${bootstrap.remediation}` });
+      return failure();
+    }
     adminKey = bootstrap.status === "created" ? bootstrap.key : undefined;
-    adminKeyStatus = bootstrap.status;
-    push({ id: "admin_key", status: bootstrap.status === "created" ? "created" : "ok" });
+    adminKeyStatus = bootstrap.status === "created" ? "created" : "existing";
+    push({
+      id: "admin_key",
+      status: bootstrap.status === "created" ? "created" : "ok",
+      ...(bootstrap.status === "repaired" ? { detail: "repaired the keyhash pointer" } : {}),
+    });
   }
 
   await applyLifecycleRules(client, accountId, bucket);

@@ -152,6 +152,26 @@ describe("runInit — account preflight failure", () => {
   });
 });
 
+describe("runInit — a broken admin chain", () => {
+  it("stops before the deploy when users/admin names a key record that is gone", async () => {
+    const cf = await fake();
+    const { deploy, calls } = stubDeploy(cf, teardown);
+    await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+    const client = (await import("../../src/init/cloudflare-client.js")).makeClient(CREDS(cf));
+    const { deleteObject } = await import("../../src/init/r2-objects.js");
+    await deleteObject(client, "fake-account-id", "dropthis-main-drops", "keys/admin.json");
+    calls.length = 0;
+
+    const second = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+
+    expect(second.ok).toBe(false);
+    expect(calls).toHaveLength(0);
+    const step = second.steps.find((s) => s.id === "admin_key");
+    expect(step?.status).toBe("error");
+    expect(step?.detail ?? "").toContain("--rotate-admin-key");
+  });
+});
+
 describe("runInit — NAME_TAKEN", () => {
   it("refuses when the derived bucket exists but was never set up by dropthis", async () => {
     const cf = await fake({ buckets: ["dropthis-main-drops"] });
