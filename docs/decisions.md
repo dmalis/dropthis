@@ -1065,6 +1065,76 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     contract-test failure against the deployed instance; the Node seam still measures the
     laptop and cannot pin it.
 
+98. **Milestone 1, on the owner's real account (issue #11, 2026-09-04).** The record #44
+    demands. Everything below was run from the repo build (`npm run build`, then
+    `node packages/dropthis/dist/cli.cjs …`) against the owner's Cloudflare account, with
+    `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` from `~/.config/dropthis/dev.env`. No
+    key, token or password of the instance is in this entry.
+    **The instance:** name `damjan`; Worker `dropthis-damjan`; bucket `dropthis-damjan-drops`;
+    KV `dropthis-damjan-oauth`; `canonical_url` `https://damjan.dropthis.app`;
+    `alias_origins` `["https://dropthis-damjan.dropthis-app.workers.dev"]`; admin key in
+    `~/.config/dropthis/instances.json` with `damjan` as the default instance. It stays: it
+    is the owner's instance from now on. (#44 and #66 spell the hostname
+    `damian.dropthis.app`; the owner's name is Damjan, the brief and the run used
+    `damjan.dropthis.app`, and that is the instance that exists. A typo in #44, not a
+    changed decision.)
+    (a) **`init --dry-run --json` answered `ok: true`** with every preflight step `ok` and
+    bucket, KV and domain `would_create`. The real run created the bucket, the KV namespace,
+    the admin key record, the lifecycle rules, `system/config.json`, the rendered
+    per-instance wrangler config and the deploy (`HMAC_SECRET` shipped), and attached the
+    Custom Domain — and then **failed on `health` with a 410**, so `doctor` was skipped and
+    the run reported `ok: false` over a working instance. Cause: two pre-existing Workers
+    Routes on the zone (`dropthis.app/*` and `*.dropthis.app/*` → `dropthis-notice`, the
+    archived product's 410 page). A matching Route beats a Custom Domain at Cloudflare.
+    Adding the more specific route `damjan.dropthis.app/*` → `dropthis-damjan` through the
+    API fixed it; `/_api/v1/health` then answered `200 {"ok": true}` on the first attempt.
+    `dropthis-notice` and its routes were not touched. Filed as **issue #25**:
+    `init --check domain_attached` should detect a shadowing route and name the exact fix.
+    (b) **The rerun is a real reconcile.** Second `init` with the same arguments:
+    `ok: true`, `admin_key_status: "existing"`, no `admin_key` field, `deploy` detail
+    "HMAC_SECRET reused from the deployed Worker", every resource step `ok`, `health` ok on
+    one attempt, `doctor` ok. So a re-run repairs instead of failing and never re-reveals a
+    secret — the installer principle, proven on the real thing rather than the fake.
+    (c) **`doctor` (both from `init` and from the CLI): `ok: true`.** `hello_drop`,
+    `mcp_initialize` (16 tools), `policy_readable`, `cron_state`, `canonical_origin` and
+    `admin_rotation_clean` pass; `pbkdf2_benchmark` is `inconclusive` with the wording #97
+    gave it. Cosmetic defect, filed with #25: the `init` step says "7 checks passed" when
+    six passed and one was inconclusive.
+    (d) **`connect --client claude-code --json` wrote `.mcp.json`** with `type: http`, the
+    `/_api/mcp` URL and `headersHelper: "dropthis auth-header --instance damjan"` — and no
+    key in the file. `auth-header --instance damjan` prints one `Authorization: Bearer …`
+    line. The file was not committed.
+    (e) **The #44 checklist, through the CLI, in order.** `publish` of a three-file folder →
+    `https://damjan.dropthis.app/9knbmhvcxf/`; `curl` of it: `200`, `text/html`,
+    `x-robots-tag: noindex, nofollow`, `cache-control: no-cache, must-revalidate`,
+    `content-disposition: inline`, and `report.css` / `data.json` served with their own
+    types, a missing path `404`. `get --json`: title, `state: live`, `noindex: true`,
+    `created_by {id: admin, label: admin}`, three files with `sha256` and `content_type`,
+    and `expires_at` exactly **30.000 days** out. `list --json`: the one drop. `update
+    --title` changed the title with the URL and the files unchanged. `publish --password
+    generate`: a 16-character password returned once, `has_password: true` and **no
+    `password` field from `get`**, the viewer answering `401` with the unlock page.
+    `publish note.pdf` (12,344 bytes): `200 application/pdf`, `content-disposition: inline;
+    filename="note.pdf"`, `?download=1` → `attachment`. `delete` → `{deleted: true}`,
+    viewer `404`, `get` → the `NOT_FOUND` error object with CLI exit `1`.
+    (f) **The instance's own surfaces.** `/_skill.md`: `200 text/markdown`, 18,343 bytes,
+    naming `damjan.dropthis.app` and the live `max_request_bytes` of 4 MiB. `/_connect`:
+    `200 text/html`, naming `https://damjan.dropthis.app/_api/mcp`. MCP over the domain with
+    the admin key as bearer: `initialize` → `dropthis 0.1.0`, `tools/list` → the 16 tools;
+    with no bearer, `401`. `/.well-known/oauth-protected-resource` and
+    `/.well-known/oauth-authorization-server` both name `https://damjan.dropthis.app` as
+    resource, authorization server and issuer.
+    (g) **One contract defect found, deliberately not fixed here.** A viewer GET on the
+    alias origin (`https://dropthis-damjan.dropthis-app.workers.dev/<slug>/`) answers `200`,
+    not the `301` AGENTS.md promises. `canonical.ts`'s `aliasRedirect()` is wired only into
+    `/_connect` (`index.ts:79`), and `contract-tests/connect.test.ts` covers only that route.
+    It is not on #44's checklist, so it does not block the milestone, and the fix is a
+    hot-path decision the owner owns: the viewer reads no `system/config.json` today, and
+    `aliasRedirect()` needs it. Filed as **issue #26** with the four options.
+    (h) **Milestone 1 is met.** Every line of #44's checklist answered as specified, on the
+    real account, plus the `connect --client claude-code` line #58 added. Milestone 2
+    (issue #13) is untouched.
+
 99. **The installer cannot compare-and-swap, so admin rotation is ordering plus a written
     intent (issue #23, 2026-09-04).** AGENTS.md says `--rotate-admin-key` "CAS `users/admin`".
     It cannot: the installer runs before any Worker exists and writes through the Cloudflare
