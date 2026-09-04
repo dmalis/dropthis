@@ -1,0 +1,26 @@
+# dropthis
+
+> dropthis turns content an agent produced into a permanent URL on Cloudflare the user owns. One call in, one URL out, plus three policies on every drop — password, expiry, noindex — and the pruning that follows. One Worker, one R2 bucket, no dashboard; agents are the only callers, over MCP, CLI or REST.
+
+Every deployed instance serves its own agent skill at `<canonical_url>/_skill.md`, with that instance's URL, policy and limits filled in. To operate an instance, read that file; nothing else is needed. MCP is at `<canonical_url>/_api/mcp` (bearer key, or OAuth by pasting the key), REST under `<canonical_url>/_api/v1` with `Authorization: Bearer <key>`. Five drop operations — `publish`, `update`, `get`, `list`, `delete` — plus the staged upload `upload` → `PUT` → `commit` for files too big for one call; admin operations `user add|list|remove`, `config get|set`, `usage`, `prune`, `doctor`. The URL is the drop's identity: `get`, `update` and `delete` take the URL or its slug. Every error is `{code, message, remediation, retryable}`.
+
+## Install and connect
+
+- [Install skill](https://raw.githubusercontent.com/dmalis/dropthis/main/skills/dropthis-install/SKILL.md): how an agent installs an instance on a human's Cloudflare account and connects Claude Code, Cursor, Codex or claude.ai, non-interactively
+- [README](https://raw.githubusercontent.com/dmalis/dropthis/main/README.md): what dropthis is, the human install paths, cost with dated citations, use cases
+
+## Operate an instance
+
+- [Instance skill template](https://raw.githubusercontent.com/dmalis/dropthis/main/skills/instance-skill.md): the source of `/_skill.md`; the deployed copy on your instance has the URL and limits substituted and is the one to read
+- [Security](https://raw.githubusercontent.com/dmalis/dropthis/main/SECURITY.md): the shared-origin boundary, passwords, unlock cookies, what dropthis does not protect against
+
+## Reference
+
+- [AGENTS.md](https://raw.githubusercontent.com/dmalis/dropthis/main/AGENTS.md): the product truth — principles, storage layout, the drop model, responses and errors, auth, policy, operation registry, CLI conventions
+- [Decisions](https://raw.githubusercontent.com/dmalis/dropthis/main/docs/decisions.md): every design choice with its date and reason
+- [Research](https://github.com/dmalis/dropthis/tree/main/docs/research): dated evidence — Cloudflare limits and pricing, measurements on the Free plan, CLI conventions, competitors
+
+## Optional
+
+- [Long-form overview](https://raw.githubusercontent.com/dmalis/dropthis/main/llms-full.txt): one page describing every surface in prose
+- [Licence](https://raw.githubusercontent.com/dmalis/dropthis/main/LICENSE): Apache-2.0
