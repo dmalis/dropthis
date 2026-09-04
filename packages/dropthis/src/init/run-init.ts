@@ -5,7 +5,13 @@ import { attachDomain, matchZone } from "./domain.js";
 import { saveInstance } from "./instances-file.js";
 import { applyLifecycleRules } from "./lifecycle-rules.js";
 import { renderWranglerConfig, type RenderedWranglerConfig } from "./plan-render.js";
-import { checkPermissions, checkR2Subscription, checkToken, pinAccount } from "./preflight.js";
+import {
+  checkDomainPermissions,
+  checkPermissions,
+  checkR2Subscription,
+  checkToken,
+  pinAccount,
+} from "./preflight.js";
 import { pollHealth, runRemoteDoctor, type PollOptions } from "./probe.js";
 import { reconcileBucket, reconcileNamespace } from "./reconcile.js";
 import { getObjectJson } from "./r2-objects.js";
@@ -156,22 +162,18 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   }
   push({ id: "r2_subscription", status: "ok" });
 
-  const permissions = await checkPermissions(client, accountId);
-  if (!permissions.ok) {
-    push({
-      id: "permissions",
-      status: "error",
-      detail: permissions.missing.map((m) => m.permission).join(", "),
-    });
-    return failure();
-  }
-  push({ id: "permissions", status: "ok" });
-
   /**
    * The domain's read-only half runs BEFORE anything is deployed: a hostname
    * in someone else's zone, or one that already has a DNS record, must cost
    * the operator nothing. The write half needs the script to exist, so it
    * happens after the deploy.
+   *
+   * The zone is matched before the permission probes because `--domain` adds
+   * two permissions the account-level probes never touch, and both of those
+   * reads need a zone id. One `permissions` step then covers every permission
+   * this run will use — the alternative is provisioning and deploying for a
+   * token that could never have finished (AGENTS.md, "Preflight names the
+   * dashboard permission, not the HTTP code").
    */
   let domainZone: { id: string; name: string } | undefined;
   if (options.domain !== undefined) {
@@ -181,8 +183,23 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
       return failure();
     }
     domainZone = zone.zone;
+  }
+
+  const missing = [...(await checkPermissions(client, accountId)).missing];
+  if (options.domain !== undefined && domainZone !== undefined) {
+    missing.push(
+      ...(await checkDomainPermissions(client, accountId, domainZone.id, options.domain)).missing,
+    );
+  }
+  if (missing.length > 0) {
+    push({ id: "permissions", status: "error", detail: missing.map((m) => m.permission).join(", ") });
+    return failure();
+  }
+  push({ id: "permissions", status: "ok" });
+
+  if (options.domain !== undefined && domainZone !== undefined) {
     for await (const record of client.dns.records.list({
-      zone_id: zone.zone.id,
+      zone_id: domainZone.id,
       name: { exact: options.domain },
     })) {
       const taken = await isOurs(client, accountId, worker, options.domain);

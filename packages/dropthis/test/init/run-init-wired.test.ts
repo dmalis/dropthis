@@ -222,6 +222,44 @@ describe("runInit — --domain", () => {
     expect(step(result.steps, "domain")?.detail).toMatch(/A record/);
     expect(calls).toHaveLength(0);
   });
+
+  it("names the missing zone permission before it provisions anything", async () => {
+    const cf = await fake({ missingScopes: ["workers-routes"] });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "permissions")?.status).toBe("error");
+    expect(step(result.steps, "permissions")?.detail).toContain("Zone Workers Routes");
+    expect(calls).toHaveLength(0);
+    expect(cf.state.buckets).toEqual([]);
+  });
+
+  it("names the missing DNS permission before it provisions anything", async () => {
+    const cf = await fake({ missingScopes: ["zone-dns"] });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "permissions")?.status).toBe("error");
+    expect(step(result.steps, "permissions")?.detail).toContain("Zone DNS");
+    expect(calls).toHaveLength(0);
+    expect(cf.state.buckets).toEqual([]);
+  });
 });
 
 describe("runInit — --rotate-admin-key", () => {

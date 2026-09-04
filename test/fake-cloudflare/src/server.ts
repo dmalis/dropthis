@@ -9,7 +9,7 @@ import { Hono } from "hono";
  * and it records every request so a test can assert that no create happened.
  */
 /** The permission scopes the fake understands, named as the dashboard would. */
-export type FakeScope = "r2" | "kv" | "workers";
+export type FakeScope = "r2" | "kv" | "workers" | "zone-dns" | "workers-routes";
 
 /** A deployed Worker script, as the fake remembers it. */
 export type FakeScript = {
@@ -359,6 +359,8 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
   });
 
   app.get("/client/v4/zones/:zoneId/dns_records", (c) => {
+    const forbidden = requireScope("zone-dns");
+    if (forbidden) return c.json(forbidden, 403);
     const zoneId = c.req.param("zoneId");
     // The SDK sends the exact-name filter as `name.exact` (its `Name` filter
     // object); a bare `name` is what a hand-written call would send.
@@ -380,6 +382,8 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     if (c.req.param("accountId") !== state.accountId) {
       return c.json(fail(7003, "Could not route to account"), 404);
     }
+    const forbidden = requireScope("workers-routes");
+    if (forbidden) return c.json(forbidden, 403);
     const hostname = c.req.query("hostname");
     const matching = state.workerDomains.filter(
       (domain) => hostname === undefined || domain.hostname === hostname,
