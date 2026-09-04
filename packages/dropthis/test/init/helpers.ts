@@ -52,12 +52,11 @@ export function stubDeploy(cf: Fake, teardown: Array<() => Promise<void>>) {
  * Everything `doctor` proves, minus the one check that measures the machine
  * running the test.
  *
- * `pbkdf2_benchmark` times a real PBKDF2 derive against an 8 ms budget chosen
+ * `pbkdf2_benchmark` times real PBKDF2 derives against an 8 ms budget chosen
  * for a Cloudflare Worker. Inside a Node test process on a loaded laptop the
  * same 25,000 iterations cost 10–16 ms, so a green suite would depend on how
- * busy the machine is. (On a real deployed Worker it reports 0 ms, because
- * Workers clamp `Date.now()` inside a request — the check is unreliable in
- * both directions; that is issue #6's check, not this slice's.)
+ * busy the machine is. (On a deployed Worker the measurement is I/O-bracketed
+ * and honest since issue #16; here it is still this laptop's speed.)
  *
  * So: every OTHER check must pass, and `ok` must be true whenever the
  * benchmark also passed.

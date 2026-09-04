@@ -163,6 +163,60 @@ export function devRoutes(hooks: DevHooks) {
   });
 
   /**
+   * Which awaited call, if any, makes a Worker's frozen clock account for CPU
+   * time spent inside the request (issue #16).
+   *
+   * The shape is one bracket: read `Date.now()`, do `derives` PBKDF2 derives,
+   * await `io`, read the clock again — measured first with no derives, so the
+   * I/O's own cost is subtracted. Seam 1 pins the answer
+   * (`contract-tests/worker-clock.test.ts`): none of them does.
+   *
+   *   head | get | list   an R2 binding call (internal subrequest)
+   *   timer               setTimeout(0)
+   *   fetch               a real external request
+   *   none                no wait at all
+   */
+  dev.get("/bench/bracket", async (c) => {
+    const derives = Number(c.req.query("derives") ?? "8");
+    const iterations = Number(c.req.query("iterations") ?? "25000");
+    const mode = c.req.query("io") ?? "head";
+    const bucket = c.env.BUCKET;
+    const io = async () => {
+      if (mode === "get") await bucket.get("system/config.json");
+      else if (mode === "list") await bucket.list({ prefix: "system/", limit: 1 });
+      else if (mode === "timer") await new Promise((resolve) => setTimeout(resolve, 0));
+      else if (mode === "fetch") await fetch("https://cloudflare.com/cdn-cgi/trace", { cache: "no-store" });
+      else if (mode === "none") return;
+      else await bucket.head("system/config.json");
+    };
+
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode("a-password-of-realistic-length"),
+      "PBKDF2",
+      false,
+      ["deriveBits"],
+    );
+
+    // The prime: every clock read has to follow an await, or it carries
+    // however much CPU ran since the last one.
+    await io();
+    const b0 = Date.now();
+    await io();
+    const baseline_ms = Date.now() - b0;
+
+    const s0 = Date.now();
+    for (let i = 0; i < derives; i += 1) {
+      await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
+    }
+    await io();
+    const bracket_ms = Date.now() - s0;
+
+    return c.json({ derives, iterations, io: mode, baseline_ms, bracket_ms });
+  });
+
+  /**
    * A calibrated CPU load: `rounds` SHA-256 digests over 1 KB. The plan's CPU
    * ceiling is found by raising `rounds` until the isolate is killed (the edge
    * answers 1102) — `Date.now()` inside a Worker only advances on I/O, so the

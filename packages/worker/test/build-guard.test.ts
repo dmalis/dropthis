@@ -42,6 +42,7 @@ describe("production bundle", () => {
 
     expect(bundle).not.toContain("/_dev");
     expect(bundle).not.toContain("/bench/pbkdf2");
+    expect(bundle).not.toContain("/bench/bracket");
     expect(bundle).not.toContain("DEV_ROUTES");
     expect(bundle).not.toContain("r2/burst");
 

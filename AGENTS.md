@@ -277,9 +277,15 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   response — the agent's default, the skill says so. A chosen password needs ≥ 8 characters.
   Stored as PBKDF2-SHA256 at policy `pbkdf2_iterations` (**25,000 by default, measured**:
   6.1 ms per derive on Free, the highest count inside the 8 ms unlock budget — 50,000 costs
-  12.5 ms and workerd refuses 200,000 outright; `doctor`'s `pbkdf2_benchmark` re-measures
-  the deployed instance and the operator raises it with `config set`). Unlock = an HMAC
-  cookie signed over `{slug, nonce, expires_at}`: host-only, `Secure`, `HttpOnly`,
+  12.5 ms and workerd refuses 200,000 outright; `doctor`'s `pbkdf2_benchmark` times 8 derives
+  inside a bracket closed by an R2 read, minus the same bracket with no derives, best of two —
+  and on Cloudflare it answers `inconclusive`, because a Worker's clock advances by what its
+  I/O cost and NEVER by the CPU burned before it, so a derive cannot be timed from inside the
+  request that runs it (#16, pinned by `contract-tests/worker-clock.test.ts`). Only a
+  subrequest that spends the CPU in ANOTHER request makes it visible; whether `doctor` should
+  pay a network round trip for that is open. Until then the reference measurement, not the
+  instance, is what an operator raises `pbkdf2_iterations` against). Unlock = an HMAC cookie
+  signed over `{slug, nonce, expires_at}`: host-only, `Secure`, `HttpOnly`,
   `SameSite=Lax`, `Path=/<slug>/`. `nonce` rotates only when effective access changes (new, generated or removed password;
   re-sending the current password is a no-op), so a real change invalidates every cookie. No attempt rate limiting in v1; `SECURITY.md`
   says so plainly. `password: null` removes it.
@@ -450,7 +456,8 @@ structured `connect` object (per-client MCP snippets and a ready-to-send message
 onboarding a person is one call. `doctor` is a named check registry (#29), instance key only:
 `hello_drop`, `mcp_initialize`, `policy_readable`, `cron_state`, `canonical_origin`,
 `pbkdf2_benchmark`, `admin_rotation_clean`; `doctor --list --json` lists ids, `doctor
---json` returns `{ok, checks: [{id, status, evidence, remediation}]}`. Account-level checks
+--json` returns `{ok, checks: [{id, status: pass|fail|skip|inconclusive, evidence,
+remediation}]}` (`inconclusive` never makes `ok` false). Account-level checks
 (`lifecycle_rules`, `kv_bound`, `domain_attached`) belong to `init --check`, which needs the
 Cloudflare token. `host_*` comes after v1.
 

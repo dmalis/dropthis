@@ -42,7 +42,12 @@ export const CHECK_IDS = [
 ] as const;
 
 export type CheckId = (typeof CHECK_IDS)[number];
-export type CheckStatus = "pass" | "fail" | "skip";
+/**
+ * `inconclusive` is not `fail`: a check that could not measure has found no
+ * fault, so it must not turn a healthy report red — but it must not report a
+ * number either. Only `pbkdf2_benchmark` uses it (issue #16).
+ */
+export type CheckStatus = "pass" | "fail" | "skip" | "inconclusive";
 
 export type CheckResult = {
   id: CheckId;
@@ -61,7 +66,7 @@ export const CHECK_DESCRIPTIONS: Record<CheckId, string> = {
   policy_readable: "Read system/config.json and confirm it parses into a policy.",
   cron_state: "Read the cron's checkpoint and confirm it is not stranded.",
   canonical_origin: "Confirm the instance knows the origin its URLs are built from.",
-  pbkdf2_benchmark: "Time one PBKDF2 derive at this instance's iteration count.",
+  pbkdf2_benchmark: "Time this instance's PBKDF2 iteration count against the unlock budget.",
   admin_rotation_clean: "Confirm no admin key rotation is half finished.",
 };
 
@@ -92,12 +97,84 @@ export const UNLOCK_BUDGET_MS = 8;
 export const CRON_LAG_DAYS = 2;
 
 /**
- * Derives to time before judging. The cost of a derive is what the check is
- * about; a single sample also measures whatever else the machine was doing at
- * that moment, so the report is the FASTEST of a few — the honest floor of
- * what an unlock will cost.
+ * How the benchmark measures, and why it is not a stopwatch around one derive
+ * (issue #16).
+ *
+ * A Worker freezes `Date.now()` inside a request: CPU work advances nothing,
+ * and the clock catches up only at an I/O boundary. Timing one derive on a
+ * deployed instance therefore reported 0 ms — the check measured nothing on
+ * the one target it exists for.
+ *
+ * So each sample is a BRACKET: read the clock, run `BENCHMARK_DERIVES` derives,
+ * await a real binding call, read the clock again. The bracket costs the
+ * derives plus one I/O, so the same bracket with no derives is subtracted as a
+ * baseline. Both are the fastest of a few rounds — the honest floor of what an
+ * unlock costs, and the one that cannot be inflated by a slow round.
+ *
+ * Every clock read follows an I/O, priming round included: a `now()` taken
+ * after CPU work carries however much of it ran since the last boundary.
  */
-const BENCHMARK_ROUNDS = 3;
+export const BENCHMARK_DERIVES = 8;
+export const BENCHMARK_BASELINE_ROUNDS = 3;
+export const BENCHMARK_SIGNAL_ROUNDS = 2;
+
+/**
+ * The runtime the benchmark measures, injected so the frozen-clock case is
+ * provable in Node — where the clock runs free and the old check looked fine.
+ */
+export type BenchmarkProbe = {
+  /** Milliseconds. On a Worker this only moves at an I/O boundary. */
+  now(): number;
+  /** One PBKDF2 derive at this instance's iteration count. */
+  derive(): Promise<void>;
+  /** A real binding call: the only thing that lets the clock catch up. */
+  io(): Promise<void>;
+};
+
+export type Pbkdf2Measurement = {
+  /** `null` when the I/O noise was too large to call the result a measurement. */
+  perDeriveMs: number | null;
+  /** The fastest zero-derive bracket: what one I/O costs on its own. */
+  baselineMs: number;
+  /** The fastest bracket that ran the derives. */
+  bracketMs: number;
+  /** Derives inside one bracket. */
+  derives: number;
+};
+
+export async function measurePbkdf2(
+  probe: BenchmarkProbe,
+  derives: number = BENCHMARK_DERIVES,
+): Promise<Pbkdf2Measurement> {
+  // Prime: the first bracket must start at an I/O boundary like every other.
+  await probe.io();
+
+  let baselineMs = Number.POSITIVE_INFINITY;
+  for (let round = 0; round < BENCHMARK_BASELINE_ROUNDS; round += 1) {
+    const started = probe.now();
+    await probe.io();
+    baselineMs = Math.min(baselineMs, probe.now() - started);
+  }
+
+  let bracketMs = Number.POSITIVE_INFINITY;
+  for (let round = 0; round < BENCHMARK_SIGNAL_ROUNDS; round += 1) {
+    const started = probe.now();
+    for (let derive = 0; derive < derives; derive += 1) await probe.derive();
+    await probe.io();
+    bracketMs = Math.min(bracketMs, probe.now() - started);
+  }
+
+  const signalMs = bracketMs - baselineMs;
+  // Half the signal is the line: below it the subtraction is a correction,
+  // above it the number would be mostly whatever the instance was doing.
+  const trustworthy = signalMs > 0 && baselineMs < signalMs / 2;
+  return {
+    perDeriveMs: trustworthy ? signalMs / derives : null,
+    baselineMs,
+    bracketMs,
+    derives,
+  };
+}
 
 export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
   // One read of the stored config, shared by the two checks that judge it.
@@ -408,26 +485,56 @@ async function pbkdf2Benchmark(ctx: DoctorContext): Promise<CheckResult> {
     ["deriveBits"],
   );
 
-  let elapsed = Number.POSITIVE_INFINITY;
-  for (let round = 0; round < BENCHMARK_ROUNDS; round += 1) {
-    const started = Date.now();
-    await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
-    elapsed = Math.min(elapsed, Date.now() - started);
+  const measured = await measurePbkdf2({
+    now: () => Date.now(),
+    derive: async () => {
+      await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
+    },
+    // A cheap read of a key the instance already has: a real R2 round trip,
+    // which is what makes the clock catch up.
+    io: async () => {
+      await ctx.bucket.head(CONFIG_KEY);
+    },
+  });
+
+  const method =
+    `${measured.derives} derives per bracket, best of ${BENCHMARK_SIGNAL_ROUNDS}, ` +
+    `each bracket closed by an R2 read and minus a ${round1(measured.baselineMs)} ms baseline`;
+
+  if (measured.perDeriveMs === null) {
+    return {
+      id: "pbkdf2_benchmark",
+      status: "inconclusive",
+      evidence:
+        `${iterations} iterations: a ${round1(measured.baselineMs)} ms baseline against a ` +
+        `${round1(measured.bracketMs)} ms bracket left no signal to divide (${method}). On ` +
+        `Cloudflare this is the expected answer: the clock does not account for CPU time, so a ` +
+        `derive cannot be timed from inside the request that runs it.`,
+      remediation:
+        "Judge pbkdf2_iterations against the measured reference instead: 6.1 ms per derive at " +
+        "25,000 on the Free plan (docs/research/2026-09-03-free-plan-measurements.md).",
+    };
   }
 
-  if (elapsed > UNLOCK_BUDGET_MS) {
+  const perDerive = round1(measured.perDeriveMs);
+  if (perDerive > UNLOCK_BUDGET_MS) {
     return {
       id: "pbkdf2_benchmark",
       status: "fail",
-      evidence: `${iterations} iterations cost ${elapsed} ms, over the ${UNLOCK_BUDGET_MS} ms unlock budget.`,
+      evidence: `${iterations} iterations cost ${perDerive} ms per derive, over the ${UNLOCK_BUDGET_MS} ms unlock budget (${method}).`,
       remediation: "Lower pbkdf2_iterations with `config set` until a derive fits the budget.",
     };
   }
   return {
     id: "pbkdf2_benchmark",
     status: "pass",
-    evidence: `${iterations} iterations cost ${elapsed} ms, inside the ${UNLOCK_BUDGET_MS} ms unlock budget.`,
+    evidence: `${iterations} iterations cost ${perDerive} ms per derive, inside the ${UNLOCK_BUDGET_MS} ms unlock budget (${method}).`,
   };
+}
+
+/** One decimal: a derive is milliseconds, and the tenth is the part that moves. */
+function round1(value: number): number {
+  return Number.isFinite(value) ? Math.round(value * 10) / 10 : 0;
 }
 
 /**
