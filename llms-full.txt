@@ -1,0 +1,37 @@
+# dropthis — long-form overview for agents
+
+This file is the companion to llms.txt (https://raw.githubusercontent.com/dmalis/dropthis/main/llms.txt). It describes every surface of dropthis in prose so an agent can decide what to read next. It is not a copy of the documentation: the instance skill at `<canonical_url>/_skill.md` is the operating manual, AGENTS.md is the product truth, and this file only points.
+
+## What dropthis is
+
+dropthis turns content an agent produced — HTML, a folder, a PDF, a spreadsheet — into a permanent URL on Cloudflare the user owns. It is one Worker and one R2 bucket inside the user's own account, plus one KV namespace for OAuth sessions. There is no dashboard, no server and no third party: the agent calls dropthis, and the human sees what the agent relays — a URL, a password, a ready-to-send message. A drop is a set of files served at `https://<host>/<slug>/`; the slug is generated (10 characters of `a-z0-9`) or chosen (`slug`, 3-40 characters of `a-z0-9-`) and never changes. Every drop carries three policies: `password` (`"generate"` returns a 16-character password once; a chosen one needs 8 or more characters), `expires` (`"7d"`, a date, an RFC 3339 instant or `"never"`, within the instance's policy; 30 days by default) and `noindex` (on by default). An expired drop answers 410 for 7 days of grace and can be revived with one `update`; after that it is deleted by the hourly cron.
+
+## Operating an instance
+
+Read `<canonical_url>/_skill.md`. It is generated from `skills/instance-skill.md` with that instance's URL, policy and limits substituted, and it lists every tool with its full description. The five drop operations are `publish`, `update`, `get`, `list` and `delete`; two more, `upload` and `commit`, split `publish` so bytes too big for one call travel by `curl -T` to a signed URL. Files travel as `{path, text}`, `{path, base64}`, `{path, url}` (the instance fetches a public http(s) address — no tokens spent) or, on `update`, `{path, sha256}` to keep a file the drop already holds. A single call stays under the instance's `max_request_bytes` (4 MiB by default). `get` with `files: true` returns text content inline so an agent can read, change and write back with no local state. `update` replaces the whole file set, merges `meta` at the top level, and is a no-op when the resulting state is the same. `idempotency_key` on `publish` and `update` makes a retry return the same result instead of acting twice.
+
+## Surfaces
+
+MCP over Streamable HTTP at `<canonical_url>/_api/mcp`: bearer key from anything that sends headers (Claude Code, Cursor, Codex, scripts), or OAuth for claude.ai and the Claude desktop app, where the authorize page is one field — paste your dropthis key. Tool names carry the `dropthis_` prefix. The tool list is filtered by scope: a user key sees the seven drop tools, the admin key also sees `dropthis_user_*`, `dropthis_config_*`, `dropthis_usage`, `dropthis_prune`, `dropthis_doctor` and `dropthis_doctor_checks`.
+
+REST under `<canonical_url>/_api/v1` with `Authorization: Bearer <key>`: the same operations, the same `Drop` shape, the same error object `{code, message, remediation, retryable}` under `{error: {…}}`.
+
+CLI: one binary, `dropthis`, installed from the repository (`npm install -g ./packages/dropthis` after `npm run build`). Bare verbs for the hot path (`publish`, `update`, `get`, `list`, `delete`, `doctor`, `connect`, `init`) and `noun verb` for administration (`user add`, `config set`, `usage`, `prune`). `--json` prints exactly one JSON document; on `publish` and `update` plain stdout is the URL; errors are the frozen object on stderr; exit codes `0` ok, `1` failure, `2` cancelled, `4` auth required. It never prompts when stdin is not a terminal. A chosen password comes through `--password-stdin`, never a flag. `dropthis commands --json` lists the whole surface, generated from the same registry as the REST routes and the MCP tools.
+
+Credentials: `CLOUDFLARE_API_TOKEN` (+ `CLOUDFLARE_ACCOUNT_ID`) for `init` only; `DROPTHIS_URL` + `DROPTHIS_KEY` for everything else, or `--instance <name>` read from `~/.config/dropthis/instances.json`, which `init` writes. The env pair beats the file.
+
+## Installing
+
+The install skill (https://raw.githubusercontent.com/dmalis/dropthis/main/skills/dropthis-install/SKILL.md) is the end-to-end procedure for an agent: clone, `npm install && npm run build`, `npx ./packages/dropthis init [--domain <host>] --json`, `npm install -g ./packages/dropthis`, `dropthis connect --client <claude-code|cursor|codex|claude-ai>`, `dropthis doctor --json`. `init` verifies the credential, pins the account, creates or repairs the bucket and KV namespace by name, mints the admin key and writes its record into the bucket before the first deploy, deploys the Worker with its secret, attaches the domain, runs `doctor` with a real hello drop, and saves the instance. Rerunning repairs and never re-reveals a secret. A human at a terminal with no token gets the browser login instead; automation sets the token. The human's part is a Cloudflare account, R2 enabled, and one of those two credentials.
+
+## Teams, clients, policy
+
+An instance is a team: every user key sees and edits every drop, `created_by` records who made it, and `user remove` ends access immediately. A client gets their own instance (`init --name <name>`), with its own Worker, bucket and keys. Instance policy in `system/config.json` has defaults (filled in when the caller says nothing) and rules (enforced regardless): expiry default and maximum, whether `"never"` is allowed, whether a password is required, `noindex` forced or not, `max_file_bytes`, `max_request_bytes`. `config set` changes what future calls resolve to and never rewrites an existing drop.
+
+## Cost
+
+A personal instance runs on Cloudflare's Free plan (100,000 Worker requests a day; 10 GB-month of R2 storage, 1 million writes and 10 million reads a month, egress free; 5 cron triggers per account, so 5 instances). Workers Paid is $5 a month per account for more. The README's cost section carries the citations with the date they were read and a table against Tiiny.host, Netlify, Vercel, S3 + CloudFront and Google Drive.
+
+## Where the truth lives
+
+AGENTS.md (https://raw.githubusercontent.com/dmalis/dropthis/main/AGENTS.md) is the product truth and beats every other document on conflict. docs/decisions.md records every choice with a date and a reason. docs/research/ holds the dated evidence. SECURITY.md says what dropthis does not protect against: a drop is arbitrary HTML on a shared origin, so serve drops from a dedicated domain.

@@ -1199,3 +1199,21 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     loopback, link-local, carrier-NAT, reserved or non-unicast IPv4 or IPv6 literal" is
     enumerated in one place. Scheme and port stay per caller — the OAuth fetch is https/443
     only, a `url` entry is http(s) on 80 or 443.
+
+101. **`llms.txt` and the install skill: a kept-open door, opened because the owner asked (issue
+    #27, 2026-09-04).** AGENTS.md lists `llms.txt` under "Kept open, deliberately empty"; the
+    owner asked for the repo's public face to be agent-first, so it now exists at the repo root
+    in the llmstxt.org shape (H1, blockquote summary, H2 link sections, `## Optional`), with a
+    short prose companion `llms-full.txt` in the shape resend.com uses (not a docs dump — the
+    spec does not define the file). Both point at an instance's `/_skill.md` for operating,
+    AGENTS.md for the truth, `SECURITY.md`, `docs/decisions.md` and `docs/research/`; they never
+    restate a limit, so a policy change cannot make them lie. The agent-facing install
+    procedure is `skills/dropthis-install/SKILL.md`, laid out as the Agent Skills standard
+    (agentskills.io) requires — `skills/<name>/SKILL.md`, `name` equal to the directory — so
+    `npx skills add dmalis/dropthis` finds it; `skills/instance-skill.md` stays flat because it
+    is a bundled text module served as `/_skill.md`, not an installable skill, and the install
+    skill links it rather than duplicating it. The README gained a section written for humans
+    with exactly two paths, a paste-ready prompt naming the install skill's raw URL and the
+    terminal steps, plus a cost table with each Cloudflare and competitor price cited and dated
+    the day it was read. Everything in these files was run as written against a dev instance;
+    `init` on the real account is #98's record and is quoted, not rerun.
