@@ -230,6 +230,29 @@ describe("the weekly reconcile", () => {
     expect(await devKeys(orphans[0]!)).toEqual([]);
   });
 
+  /**
+   * Decision #100a: `list` verifies no row against the truth, so an orphan row
+   * is the reconcile's alone. This is the test that makes that safe to say.
+   */
+  it("removes a listing row whose drop is gone", async () => {
+    const drop = await dropAt(T0, "300d");
+    const slug = drop.slug as string;
+    expect((await devKeys("list/")).filter((key) => key.endsWith(`-${slug}`))).toHaveLength(1);
+
+    // Manufacture the orphan: the record only, leaving every pointer behind.
+    const pointer = await apiJson("/_dev/r2/get", "POST", { key: `slugs/${slug}` });
+    const id = ((await pointer.json()) as { body: string }).body.trim();
+    await apiJson("/_dev/r2/delete", "POST", { keys: [`drops/${id}/meta.json`] });
+
+    for (let run = 0; run < 40; run += 1) {
+      const report = await cron(T0 + 30 * DAY, { budget: 45, force: "reconcile" });
+      if (report.state.reconcile_cursor === null) break;
+    }
+
+    expect((await devKeys("list/")).filter((key) => key.endsWith(`-${slug}`))).toEqual([]);
+    expect(await devKeys(`slugs/${slug}`)).toEqual([]);
+  });
+
   it("rewrites a listing entry that went missing", async () => {
     const drop = await dropAt(T0, "300d");
     const slug = drop.slug as string;

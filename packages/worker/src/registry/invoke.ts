@@ -68,9 +68,15 @@ export function requireSecret(env: Env): string {
 
 /**
  * The body, refused before it is parsed when it is over the instance's
- * `max_request_bytes`. The declared length is checked first so an oversized
- * call costs nothing; the read is then bounded anyway, because a client may
- * lie or stream without a length.
+ * `max_request_bytes` (AGENTS.md: "the single-call ceiling is policy
+ * `max_request_bytes`").
+ *
+ * The declared length is checked first, so an oversized call that announces
+ * itself costs nothing. A client that streams announces nothing, so the read
+ * itself is bounded: chunks are counted in BYTES — the unit the policy is
+ * written in, and the unit `String.length` is not — and the stream is dropped
+ * the moment the count passes the cap rather than buffered to the end
+ * (issue #24, finding 15).
  */
 export async function readJsonBody(request: Request, maxBytes: number): Promise<unknown> {
   const declared = Number(request.headers.get("content-length") ?? "");
@@ -81,17 +87,41 @@ export async function readJsonBody(request: Request, maxBytes: number): Promise<
     );
   }
 
-  const text = await request.text();
-  if (text.length > maxBytes) {
-    throw new ApiError(
-      "PAYLOAD_TOO_LARGE",
-      `The request body is ${text.length} bytes; this instance accepts ${maxBytes}.`,
-    );
-  }
+  const text = await readCappedText(request, maxBytes);
   if (text.trim().length === 0) return undefined;
   try {
     return JSON.parse(text) as unknown;
   } catch {
     throw new ApiError("INVALID_INPUT", "The request body is not valid JSON.");
   }
+}
+
+/** The body as text, or `PAYLOAD_TOO_LARGE` at the byte the cap is passed. */
+async function readCappedText(request: Request, maxBytes: number): Promise<string> {
+  const body = request.body;
+  if (body === null) return "";
+
+  const decoder = new TextDecoder();
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  let total = 0;
+  let text = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new ApiError(
+          "PAYLOAD_TOO_LARGE",
+          `The request body is over ${maxBytes} bytes, which is all this instance accepts.`,
+        );
+      }
+      // `stream: true` so a character split across two chunks survives.
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    // Whether we finished or refused, nothing else reads this body.
+    await reader.cancel().catch(() => {});
+  }
+  return text + decoder.decode();
 }

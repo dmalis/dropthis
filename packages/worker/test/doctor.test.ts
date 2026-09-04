@@ -125,8 +125,15 @@ describe("doctor", () => {
    * instance, and the reason the check exists.
    */
   describe("cron_state", () => {
-    it("passes on an instance whose cron has not run yet", async () => {
-      expect(checkOf(await run(), "cron_state").status).toBe("pass");
+    /**
+     * Decision #29e: "a doctor check whose subject does not exist is `skip`".
+     * A checkpoint that has never been written is a subject that is not there;
+     * calling that `pass` claimed a cron had proved itself (issue #24, f23).
+     */
+    it("skips on an instance whose cron has not run yet", async () => {
+      const check = checkOf(await run(), "cron_state");
+      expect(check.status).toBe("skip");
+      expect(check.evidence).toContain("has not run yet");
     });
 
     it("passes when the checkpoint is up to date", async () => {

@@ -12,8 +12,9 @@
  *   2  `keys/<id>.json`   the record.
  *   3  `users/<label>`    the claim, freeing the label for a new person.
  *
- * Every step tolerates a missing key, so a rerun finishes what a crash left.
- * The label is normalized the same way `user add` normalized it: "Anna Maria"
+ * Every step tolerates a missing key, so a rerun finishes what a crash left —
+ * and a rerun of a removal that is already complete is a 204, not a 404. The
+ * label is normalized the same way `user add` normalized it: "Anna Maria"
  * removes the person added as "anna-maria".
  */
 import { parseKeyRecord } from "../auth/caller.js";
@@ -48,12 +49,11 @@ export async function removeUser(rawLabel: string, bucket: Bucket): Promise<void
     id === null ? null : await bucket.get(keyRecordKey(id)).then((object) => object?.text() ?? null);
   const parsed = record === null ? null : parseKeyRecord(record);
 
-  // Nothing at all: not an error to repeat, but an error to invent. A label
-  // with no claim and no record was never a person here.
-  if (pointer === null && parsed === null) {
-    throw new ApiError("NOT_FOUND", `No user labelled ${label} on this instance.`);
-  }
-
+  // Nothing at all is SUCCESS, not a 404: a removal that already happened has
+  // nothing left to finish, and after the fact "already removed" and "never
+  // existed" are the same bucket state. DELETE is idempotent everywhere else in
+  // this product, and the tool text has always promised it here (issue #24,
+  // finding 16).
   if (parsed !== null) await bucket.delete(keyHashKey(parsed.hash));
   if (id !== null) await bucket.delete(keyRecordKey(id));
   await bucket.delete(userKey(label));

@@ -528,6 +528,37 @@ describe("POST /uploads/:id/commit", () => {
   });
 
   /**
+   * Issue #24, finding 11: "the staged commit runs steps (4)-(7) of the write
+   * order". A retry that finds `meta.json` ALREADY flipped by its own first
+   * attempt still owes step (7) — the blobs the new manifest no longer names —
+   * and step (5)'s marker move. Both need the base generation, so the commit
+   * claim carries it.
+   */
+  it("deletes the base generation's orphaned blobs when the retry finds the flip done", async () => {
+    const before = [await file("index.html", "<p>v1</p>"), await file("keep.txt", "keep")];
+    const first = await openSession(before);
+    await uploadAll(first, before);
+    const v1 = (await (await commit(first.upload_id, { title: "V1", expires: "30d" })).json()) as Json;
+
+    const after = [await file("index.html", "<p>v2</p>"), before[1]!];
+    const second = await openSession(after, { target: v1.slug as string });
+    await uploadAll(second, after);
+
+    // Abort right after the flip: `meta.json` is v2, nothing after it ran.
+    const aborted = await commit(second.upload_id, { expires: "90d" }, { headers: { "DEV-Fault": "meta" } });
+    expect(aborted.status).toBe(500);
+
+    const retried = await commit(second.upload_id, { expires: "90d" });
+    expect(retried.status, await retried.clone().text()).toBe(200);
+
+    expect(bucket.keys(`drops/${first.drop_id}/blobs/`).sort()).toEqual(
+      after.map((f) => `drops/${first.drop_id}/blobs/${f.sha256}`).sort(),
+    );
+    // And the marker moved with the expiry rather than leaving two behind.
+    expect(bucket.keys("expiring/")).toHaveLength(1);
+  });
+
+  /**
    * The keep kind on the staged path (#95): a manifest entry with no `size` is
    * "keep what the target already holds under this digest". It is the same
    * `{path, sha256}` an inline `update` takes, so an agent — and the CLI —

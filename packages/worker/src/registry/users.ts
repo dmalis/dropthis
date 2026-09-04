@@ -13,6 +13,7 @@ import type { UserAddInput } from "../operations/user-add.js";
 import { removeUser } from "../operations/user-remove.js";
 import { KEYS_PREFIX } from "../storage/keys.js";
 import { IDEMPOTENCY_DESCRIPTION } from "./fields.js";
+import { count } from "./result-line.js";
 import type { Operation } from "./types.js";
 
 export type UserSummary = {
@@ -77,6 +78,7 @@ export const userList: Operation<z.infer<typeof listSchema>> = {
   path: "/users",
   scope: "admin",
   summary: "List every key of this instance: id, label, scope and creation date.",
+  resultLine: (_input, value) => count((value as { users: unknown[] }).users.length, "key"),
   schema: listSchema,
   handler: async (_input, ctx) => ({ value: { users: await listUsers(ctx.bucket) } }),
 };
@@ -87,6 +89,8 @@ export const userAdd: Operation<UserAddInput> = {
   path: "/users",
   scope: "admin",
   summary: "Add a person: mint their key once and return how to connect them.",
+  resultLine: (_input, value) =>
+    `Added ${(value as { user: { label: string } }).user.label}; the key is in this response once.`,
   schema: addSchema,
   status: 201,
   handler: async (input, ctx) => ({
@@ -107,6 +111,7 @@ export const userRemove: Operation<z.infer<typeof removeSchema>> = {
   path: "/users/:label",
   scope: "admin",
   summary: "Remove a person: their key stops working immediately.",
+  resultLine: (input) => `Removed ${String(input.label)}; their key no longer works.`,
   schema: removeSchema,
   params: ["label"],
   status: 204,

@@ -78,6 +78,27 @@ export async function repairListEntry(bucket: Bucket, meta: DropMeta): Promise<v
   await putListEntry(bucket, meta);
 }
 
+/**
+ * Both projections of a drop a read path just loaded — "`list/` and `expiring/`
+ * … a missing or stale entry is repaired by the next `get`/`update`"
+ * (AGENTS.md, "Key layout").
+ *
+ * A MISSING marker is the only kind a reader can repair: a stale one sits at a
+ * date only the drop's PREVIOUS `expires_at` names, and a read has no way to
+ * compute that key. Moving it is `update`'s job, which knows both values
+ * (`writeProjections`), and the reconcile's.
+ *
+ * Cost: two `head`s, and a write only when something is actually wrong.
+ */
+export async function repairProjections(bucket: Bucket, meta: DropMeta): Promise<void> {
+  await repairListEntry(bucket, meta);
+
+  const marker = expiringKeyOf(meta);
+  if (marker === null) return;
+  if ((await bucket.head(marker)) !== null) return;
+  await bucket.put(marker, "");
+}
+
 /** Both pointers of a drop that is going away. Deletes tolerate a missing key. */
 export async function deleteProjections(bucket: Bucket, meta: DropMeta): Promise<void> {
   await bucket.delete(listKeyOf(meta));

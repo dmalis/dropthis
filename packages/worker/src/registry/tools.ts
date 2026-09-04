@@ -166,9 +166,13 @@ export const TOOL_TEXT: Record<string, ToolText> = {
       "anything past this instance's max_request_bytes. Use it only when your environment can run " +
       "curl and reach the internet; when it cannot, send {path, url} to dropthis_publish for " +
       "anything already on the web, or shrink the file. " +
-      "Send manifest: every file as {path, size, sha256}, the digest in lowercase hex. Back come " +
+      "Send manifest: one entry per file, the digest in lowercase hex, in one of three shapes — " +
+      "{path, size, sha256} for a file you will PUT; {path, sha256} with NO size to keep a file " +
+      "the target drop already holds under that digest (an update only); {path, size, sha256, " +
+      "url} for a file already on the web, which this instance fetches at commit. Back come " +
       "upload_id, the slug the drop will have, missing (the digests this instance does not hold " +
-      "yet) and put_urls, one absolute URL per missing digest. " +
+      "yet and you must PUT — never a keep, never a url entry) and put_urls, one absolute URL " +
+      "per missing digest. " +
       "STEP TWO IS YOURS: for each digest in missing run curl -sS -T <file> '<put_url>'. The URL " +
       "is the whole credential — send NO Authorization header — it fits one file and lasts one " +
       "hour. Step three is dropthis_commit with the upload_id: NOTHING IS PUBLISHED and the URL " +
@@ -303,8 +307,10 @@ export const TOOL_TEXT: Record<string, ToolText> = {
       "Admin key only. Runs every instance check — publishes, reads back and deletes a real " +
       "hello drop, initializes the MCP endpoint against itself, reads the policy, the cron " +
       "checkpoint and the canonical origin, times a PBKDF2 derive and confirms no admin " +
-      "rotation is half finished — and returns {ok, checks: [{id, status: pass | fail | skip, " +
-      "evidence, remediation}]}. Leaves the instance as it found it. To see what the checks " +
+      "rotation is half finished — and returns {ok, checks: [{id, status: pass | fail | skip | " +
+      "inconclusive, evidence, remediation}]}. skip means the check had nothing to look at and " +
+      "inconclusive means it could not measure; neither makes ok false, only fail does. " +
+      "Leaves the instance as it found it. To see what the checks " +
       "are without running them use dropthis_doctor_checks.",
     annotations: { title: "Check the instance", ...hints(false, false, true, false) },
   },

@@ -275,11 +275,21 @@ describe("user remove", () => {
     });
   });
 
-  it("answers NOT_FOUND for a label nobody holds", async () => {
-    expect(await errorOf(await call("/_api/v1/users/nobody", { method: "DELETE" }))).toEqual({
-      status: 404,
-      code: "NOT_FOUND",
-    });
+  /**
+   * Issue #24, finding 16. The tool text has always said "succeeds when the
+   * label is already gone, so a retry is safe", and DELETE is idempotent
+   * everywhere else in this product — a drop `delete` answers 204 whether or
+   * not the drop was there. A completed removal has nothing left to finish, so
+   * a rerun that answered 404 told an agent its own success had failed.
+   */
+  it("succeeds for a label nobody holds, so a retry is safe", async () => {
+    expect((await call("/_api/v1/users/nobody", { method: "DELETE" })).status).toBe(204);
+  });
+
+  it("succeeds when the same removal is sent twice", async () => {
+    await addOk({ label: "bea" });
+    expect((await call("/_api/v1/users/bea", { method: "DELETE" })).status).toBe(204);
+    expect((await call("/_api/v1/users/bea", { method: "DELETE" })).status).toBe(204);
   });
 
   it("finishes an interrupted removal on the rerun", async () => {
