@@ -283,8 +283,11 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   const workersDevUrl = `https://${worker}.${subdomain}.workers.dev`;
   // With a domain the drop URLs are the domain's, and workers.dev stays an
   // alias so a request that arrives there redirects instead of 404ing.
-  const canonicalUrl = options.domain === undefined ? workersDevUrl : `https://${options.domain}`;
-  const aliasOrigins = options.domain === undefined ? [] : [workersDevUrl];
+  // Not const: a failed attach puts these back to workers.dev, and everything
+  // downstream — the health probe, `instances.json`, the returned result —
+  // must name the origin the instance actually answers on.
+  let canonicalUrl = options.domain === undefined ? workersDevUrl : `https://${options.domain}`;
+  let aliasOrigins = options.domain === undefined ? [] : [workersDevUrl];
 
   await writeInstanceConfig(client, accountId, bucket, { instanceName, canonicalUrl, aliasOrigins });
   push({ id: "config", status: "ok" });
@@ -316,18 +319,21 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
       push({ id: "domain", status: attached.created ? "created" : "ok", detail: options.domain });
     } else {
       // The config already names this domain as canonical; put it back so the
-      // instance never advertises a host it does not answer on.
+      // instance never advertises a host it does not answer on — and put the
+      // run's own idea of the origin back with it.
+      canonicalUrl = workersDevUrl;
+      aliasOrigins = [];
       await writeInstanceConfig(client, accountId, bucket, {
         instanceName,
-        canonicalUrl: workersDevUrl,
-        aliasOrigins: [],
+        canonicalUrl,
+        aliasOrigins,
       });
       push({ id: "domain", status: "error", detail: `${attached.detail} ${attached.remediation}` });
       ok = false;
     }
   }
 
-  const probeUrl = (deployed ?? {}).url ?? (ok ? canonicalUrl : workersDevUrl);
+  const probeUrl = (deployed ?? {}).url ?? canonicalUrl;
   const health = await pollHealth(probeUrl, options.poll ?? {});
   push({ id: "health", status: health.ok ? "ok" : "error", detail: health.detail });
   if (!health.ok) ok = false;
@@ -384,7 +390,9 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     kvNamespace,
     canonicalUrl,
     aliasOrigins,
-    ...(options.domain === undefined ? {} : { domain: options.domain }),
+    // The domain is reported only when it is the origin this instance answers
+    // on; a failed attach leaves the field off rather than naming a dead host.
+    ...(canonicalUrl === `https://${options.domain ?? ""}` ? { domain: options.domain } : {}),
     steps,
     adminKeyStatus,
     ...(adminKey === undefined ? {} : { adminKey }),
