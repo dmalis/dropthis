@@ -15,7 +15,7 @@ import type { Bucket } from "../bindings.js";
 import { isTextTyped } from "../domain/content-type.js";
 import { dropState } from "../domain/expiry.js";
 import type { Drop, DropFile, DropMeta } from "../domain/meta.js";
-import { toDrop } from "../domain/meta.js";
+import { parseDropMeta, toDrop } from "../domain/meta.js";
 import { encodePathForUrl } from "../domain/url-path.js";
 import { ApiError } from "../errors.js";
 import type { InstanceConfig } from "../instance-config.js";
@@ -40,7 +40,11 @@ export async function loadDrop(bucket: Bucket, slug: string): Promise<LoadedDrop
 
   const record = await bucket.get(metaKey(dropId));
   if (record === null) return null;
-  return { dropId, meta: JSON.parse(await record.text()) as DropMeta, etag: record.etag };
+  // A record this Worker cannot read at all is a 404, not a 500: the pointer
+  // is dangling as far as every read path is concerned.
+  const meta = parseDropMeta(await record.text());
+  if (meta === null) return null;
+  return { dropId, meta, etag: record.etag };
 }
 
 export type GetOptions = {

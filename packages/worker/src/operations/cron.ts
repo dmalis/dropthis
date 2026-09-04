@@ -26,6 +26,7 @@ import type { Bucket } from "../bindings.js";
 import { GRACE_MS, dropState, expiringMarkerDate } from "../domain/expiry.js";
 import { listEntryMetadata } from "../domain/projections.js";
 import type { DropMeta } from "../domain/meta.js";
+import { parseDropMeta } from "../domain/meta.js";
 import {
   DROPS_PREFIX,
   EXPIRING_PREFIX,
@@ -338,11 +339,9 @@ async function sweepMarker(
   // No `meta.json`: the drop is already gone and the marker is litter.
   if (object === null) return dropMarker(bucket, markerKey, budget, report);
 
-  let meta: DropMeta;
-  try {
-    meta = JSON.parse(await object.text()) as DropMeta;
-  } catch {
-    report.errors.push(`${metaKey(dropId)} is not readable JSON; left in place.`);
+  const meta = parseDropMeta(await object.text());
+  if (meta === null) {
+    report.errors.push(`${metaKey(dropId)} is not a readable record; left in place.`);
     return true;
   }
 
@@ -577,11 +576,9 @@ async function reconcileDrop(
   const object = await bucket.get(metaKey(group.id));
   if (object === null) return true;
 
-  let meta: DropMeta;
-  try {
-    meta = JSON.parse(await object.text()) as DropMeta;
-  } catch {
-    report.errors.push(`${metaKey(group.id)} is not readable JSON; left in place.`);
+  const meta = parseDropMeta(await object.text());
+  if (meta === null) {
+    report.errors.push(`${metaKey(group.id)} is not a readable record; left in place.`);
     return true;
   }
 

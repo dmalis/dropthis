@@ -26,7 +26,7 @@ import type { Caller } from "../auth/caller.js";
 import { contentTypeForPath } from "../domain/content-type.js";
 import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
-import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
+import { canonicalJson, newDropMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { normalizeManifestPaths, PathError } from "../domain/paths.js";
 import { resolvePassword, storedPassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
@@ -764,7 +764,7 @@ async function finish(
 
 async function readMeta(bucket: Bucket, dropId: string): Promise<DropMeta | null> {
   const object = await bucket.get(metaKey(dropId));
-  return object === null ? null : (JSON.parse(await object.text()) as DropMeta);
+  return object === null ? null : parseDropMeta(await object.text());
 }
 
 async function readClaim(bucket: Bucket, uploadId: string): Promise<CommitClaim | null> {

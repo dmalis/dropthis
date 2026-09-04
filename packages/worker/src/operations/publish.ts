@@ -21,7 +21,7 @@
  */
 import type { Bucket } from "../bindings.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
-import { canonicalJson, newDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
+import { canonicalJson, newDropMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import { ExpiryError, resolveExpiry } from "../domain/expiry.js";
 import { resolvePassword } from "../domain/password.js";
 import { generateSlug } from "../domain/slug.js";
@@ -360,7 +360,8 @@ async function commitMeta(bucket: Bucket, identity: Identity, meta: DropMeta): P
 
   const existing = await bucket.get(metaKey(identity.dropId));
   if (existing !== null) {
-    const stored = JSON.parse(await existing.text()) as DropMeta;
+    const stored = parseDropMeta(await existing.text());
+    if (stored === null) throw new ApiError("UPDATE_CONFLICT", "Another write reached this drop first.");
     if ((await stateHash(stored)) === (await stateHash(meta))) return stored;
   }
   if (identity.slugClaimedHere) await bucket.delete(slugKey(identity.slug));

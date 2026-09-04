@@ -21,7 +21,7 @@
  * nothing: the same files with a different title are a different state.
  */
 import type { Bucket } from "../bindings.js";
-import { canonicalJson, mergeAgentMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
+import { canonicalJson, mergeAgentMeta, parseDropMeta, sha256Hex, stateHash, toDrop } from "../domain/meta.js";
 import type { CreatedBy, Drop, DropMeta, Manifest } from "../domain/meta.js";
 import { dropState, ExpiryError, resolveExpiry } from "../domain/expiry.js";
 import { resolvePassword, storedPassword } from "../domain/password.js";
@@ -338,7 +338,8 @@ async function commit(
 
   const existing = await bucket.get(metaKey(desired.id));
   if (existing !== null) {
-    const stored = JSON.parse(await existing.text()) as DropMeta;
+    const stored = parseDropMeta(await existing.text());
+    if (stored === null) throw new ApiError("UPDATE_CONFLICT", "Another write reached this drop first.");
     if ((await stateHash(stored)) === desiredHash) return { ours: false, meta: stored };
   }
   throw new ApiError("UPDATE_CONFLICT", "Another write reached this drop first.");
