@@ -1064,3 +1064,27 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     `pbkdf2_iterations` on the strength of it. A `pass` that carries 0 ms is now a
     contract-test failure against the deployed instance; the Node seam still measures the
     laptop and cannot pin it.
+
+99. **The installer cannot compare-and-swap, so admin rotation is ordering plus a written
+    intent (issue #23, 2026-09-04).** AGENTS.md says `--rotate-admin-key` "CAS `users/admin`".
+    It cannot: the installer runs before any Worker exists and writes through the Cloudflare
+    **R2 management API**, which has no conditional write — the SDK's `ObjectUploadParams`
+    exposes none, and a hand-rolled `If-Match` is IGNORED. Measured against real R2 on
+    2026-09-04 (account `dropthis-dev23-drops`): `PUT …/objects/probe/ifmatch.json` with
+    `If-Match: "deadbeef…"` against a live object answered `200` with a new etag and replaced
+    the body. The Worker's R2 *binding* has `onlyIf`; the management API does not, and the
+    two must never be reasoned about as one thing.
+    So the crash-safety comes from the order plus a marker written BEFORE the change it
+    describes: `users/admin` = `{id: old, pending: new}` → new record + `keyhash/` → `{id:
+    new, previous: old}` → revoke old → `{id: new}`. At every instant `users/admin` names
+    every key that can open the instance; a rerun revokes `pending` and `previous` before it
+    mints anything. The gap this closes: a crash after the new `keyhash/` and before the
+    switch left a **usable admin key nothing recorded**, which no rerun could ever find.
+    `doctor`'s `admin_rotation_clean` fails on either marker, not only on `previous`.
+    Two AGENTS.md sentences are now stale and are left for the owner, not edited here: the
+    "CAS" above, and "(its one write this run)" — rotation writes `users/admin` three times
+    in a run (it already wrote twice before this change).
+    Rejected: sending `If-Match` anyway and treating a 200 as success (it proves nothing);
+    serialising rotations through a Durable Object (two concurrent `init --rotate-admin-key`
+    runs against one instance is not a case the product needs to survive, and the operator
+    who starts them is one person at one terminal).
