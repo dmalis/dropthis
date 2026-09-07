@@ -36,11 +36,52 @@ export type RouteResult = { status: RouteStepStatus; detail: string };
 export function hostPatternMatches(pattern: string, hostname: string): boolean {
   const host = pattern.split("/")[0] ?? "";
   if (host.length === 0) return false;
-  const source = host
+  // A leading `*.` is written for subdomains, but `*` stands for any run of
+  // characters INCLUDING none — so the whole prefix is optional and
+  // `*.example.com` covers the apex too. Conservative on purpose: this asks
+  // "could this pattern match the hostname?", and a false positive costs one
+  // route that changes nothing.
+  const optionalPrefix = host.startsWith("*.");
+  const body = optionalPrefix ? host.slice(2) : host;
+  const source = body
     .split("*")
     .map((literal) => literal.replace(/[.+?^${}()|[\]\\]/g, (char) => `\\${char}`))
     .join(".*");
-  return new RegExp(`^${source}$`).test(hostname);
+  return new RegExp(`^${optionalPrefix ? "(?:.*\\.)?" : ""}${source}$`).test(hostname);
+}
+
+/**
+ * What this zone's routes mean for one hostname. The single answer both
+ * `init`'s reconcile and `init --check`'s `route_clear` read, so the two can
+ * never disagree about what counts as a shadow.
+ *
+ * - `exact` — `<hostname>/*` pointing at OUR Worker. The only route that beats
+ *   a foreign pattern by specificity, and so the only one that means "already
+ *   fixed". Our own broad or path-scoped route matches the hostname too, but
+ *   Cloudflare has no rule that makes it win over an equally broad foreign
+ *   one, so it must not suppress the fix.
+ * - `shadow` — the first foreign pattern that could match the hostname.
+ * - `conflict` — a foreign route holding `<hostname>/*` itself. Nothing can be
+ *   added over it, and foreign routes are never modified.
+ */
+export type Route = { pattern: string; script: string };
+export type RouteClassification = { exact?: Route; shadow?: Route; conflict?: Route };
+
+export function classifyRoutes(
+  routes: Route[],
+  hostname: string,
+  worker: string,
+): RouteClassification {
+  const wanted = ourPattern(hostname);
+  const matching = routes.filter((route) => hostPatternMatches(route.pattern, hostname));
+  const exact = matching.find((route) => route.pattern === wanted && route.script === worker);
+  const shadow = matching.find((route) => route.script !== worker);
+  const conflict = matching.find((route) => route.pattern === wanted && route.script !== worker);
+  return {
+    ...(exact === undefined ? {} : { exact }),
+    ...(shadow === undefined ? {} : { shadow }),
+    ...(conflict === undefined ? {} : { conflict }),
+  };
 }
 
 /** The route this instance needs, and the phrase every step detail is built from. */
@@ -62,7 +103,7 @@ export async function reconcileRoute(
   worker: string,
   options: { dryRun: boolean },
 ): Promise<RouteResult> {
-  let routes: Array<{ pattern: string; script: string }>;
+  let routes: Route[];
   try {
     routes = await listRoutes(client, zoneId);
   } catch (error) {
@@ -75,12 +116,22 @@ export async function reconcileRoute(
     };
   }
 
-  const matching = routes.filter((route) => hostPatternMatches(route.pattern, hostname));
-  const ours = matching.find((route) => route.script === worker);
-  if (ours !== undefined) return { status: "ok", detail: `${arrow(hostname, worker)} is already there` };
-
-  const shadow = matching[0];
+  const { exact, shadow, conflict } = classifyRoutes(routes, hostname, worker);
+  if (exact !== undefined) return { status: "ok", detail: `${arrow(hostname, worker)} is already there` };
   if (shadow === undefined) return { status: "ok", detail: "no shadowing route" };
+
+  // Another Worker already holds the exact pattern, so there is nothing more
+  // specific left to add and a foreign route is never modified. Say that,
+  // rather than blaming a permission the operator would go and fix for nothing.
+  if (conflict !== undefined) {
+    return {
+      status: "error",
+      detail:
+        `The Workers Route ${conflict.pattern} already sends ${hostname} to ${conflict.script}, ` +
+        `so ${hostname} answers from that Worker. dropthis never edits a route it does not own: ` +
+        `repoint or delete ${conflict.pattern} in the Cloudflare dashboard, or use another hostname.`,
+    };
+  }
 
   const detail = `${arrow(hostname, worker)} (shadowed by ${shadow.pattern} → ${shadow.script})`;
   if (options.dryRun) return { status: "would_create", detail };
@@ -105,11 +156,8 @@ export async function reconcileRoute(
 }
 
 /** The zone's routes as `{pattern, script}`; a route with no script shadows too. */
-export async function listRoutes(
-  client: Cloudflare,
-  zoneId: string,
-): Promise<Array<{ pattern: string; script: string }>> {
-  const routes: Array<{ pattern: string; script: string }> = [];
+export async function listRoutes(client: Cloudflare, zoneId: string): Promise<Route[]> {
+  const routes: Route[] = [];
   for await (const route of client.workers.routes.list({ zone_id: zoneId })) {
     routes.push({ pattern: String(route.pattern), script: String(route.script ?? "") });
   }

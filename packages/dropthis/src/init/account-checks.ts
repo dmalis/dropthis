@@ -15,7 +15,7 @@
 import type Cloudflare from "cloudflare";
 import { getObjectJson } from "./r2-objects.js";
 import { matchZone } from "./domain.js";
-import { hostPatternMatches, listRoutes } from "./routes.js";
+import { classifyRoutes, listRoutes, type Route } from "./routes.js";
 
 export type AccountCheckId = "lifecycle_rules" | "kv_bound" | "domain_attached" | "route_clear";
 export type AccountCheckStatus = "pass" | "fail" | "skip";
@@ -221,7 +221,7 @@ async function routeClear(
     };
   }
 
-  let routes: Array<{ pattern: string; script: string }>;
+  let routes: Route[];
   try {
     routes = await listRoutes(client, zone.zone.id);
   } catch (error) {
@@ -233,22 +233,33 @@ async function routeClear(
     };
   }
 
-  const matching = routes.filter((route) => hostPatternMatches(route.pattern, domain));
-  const ours = matching.find((route) => route.script === worker);
-  if (ours !== undefined) {
+  // The same classifier `init` reconciles with, so a green check and a green
+  // run can never disagree about whether the hostname is actually reachable.
+  const { exact, shadow, conflict } = classifyRoutes(routes, domain, worker);
+  if (exact !== undefined) {
     return {
       id: "route_clear",
       status: "pass",
-      evidence: `The route ${ours.pattern} sends ${domain} to ${worker}.`,
+      evidence: `The route ${exact.pattern} sends ${domain} to ${worker}.`,
     };
   }
 
-  const shadow = matching[0];
   if (shadow === undefined) {
     return {
       id: "route_clear",
       status: "pass",
       evidence: `No Workers Route on ${zone.zone.name} matches ${domain}.`,
+    };
+  }
+
+  // Another Worker holds `<domain>/*` itself: there is nothing more specific
+  // left to add, and dropthis never edits a route it does not own.
+  if (conflict !== undefined) {
+    return {
+      id: "route_clear",
+      status: "fail",
+      evidence: `The Workers Route ${conflict.pattern} → ${conflict.script} holds ${domain} itself and takes precedence over the custom domain, so ${domain} answers from ${conflict.script}.`,
+      remediation: `Repoint or delete ${conflict.pattern} in the Cloudflare dashboard so ${domain}/* can point at ${worker}, or give this instance another hostname. dropthis never edits a route it does not own.`,
     };
   }
 

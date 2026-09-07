@@ -564,8 +564,12 @@ servers connected.
 - **A Workers Route on the zone beats the Custom Domain**, so `--domain` also reconciles one
   route (#102): after the domain step and before the health poll, `init` lists the zone's
   routes and, when a foreign pattern could match the hostname, adds `<hostname>/*` ->
-  `dropthis-<name>` — more specific wins. The shadowing route is never modified or deleted; a
-  403 names `Workers Routes:Edit` and the run continues so the health record stays honest.
+  `dropthis-<name>` — more specific wins. Only that exact route pointing at our own Worker
+  counts as already fixed; one classifier (`init/routes.ts` `classifyRoutes`) answers
+  `{exact, shadow, conflict}` for both the reconcile and `--check`'s `route_clear`. The
+  shadowing route is never modified or deleted; a 403 names `Workers Routes:Edit`, another
+  Worker already holding `<hostname>/*` is named as such, and the run continues either way so
+  the health record stays honest.
 
 ### Bootstrap invariants
 

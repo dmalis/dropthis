@@ -1240,11 +1240,23 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     before finding out. No new preflight probe: a permission that is only ever needed on a zone
     that happens to carry a shadow would fail runs that never needed it.
     (c) **Matching is on the pattern's HOST half only, wildcards as any run of characters.**
-    A pattern that could match the hostname on any path counts. A false positive costs one
-    extra route that changes nothing, because a more specific foreign pattern still wins for
-    its own paths; a false negative is a dead domain with no diagnosis. Patterns come from a
-    stranger's zone, so every character but `*` is escaped before the match — a pattern is
-    data, never a regular expression.
+    A pattern that could match the hostname on any path counts, and `*` stands for a run of
+    characters INCLUDING none — so a leading `*.` is optional and `*.example.com` covers the
+    apex as well as its subdomains. A false positive costs one extra route that changes
+    nothing, because a more specific foreign pattern still wins for its own paths; a false
+    negative is a dead domain with no diagnosis. Patterns come from a stranger's zone, so
+    every character but `*` is escaped before the match — a pattern is data, never a regular
+    expression.
+    (f) **Only the exact `<hostname>/*` pointing at our Worker counts as "already fixed", and
+    one classifier answers that for everyone.** `classifyRoutes` in
+    `packages/dropthis/src/init/routes.ts` returns `{exact, shadow, conflict}` and is read by
+    both the reconcile and `route_clear`, so a green check and a green run can never disagree.
+    Our OWN broad or path-scoped route (`*.zone/*` or `<hostname>/api*` -> our Worker) matches
+    the hostname too, but Cloudflare has no rule that makes it beat an equally broad foreign
+    pattern, so it must not suppress the fix. `conflict` — another Worker holding
+    `<hostname>/*` itself — is its own outcome: nothing more specific is left to add, foreign
+    routes are never modified, and the message says to repoint that route or pick another
+    hostname rather than blaming a permission.
     (d) **`init --check` gains `route_clear`.** `--check` never mutates, so a shadow is a
     `fail` whose remediation is the exact route to add and the command that adds it. It is
     `skip` with no custom domain and when no zone for the hostname is visible; a check whose

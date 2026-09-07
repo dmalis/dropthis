@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { startFakeCloudflare } from "../../../../test/fake-cloudflare/src/server.js";
 import { makeClient } from "../../src/init/cloudflare-client.js";
-import { hostPatternMatches, reconcileRoute } from "../../src/init/routes.js";
+import { classifyRoutes, hostPatternMatches, reconcileRoute } from "../../src/init/routes.js";
 
 const teardown: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -30,10 +30,13 @@ describe("hostPatternMatches", () => {
   it("matches the host half of a route pattern, wildcards as any run of characters", () => {
     expect(hostPatternMatches("example.com/*", "example.com")).toBe(true);
     expect(hostPatternMatches("*.example.com/*", "drops.example.com")).toBe(true);
-    // `*` is zero or more characters, but the literal dot after it is not:
-    // `*.example.com` covers subdomains, `*example.com` covers the apex too.
-    expect(hostPatternMatches("*.example.com/*", "example.com")).toBe(false);
+    // `*` stands for any run of characters INCLUDING none, so the `*.` prefix
+    // is optional and `*.example.com` covers the apex as well as subdomains.
+    // Conservative on purpose: a pattern that could match the hostname counts.
+    expect(hostPatternMatches("*.example.com/*", "example.com")).toBe(true);
     expect(hostPatternMatches("*example.com/*", "example.com")).toBe(true);
+    expect(hostPatternMatches("*.a.example.com/*", "a.example.com")).toBe(true);
+    expect(hostPatternMatches("*.a.example.com/*", "b.example.com")).toBe(false);
     expect(hostPatternMatches("example.com/blog*", "example.com")).toBe(true);
     expect(hostPatternMatches("example.com", "example.com")).toBe(true);
   });
@@ -84,7 +87,7 @@ describe("reconcileRoute", () => {
     expect(cf.state.zoneRoutes).toHaveLength(1);
   });
 
-  it("does nothing when a route already sends the hostname to this Worker", async () => {
+  it("does nothing when the exact route already sends the hostname to this Worker", async () => {
     const cf = await fake({
       zoneRoutes: [
         { id: "r1", zoneId: ZONE, pattern: "*.example.com/*", script: "someone-elses-worker" },
@@ -99,6 +102,77 @@ describe("reconcileRoute", () => {
     expect(result.status).toBe("ok");
     expect(result.detail).toBe("drops.example.com/* → dropthis-main is already there");
     expect(cf.state.zoneRoutes).toHaveLength(2);
+  });
+
+  /**
+   * Only the EXACT `<hostname>/*` beats a foreign pattern by specificity. Our
+   * own broad or path-scoped route matches the hostname too, but Cloudflare
+   * has no rule that makes it win over an equally broad foreign one — so it
+   * must not suppress the fix.
+   */
+  it("still creates the exact route when OUR matching route is only a broad one", async () => {
+    const cf = await fake({
+      zoneRoutes: [
+        { id: "r1", zoneId: ZONE, pattern: "*.example.com/*", script: "someone-elses-worker" },
+        { id: "r2", zoneId: ZONE, pattern: "*.example.com/*", script: "dropthis-main" },
+      ],
+    });
+
+    const result = await reconcileRoute(cf.client, ZONE, "drops.example.com", "dropthis-main", {
+      dryRun: false,
+    });
+
+    expect(result.status).toBe("created");
+    expect(cf.state.zoneRoutes.map((r) => r.pattern)).toContain("drops.example.com/*");
+  });
+
+  it("still creates the exact route when OUR matching route is path-scoped", async () => {
+    const cf = await fake({
+      zoneRoutes: [
+        { id: "r1", zoneId: ZONE, pattern: "*.example.com/*", script: "someone-elses-worker" },
+        { id: "r2", zoneId: ZONE, pattern: "drops.example.com/api*", script: "dropthis-main" },
+      ],
+    });
+
+    const result = await reconcileRoute(cf.client, ZONE, "drops.example.com", "dropthis-main", {
+      dryRun: false,
+    });
+
+    expect(result.status).toBe("created");
+    expect(cf.state.zoneRoutes.map((r) => r.pattern)).toContain("drops.example.com/*");
+  });
+
+  it("creates nothing when only OUR own broad route matches — there is no shadow to beat", async () => {
+    const cf = await fake({
+      zoneRoutes: [{ id: "r1", zoneId: ZONE, pattern: "*.example.com/*", script: "dropthis-main" }],
+    });
+
+    const result = await reconcileRoute(cf.client, ZONE, "drops.example.com", "dropthis-main", {
+      dryRun: false,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.detail).toBe("no shadowing route");
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  });
+
+  it("reports the conflict, not a permission, when another Worker holds the exact route", async () => {
+    const cf = await fake({
+      zoneRoutes: [
+        { id: "r1", zoneId: ZONE, pattern: "drops.example.com/*", script: "someone-elses-worker" },
+      ],
+    });
+
+    const result = await reconcileRoute(cf.client, ZONE, "drops.example.com", "dropthis-main", {
+      dryRun: false,
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.detail).toContain("someone-elses-worker");
+    // Nothing here is a permission problem, and saying so would send the
+    // operator to the wrong page.
+    expect(result.detail).not.toContain("Workers Routes:Edit");
+    expect(cf.state.zoneRoutes).toHaveLength(1);
   });
 
   it("--dry-run reports the same detail and creates nothing", async () => {
@@ -151,5 +225,44 @@ describe("reconcileRoute", () => {
     expect(untouched.map((route) => route.pattern)).toEqual(["example.com/*", "*.example.com/*"]);
     const calls = cf.state.calls.filter((call) => call.method === "DELETE" || call.method === "PUT");
     expect(calls.filter((call) => call.path.includes("/workers/routes"))).toEqual([]);
+  });
+});
+
+/**
+ * One classifier answers "what do this zone's routes mean for this hostname?"
+ * for both `init`'s reconcile and `init --check`'s `route_clear`, so the two
+ * can never disagree about what counts as a shadow.
+ */
+describe("classifyRoutes", () => {
+  const R = (pattern: string, script: string) => ({ pattern, script });
+
+  it("finds the exact own route, a foreign shadow, and a foreign holder of the exact pattern", () => {
+    expect(
+      classifyRoutes([R("drops.example.com/*", "mine")], "drops.example.com", "mine"),
+    ).toEqual({ exact: R("drops.example.com/*", "mine") });
+
+    expect(classifyRoutes([R("*.example.com/*", "theirs")], "drops.example.com", "mine")).toEqual({
+      shadow: R("*.example.com/*", "theirs"),
+    });
+
+    expect(
+      classifyRoutes([R("drops.example.com/*", "theirs")], "drops.example.com", "mine"),
+    ).toEqual({
+      shadow: R("drops.example.com/*", "theirs"),
+      conflict: R("drops.example.com/*", "theirs"),
+    });
+  });
+
+  it("does not count our own broad or path-scoped route as the exact one", () => {
+    expect(classifyRoutes([R("*.example.com/*", "mine")], "drops.example.com", "mine")).toEqual({});
+    expect(
+      classifyRoutes([R("drops.example.com/api*", "mine")], "drops.example.com", "mine"),
+    ).toEqual({});
+  });
+
+  it("ignores routes whose pattern cannot match the hostname", () => {
+    expect(classifyRoutes([R("blog.example.com/*", "theirs")], "drops.example.com", "mine")).toEqual(
+      {},
+    );
   });
 });
