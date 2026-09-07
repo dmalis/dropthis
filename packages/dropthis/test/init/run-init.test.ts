@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startFakeCloudflare } from "../../../../test/fake-cloudflare/src/server.js";
 import { getObjectJson, putObjectJson } from "../../src/init/r2-objects.js";
-import { runInit } from "../../src/init/run-init.js";
+import { doctorDetail, runInit } from "../../src/init/run-init.js";
 import { expectInstanceProved, FAST_POLL, onlySlowMachine, stubDeploy } from "./helpers.js";
 
 const teardown: Array<() => Promise<void>> = [];
@@ -221,5 +221,59 @@ describe("runInit — NAME_TAKEN", () => {
 
     expect(result.ok || onlySlowMachine(result)).toBe(true);
     expect(calls).toHaveLength(1);
+  });
+});
+
+/**
+ * Issue #25, cosmetic half: the `doctor` step said "7 checks passed" when six
+ * passed and `pbkdf2_benchmark` was `inconclusive`. Per #16 an inconclusive
+ * check correctly does not make `ok` false — but it is not a pass, and the
+ * sentence must not claim one.
+ */
+describe("doctorDetail", () => {
+  const check = (id: string, status: string) => ({ id, status, evidence: "" }) as never;
+
+  it("counts pass, inconclusive and skip separately", () => {
+    expect(
+      doctorDetail({
+        ok: true,
+        checks: [
+          check("a", "pass"),
+          check("b", "pass"),
+          check("c", "pass"),
+          check("d", "pass"),
+          check("e", "pass"),
+          check("f", "pass"),
+          check("g", "inconclusive"),
+        ],
+      }),
+    ).toBe("6 passed, 1 inconclusive");
+  });
+
+  it("says only what there is to say when every check passed", () => {
+    expect(doctorDetail({ ok: true, checks: [check("a", "pass"), check("b", "pass")] })).toBe(
+      "2 passed",
+    );
+  });
+
+  it("counts skips too", () => {
+    expect(
+      doctorDetail({
+        ok: true,
+        checks: [check("a", "pass"), check("b", "skip"), check("c", "inconclusive")],
+      }),
+    ).toBe("1 passed, 1 inconclusive, 1 skipped");
+  });
+
+  it("names the failures instead of counting anything when a check failed", () => {
+    expect(
+      doctorDetail({
+        ok: false,
+        checks: [
+          check("a", "pass"),
+          { id: "hello_drop", status: "fail", evidence: "the drop never appeared" } as never,
+        ],
+      }),
+    ).toBe("hello_drop: the drop never appeared");
   });
 });

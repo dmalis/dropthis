@@ -14,8 +14,10 @@
  */
 import type Cloudflare from "cloudflare";
 import { getObjectJson } from "./r2-objects.js";
+import { matchZone } from "./domain.js";
+import { hostPatternMatches, listRoutes } from "./routes.js";
 
-export type AccountCheckId = "lifecycle_rules" | "kv_bound" | "domain_attached";
+export type AccountCheckId = "lifecycle_rules" | "kv_bound" | "domain_attached" | "route_clear";
 export type AccountCheckStatus = "pass" | "fail" | "skip";
 
 export type AccountCheck = {
@@ -50,6 +52,7 @@ export async function runAccountChecks(
     await lifecycleRules(client, accountId, bucket),
     await kvBound(client, accountId, worker, kvTitle),
     await domainAttached(client, accountId, worker, domain),
+    await routeClear(client, accountId, worker, domain),
   ];
 
   return { ok: checks.every((check) => check.status !== "fail"), checks };
@@ -160,15 +163,24 @@ async function domainAttached(
       evidence: "No custom domain was asked for, so there is nothing to attach.",
     };
   }
-  for await (const attached of client.workers.domains.list({ account_id: accountId, hostname: domain })) {
-    if (attached.service === worker) {
-      return { id: "domain_attached", status: "pass", evidence: `${domain} routes to ${worker}.` };
+  try {
+    for await (const attached of client.workers.domains.list({ account_id: accountId, hostname: domain })) {
+      if (attached.service === worker) {
+        return { id: "domain_attached", status: "pass", evidence: `${domain} routes to ${worker}.` };
+      }
+      return {
+        id: "domain_attached",
+        status: "fail",
+        evidence: `${domain} routes to the Worker ${String(attached.service)}, not to ${worker}.`,
+        remediation: `Detach ${domain} from ${String(attached.service)}, or pick another hostname.`,
+      };
     }
+  } catch (error) {
     return {
       id: "domain_attached",
       status: "fail",
-      evidence: `${domain} routes to the Worker ${String(attached.service)}, not to ${worker}.`,
-      remediation: `Detach ${domain} from ${String(attached.service)}, or pick another hostname.`,
+      evidence: `The custom domains on this account could not be read: ${message(error)}`,
+      remediation: "Give this token Workers Routes:Edit, then run `dropthis init --check` again.",
     };
   }
   return {
@@ -176,6 +188,75 @@ async function domainAttached(
     status: "fail",
     evidence: `${domain} is not attached to any Worker in this account.`,
     remediation: `Run \`dropthis init --domain ${domain}\` for this instance.`,
+  };
+}
+
+
+/**
+ * Issue #25: a Workers Route whose pattern matches the hostname takes
+ * precedence over the Custom Domain, so `domain_attached` can pass while every
+ * request is answered by somebody else's Worker. `--check` never mutates, so a
+ * shadow is a fail whose remediation is the exact route to add.
+ */
+async function routeClear(
+  client: Cloudflare,
+  accountId: string,
+  worker: string,
+  domain: string | undefined,
+): Promise<AccountCheck> {
+  if (domain === undefined) {
+    return {
+      id: "route_clear",
+      status: "skip",
+      evidence: "No custom domain, so no Workers Route can shadow one.",
+    };
+  }
+
+  const zone = await matchZone(client, accountId, domain);
+  if (!zone.ok) {
+    return {
+      id: "route_clear",
+      status: "skip",
+      evidence: `No zone for ${domain} is visible to this token, so its Workers Routes could not be read. ${zone.detail}`,
+    };
+  }
+
+  let routes: Array<{ pattern: string; script: string }>;
+  try {
+    routes = await listRoutes(client, zone.zone.id);
+  } catch (error) {
+    return {
+      id: "route_clear",
+      status: "fail",
+      evidence: `The Workers Routes on ${zone.zone.name} could not be read: ${message(error)}`,
+      remediation: "Give this token Workers Routes:Edit, then run `dropthis init --check` again.",
+    };
+  }
+
+  const matching = routes.filter((route) => hostPatternMatches(route.pattern, domain));
+  const ours = matching.find((route) => route.script === worker);
+  if (ours !== undefined) {
+    return {
+      id: "route_clear",
+      status: "pass",
+      evidence: `The route ${ours.pattern} sends ${domain} to ${worker}.`,
+    };
+  }
+
+  const shadow = matching[0];
+  if (shadow === undefined) {
+    return {
+      id: "route_clear",
+      status: "pass",
+      evidence: `No Workers Route on ${zone.zone.name} matches ${domain}.`,
+    };
+  }
+
+  return {
+    id: "route_clear",
+    status: "fail",
+    evidence: `The Workers Route ${shadow.pattern} → ${shadow.script} matches ${domain} and takes precedence over the custom domain, so ${domain} answers from ${shadow.script}.`,
+    remediation: `Add the Workers Route ${domain}/* → ${worker} on the zone ${zone.zone.name} — a more specific route wins, and ${shadow.pattern} keeps working for everything else. \`dropthis init --domain ${domain}\` adds it.`,
   };
 }
 

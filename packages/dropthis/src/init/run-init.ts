@@ -371,14 +371,7 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     });
   } else {
     report = await runRemoteDoctor(probeUrl, doctorKey);
-    const failed = report.checks.filter((check) => check.status === "fail");
-    push({
-      id: "doctor",
-      status: report.ok ? "ok" : "error",
-      detail: report.ok
-        ? `${report.checks.length} checks passed`
-        : failed.map((check) => `${check.id}: ${check.evidence}`).join("; "),
-    });
+    push({ id: "doctor", status: report.ok ? "ok" : "error", detail: doctorDetail(report) });
     if (!report.ok) ok = false;
   }
 
@@ -419,6 +412,29 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     ...(report === undefined ? {} : { doctor: report }),
     ...(instancesFile === undefined ? {} : { instancesFile }),
   };
+}
+
+/**
+ * The `doctor` step's one-line detail.
+ *
+ * A green run counts each outcome for what it is: `inconclusive` does not make
+ * `ok` false (decision #16 — a Worker cannot time its own CPU), but it is not
+ * a pass either, and "7 checks passed" over six passes and one inconclusive
+ * was the sentence issue #25 called out. A red run names what failed instead;
+ * a count would bury it.
+ */
+export function doctorDetail(report: DoctorReport): string {
+  const count = (status: string): number => report.checks.filter((check) => check.status === status).length;
+  if (!report.ok) {
+    return report.checks
+      .filter((check) => check.status === "fail")
+      .map((check) => `${check.id}: ${check.evidence}`)
+      .join("; ");
+  }
+  const parts = [`${count("pass")} passed`];
+  if (count("inconclusive") > 0) parts.push(`${count("inconclusive")} inconclusive`);
+  if (count("skip") > 0) parts.push(`${count("skip")} skipped`);
+  return parts.join(", ");
 }
 
 /**
