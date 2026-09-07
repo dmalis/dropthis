@@ -48,4 +48,13 @@ export const DEV_HOOKS: DevHooks = {
     const seconds = Number(request.headers.get("DEV-Access-TTL") ?? "");
     return Number.isInteger(seconds) && seconds >= 60 ? seconds : undefined;
   },
+
+  /**
+   * No memo at all on the dev instance: the contract tests swap
+   * `system/config.json` and assert the very next request, and a minute of
+   * staleness would make that test wait or flake.
+   */
+  originsTtlMs(env: Env) {
+    return env.DEV_ROUTES === "1" ? 0 : 60_000;
+  },
 };
