@@ -460,9 +460,10 @@ onboarding a person is one call. `doctor` is a named check registry (#29), insta
 `hello_drop`, `mcp_initialize`, `policy_readable`, `cron_state`, `canonical_origin`,
 `pbkdf2_benchmark`, `admin_rotation_clean`; `doctor --list --json` lists ids, `doctor
 --json` returns `{ok, checks: [{id, status: pass|fail|skip|inconclusive, evidence,
-remediation}]}` (`inconclusive` never makes `ok` false). Account-level checks
-(`lifecycle_rules`, `kv_bound`, `domain_attached`) belong to `init --check`, which needs the
-Cloudflare token. `host_*` comes after v1.
+remediation}]}` (`inconclusive` never makes `ok` false), and `init`'s own `doctor` step
+counts pass, inconclusive and skip separately (#102). Account-level checks
+(`lifecycle_rules`, `kv_bound`, `domain_attached`, `route_clear`) belong to `init --check`,
+which needs the Cloudflare token. `host_*` comes after v1.
 
 **Instance lifecycle** lives in the CLI only — it needs the Cloudflare token, not an instance
 key: `init` (account preflight, provisioning, deploy; `--dry-run` = preflight only) and
@@ -560,6 +561,11 @@ servers connected.
   substituted from that deployment's own config — one URL onboards any agent correctly.
 - **Zone matching:** longest zone name that is a suffix of the hostname, within the pinned
   account; refuse if a CNAME already exists there.
+- **A Workers Route on the zone beats the Custom Domain**, so `--domain` also reconciles one
+  route (#102): after the domain step and before the health poll, `init` lists the zone's
+  routes and, when a foreign pattern could match the hostname, adds `<hostname>/*` ->
+  `dropthis-<name>` — more specific wins. The shadowing route is never modified or deleted; a
+  403 names `Workers Routes:Edit` and the run continues so the health record stays honest.
 
 ### Bootstrap invariants
 

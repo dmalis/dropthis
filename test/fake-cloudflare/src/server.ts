@@ -39,6 +39,8 @@ export type FakeState = {
   dnsRecords: FakeDnsRecord[];
   workerDomains: FakeWorkerDomain[];
   zoneRoutes: FakeZoneRoute[];
+  /** 403 the route WRITE only; mutable so one long-lived fake can test both. */
+  routeWriteForbidden: boolean;
   accounts: Array<{ id: string; name: string }>;
   /** Scopes the token does NOT have — used to test named-permission preflight. */
   missingScopes: FakeScope[];
@@ -114,6 +116,7 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     dnsRecords: [...(options.dnsRecords ?? [])],
     workerDomains: [],
     zoneRoutes: [...(options.zoneRoutes ?? [])],
+    routeWriteForbidden: options.routeWriteForbidden ?? false,
     accounts: options.accounts ?? [{ id: options.accountId ?? "fake-account-id", name: "Fake Account" }],
     missingScopes: [...(options.missingScopes ?? [])],
     r2SubscriptionEnabled: options.r2SubscriptionEnabled ?? true,
@@ -403,7 +406,7 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
   app.post("/client/v4/zones/:zoneId/workers/routes", async (c) => {
     const forbidden = requireScope("workers-routes");
     if (forbidden) return c.json(forbidden, 403);
-    if (options.routeWriteForbidden === true) {
+    if (state.routeWriteForbidden) {
       return c.json(fail(10000, "Authentication error: missing permission Workers Routes:Edit"), 403);
     }
     const zoneId = c.req.param("zoneId");
