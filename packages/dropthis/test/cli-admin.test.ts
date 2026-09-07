@@ -54,6 +54,30 @@ describe("admin commands", () => {
     expect((oneJsonDocument(again.stdout) as { users: Json[] }).users.map((u) => u.label)).not.toContain("bob");
   });
 
+  /**
+   * REST answers `204` with no body. `--json` is one deterministic JSON
+   * document (AGENTS.md, "CLI conventions"), and `null` is not one an agent
+   * can branch on (#28). The shape mirrors `delete`'s `{slug, deleted: true}`,
+   * and a rerun says the same thing because the operation is idempotent.
+   */
+  it("user remove --json is one document, the same on a rerun; plain mode leaves stdout empty", async () => {
+    const added = await runCli(["user", "add", "carol", "--json"], { env: admin });
+    expect(added.code, added.stderr).toBe(0);
+
+    const removed = await runCli(["user", "remove", "carol", "--json"], { env: admin });
+    expect(removed.code, removed.stderr).toBe(0);
+    expect(oneJsonDocument(removed.stdout)).toEqual({ label: "carol", removed: true });
+
+    const rerun = await runCli(["user", "remove", "carol", "--json"], { env: admin });
+    expect(rerun.code, rerun.stderr).toBe(0);
+    expect(oneJsonDocument(rerun.stdout)).toEqual({ label: "carol", removed: true });
+
+    const plain = await runCli(["user", "remove", "carol"], { env: admin });
+    expect(plain.code, plain.stderr).toBe(0);
+    expect(plain.stdout).toBe("");
+    expect(plain.stderr).toContain("removed carol");
+  });
+
   it("config get / set take and return the policy; set is a JSON argument", async () => {
     const set = await runCli(["config", "set", '{"expiry":{"default":"14d"}}', "--json"], { env: admin });
     expect(set.code, set.stderr).toBe(0);
