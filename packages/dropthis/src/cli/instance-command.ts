@@ -1,16 +1,21 @@
 /**
- * `dropthis instances` — what is configured on this machine (issue #30).
+ * `dropthis instance list` — what is configured on this machine (issues #30,
+ * #31). It is a CLI-only command, like `connect`: it reads the local instances
+ * file and never calls an instance. The keys live in that file and nowhere
+ * else, so the one thing this command must never print is one.
  *
- * It is a CLI-only command, like `connect`: it reads the local instances file
- * and never calls an instance. The keys live in that file and nowhere else, so
- * the one thing this command must never print is one — a name and a URL are
- * what an operator asked for.
+ * Every `--json` row carries the instance's four addresses, so an operator who
+ * has not yet chosen a client still gets them. They come from `connectFor()`
+ * in the Worker's registry — the one formula for those URLs, never a second
+ * one written here. Plain mode stays `name  url  (default)`: a person reading
+ * a terminal asked which instances exist, not for four URLs each.
  *
  * `default` is the instance a command with no `--instance` would use, resolved
  * the way `credentials.ts` resolves it: the env pair beats everything, then the
  * file's `default`, then its only instance. So the answer here is what the next
  * command actually does, not a field copied out of a file.
  */
+import { connectFor } from "../../../worker/src/registry/connect.js";
 import { EXIT_OK } from "./errors.js";
 import { jsonLine } from "./output.js";
 import { modeOf, readInstancesFile } from "./run.js";
@@ -19,15 +24,24 @@ import type { Globals, RunIo } from "./run.js";
 /** The name the env pair is listed under; it is not in any file. */
 export const ENV_INSTANCE = "env";
 
-export type InstanceRow = { name: string; url: string; default: boolean };
+export type InstanceRow = {
+  name: string;
+  url: string;
+  default: boolean;
+  mcp_url: string;
+  rest_url: string;
+  skill_url: string;
+  connect_page: string;
+};
 
-export type InstancesReport = { default: string | null; instances: InstanceRow[] };
+export type InstanceListReport = { default: string | null; instances: InstanceRow[] };
 
-export const INSTANCES_SUMMARY = "List the instances configured on this machine: name, url and which is the default.";
+export const INSTANCE_LIST_SUMMARY =
+  "List the instances configured on this machine: name, url, which is the default, and their URLs.";
 
 export const NO_INSTANCES_HINT = "No instances are configured. Run `dropthis init` to create one.";
 
-export async function runInstancesCommand(globals: Globals, io: RunIo): Promise<number> {
+export async function runInstanceListCommand(globals: Globals, io: RunIo): Promise<number> {
   const file = await readInstancesFile(io.env);
   const named = Object.entries(file?.instances ?? {}).map(([name, entry]) => ({ name, url: entry.url }));
 
@@ -42,11 +56,21 @@ export async function runInstancesCommand(globals: Globals, io: RunIo): Promise<
   // command would reach; it marks nothing rather than a row that is not there.
   const chosen = named.some((row) => row.name === selected) ? selected! : null;
 
-  const report: InstancesReport = {
+  const sorted = named.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+  const report: InstanceListReport = {
     default: chosen,
-    instances: named
-      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
-      .map((row) => ({ ...row, default: row.name === chosen })),
+    instances: sorted.map((row) => {
+      const connect = connectFor({ canonicalUrl: row.url, instanceName: row.name });
+      return {
+        name: row.name,
+        url: row.url,
+        default: row.name === chosen,
+        mcp_url: connect.mcp_url,
+        rest_url: connect.rest_url,
+        skill_url: connect.skill_url,
+        connect_page: connect.connect_page,
+      };
+    }),
   };
 
   if (modeOf(globals) !== "plain") {
