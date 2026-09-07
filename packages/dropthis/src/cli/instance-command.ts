@@ -10,12 +10,15 @@
  * one written here. Plain mode stays `name  url  (default)`: a person reading
  * a terminal asked which instances exist, not for four URLs each.
  *
- * `default` is the instance a command with no `--instance` would use, resolved
- * the way `credentials.ts` resolves it: the env pair beats everything, then the
- * file's `default`, then its only instance. So the answer here is what the next
- * command actually does, not a field copied out of a file.
+ * `default` is the instance a command with no `--instance` would use, and it is
+ * `selectInstance()` in `credentials.ts` that says so — the same call the
+ * command path makes, never a second copy of the order (issue #32). So the
+ * answer here is what the next command actually does, down to refusing half a
+ * `DROPTHIS_URL`/`DROPTHIS_KEY` pair before the file is read: a listing that
+ * marked the file's default there would name an instance no command will use.
  */
 import { connectFor } from "../../../worker/src/registry/connect.js";
+import { selectInstance } from "./credentials.js";
 import { EXIT_OK } from "./errors.js";
 import { jsonLine } from "./output.js";
 import { modeOf, readInstancesFile } from "./run.js";
@@ -43,18 +46,14 @@ export const NO_INSTANCES_HINT = "No instances are configured. Run `dropthis ini
 
 export async function runInstanceListCommand(globals: Globals, io: RunIo): Promise<number> {
   const file = await readInstancesFile(io.env);
+  // Half an env pair throws here, exactly as it does for every other command:
+  // the same rule, not a softer copy of it.
+  const selected = selectInstance({ env: io.env, file });
+
   const named = Object.entries(file?.instances ?? {}).map(([name, entry]) => ({ name, url: entry.url }));
+  if (selected.kind === "env") named.push({ name: ENV_INSTANCE, url: selected.url });
 
-  const url = io.env.DROPTHIS_URL;
-  const key = io.env.DROPTHIS_KEY;
-  const hasEnvPair = typeof url === "string" && url.length > 0 && typeof key === "string" && key.length > 0;
-  if (hasEnvPair) named.push({ name: ENV_INSTANCE, url });
-
-  const fileDefault = file?.default !== undefined ? file.default : named.length === 1 ? named[0]!.name : undefined;
-  const selected = hasEnvPair ? ENV_INSTANCE : fileDefault;
-  // A `default` naming an instance the file does not hold is not the one a
-  // command would reach; it marks nothing rather than a row that is not there.
-  const chosen = named.some((row) => row.name === selected) ? selected! : null;
+  const chosen = selected.kind === "env" ? ENV_INSTANCE : selected.kind === "file" ? selected.name : null;
 
   const sorted = named.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
   const report: InstanceListReport = {
