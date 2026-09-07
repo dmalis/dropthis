@@ -51,6 +51,8 @@ describe("dropthis commands --json", () => {
     expect(surface.map((entry) => entry.command)).toEqual([
       "publish", "update", "get", "list", "delete", "user add", "user list", "user remove",
       "config get", "config set", "usage", "prune", "doctor",
+      // The local commands come after the registry's, in one array (#30).
+      "instances",
     ]);
     const publish = surface[0]!;
     expect(publish.arguments).toEqual([{ name: "paths", kind: "files", required: true, variadic: true }]);

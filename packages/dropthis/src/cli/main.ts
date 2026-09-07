@@ -8,12 +8,13 @@ import type { Readable, Writable } from "node:stream";
 import { CommanderError } from "commander";
 import { Cancelled, CliError, EXIT_CANCELLED, EXIT_FAILURE, EXIT_OK } from "./errors.js";
 import { renderError, jsonLine } from "./output.js";
-import { buildProgram } from "./program.js";
+import { buildProgram, LOCAL_COMMANDS } from "./program.js";
 import { modeOf, runCommand } from "./run.js";
 import type { Globals } from "./run.js";
 import { commandSurface } from "./surface.js";
 import { isClientName, runAuthHeaderCommand, runConnectCommand, CLIENTS } from "./connect-command.js";
 import { runInitCommand } from "./init-command.js";
+import { runInstancesCommand } from "./instances-command.js";
 
 export type MainIo = {
   env: Record<string, string | undefined>;
@@ -74,6 +75,14 @@ export async function main(argv: string[], version: string, io: MainIo): Promise
         fail(error);
       }
     },
+    async instances(globals) {
+      lastGlobals = globals;
+      try {
+        exitCode = await runInstancesCommand(globals, io);
+      } catch (error) {
+        fail(error);
+      }
+    },
     async authHeader(globals) {
       lastGlobals = globals;
       try {
@@ -84,7 +93,16 @@ export async function main(argv: string[], version: string, io: MainIo): Promise
     },
     async commands(globals) {
       lastGlobals = globals;
-      const surface = commandSurface().map((spec) => ({
+      type Row = {
+        command: string;
+        operation: string | null;
+        scope: string;
+        summary: string;
+        arguments: Array<{ name: string; kind: string; required: boolean; variadic: boolean }>;
+        options: Array<{ flag: string; kind: string; clear?: string; description: string }>;
+        steps: boolean;
+      };
+      const surface: Row[] = commandSurface().map((spec) => ({
         command: spec.words.join(" "),
         operation: spec.op.name,
         scope: spec.op.scope,
@@ -103,6 +121,20 @@ export async function main(argv: string[], version: string, io: MainIo): Promise
         })),
         steps: spec.steps,
       }));
+      // The local commands answer from a file on this machine, so they have no
+      // operation and no scope on the wire; every other key is the same, so an
+      // agent reads one array (#30).
+      for (const local of LOCAL_COMMANDS) {
+        surface.push({
+          command: local.command,
+          operation: null,
+          scope: "local",
+          summary: local.summary,
+          arguments: [],
+          options: [],
+          steps: false,
+        });
+      }
       if (modeOf(globals) === "plain") {
         for (const entry of surface) io.stdout.write(`${entry.command.padEnd(14)} ${entry.summary}\n`);
       } else {
