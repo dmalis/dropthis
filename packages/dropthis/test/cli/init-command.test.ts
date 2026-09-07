@@ -339,6 +339,7 @@ describe("init --json", () => {
       "lifecycle_rules",
       "kv_bound",
       "domain_attached",
+      "route_clear",
     ]);
     expect(cf.state.scripts.size).toBe(0);
   });

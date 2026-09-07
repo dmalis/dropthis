@@ -1218,6 +1218,53 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     the day it was read. Everything in these files was run as written against a dev instance;
     `init` on the real account is #98's record and is quoted, not rerun.
 
+102. **A Workers Route on the zone shadows the Custom Domain, and `init` adds the route that
+    wins (issue #25, 2026-09-07).** Cloudflare gives a matching **Route** precedence over a
+    **Custom Domain**, so `init --domain damjan.dropthis.app` attached the domain, reported
+    `{"step":"domain","status":"created"}`, and then failed its own health poll with the
+    archived product's 410 — the zone carried `dropthis.app/*` and `*.dropthis.app/*` pointing
+    at `dropthis-notice`. It happened twice, on `damjan.dropthis.app` and `demo.dropthis.app`.
+    A deployed, healthy, unreachable instance is exactly what "reconcile by name, self-heal"
+    forbids, so `init` now fixes it rather than reporting it.
+    (a) **`init` adds `<hostname>/*` -> `dropthis-<name>` itself**, after the domain step and
+    before the health poll, and only when a foreign route would otherwise shadow the hostname.
+    A more specific route wins, which is Cloudflare's own mechanism; the shadowing route is
+    never modified and never deleted. The blast radius is the one the operator just accepted by
+    attaching a Custom Domain to that zone. Step `route` reports `created` with
+    `"<host>/* -> <worker> (shadowed by <pattern> -> <script>)"`, `ok` with
+    `"no shadowing route"` when the zone is clear, `ok` when our route is already there, and
+    `would_create` with the same detail under `--dry-run`.
+    (b) **A 403 on the route write is reported, and the run continues.** The remediation names
+    `Workers Routes:Edit` and the exact route to add by hand, `ok` becomes false, and the health
+    poll still runs — the record has to say whether the hostname actually answers, not stop
+    before finding out. No new preflight probe: a permission that is only ever needed on a zone
+    that happens to carry a shadow would fail runs that never needed it.
+    (c) **Matching is on the pattern's HOST half only, wildcards as any run of characters.**
+    A pattern that could match the hostname on any path counts, and `*` stands for a run of
+    characters INCLUDING none — so a leading `*.` is optional and `*.example.com` covers the
+    apex as well as its subdomains. A false positive costs one extra route that changes
+    nothing, because a more specific foreign pattern still wins for its own paths; a false
+    negative is a dead domain with no diagnosis. Patterns come from a stranger's zone, so
+    every character but `*` is escaped before the match — a pattern is data, never a regular
+    expression.
+    (d) **`init --check` gains `route_clear`.** `--check` never mutates, so a shadow is a
+    `fail` whose remediation is the exact route to add and the command that adds it. It is
+    `skip` with no custom domain and when no zone for the hostname is visible; a check whose
+    subject cannot be read is never a pass.
+    (e) **The `doctor` step counts inconclusive separately.** It said "7 checks passed" over
+    six passes and one `inconclusive` (`pbkdf2_benchmark`, #16). Per #16 an inconclusive check
+    correctly does not make `ok` false, but it is not a pass: the detail now reads
+    "6 passed, 1 inconclusive", and skips are counted too.
+    (f) **Only the exact `<hostname>/*` pointing at our Worker counts as "already fixed", and
+    one classifier answers that for everyone.** `classifyRoutes` in
+    `packages/dropthis/src/init/routes.ts` returns `{exact, shadow, conflict}` and is read by
+    both the reconcile and `route_clear`, so a green check and a green run can never disagree.
+    Our OWN broad or path-scoped route (`*.zone/*` or `<hostname>/api*` -> our Worker) matches
+    the hostname too, but Cloudflare has no rule that makes it beat an equally broad foreign
+    pattern, so it must not suppress the fix. `conflict` — another Worker holding
+    `<hostname>/*` itself — is its own outcome: nothing more specific is left to add, foreign
+    routes are never modified, and the message says to repoint that route or pick another
+    hostname rather than blaming a permission.
 103. **The viewer moves an alias request, and reads the origins from a memo (issue #26,
     2026-09-07).** AGENTS.md has always said a viewer request on an alias redirects to the
     canonical origin, but `aliasRedirect()` was called only by `/_connect` and the OAuth

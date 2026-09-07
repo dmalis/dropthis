@@ -124,6 +124,120 @@ describe("runAccountChecks", () => {
     expect(row(result, "domain_attached")?.status).toBe("skip");
   });
 
+  /**
+   * Issue #25: the Custom Domain can be attached and correct while a Workers
+   * Route on the same zone takes precedence and answers from another Worker.
+   * `--check` never mutates, so it names the exact route to add.
+   */
+  it("route_clear fails when a foreign route shadows the domain, naming the route to add", async () => {
+    const cf = await fake({
+      zoneRoutes: [{ id: "r1", zoneId: "z-example", pattern: "*.example.com/*", script: "notice" }],
+    });
+    cf.state.workerDomains.push({
+      id: "d1",
+      hostname: "drops.example.com",
+      service: "dropthis-main",
+      zone_id: "z-example",
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
+
+    expect(result.ok).toBe(false);
+    expect(row(result, "domain_attached")?.status).toBe("pass");
+    expect(row(result, "route_clear")?.status).toBe("fail");
+    expect(row(result, "route_clear")?.evidence).toContain("*.example.com/*");
+    expect(row(result, "route_clear")?.evidence).toContain("notice");
+    expect(row(result, "route_clear")?.remediation).toContain("drops.example.com/*");
+    expect(row(result, "route_clear")?.remediation).toContain("dropthis-main");
+    // A read-only check adds nothing.
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  });
+
+  it("route_clear passes when no route on the zone matches the hostname", async () => {
+    const cf = await fake({
+      zoneRoutes: [{ id: "r1", zoneId: "z-example", pattern: "blog.example.com/*", script: "notice" }],
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
+
+    expect(row(result, "route_clear")?.status).toBe("pass");
+  });
+
+  it("route_clear passes when the exact route already sends the hostname to this Worker", async () => {
+    const cf = await fake({
+      zoneRoutes: [
+        { id: "r1", zoneId: "z-example", pattern: "*.example.com/*", script: "notice" },
+        { id: "r2", zoneId: "z-example", pattern: "drops.example.com/*", script: "dropthis-main" },
+      ],
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
+
+    expect(row(result, "route_clear")?.status).toBe("pass");
+    expect(row(result, "route_clear")?.evidence).toContain("drops.example.com/*");
+  });
+
+  /**
+   * Only `<hostname>/*` beats a foreign pattern by specificity. `route_clear`
+   * reads the same classifier `init` reconciles with, so the two can never
+   * disagree about whether the hostname is actually reachable.
+   */
+  it("route_clear fails when OUR matching route is only a broad one beside a foreign match", async () => {
+    const cf = await fake({
+      zoneRoutes: [
+        { id: "r1", zoneId: "z-example", pattern: "*.example.com/*", script: "notice" },
+        { id: "r2", zoneId: "z-example", pattern: "*.example.com/*", script: "dropthis-main" },
+      ],
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
+
+    expect(row(result, "route_clear")?.status).toBe("fail");
+    expect(row(result, "route_clear")?.remediation).toContain("drops.example.com/*");
+  });
+
+  it("route_clear passes when only OUR own broad route matches — nothing shadows it", async () => {
+    const cf = await fake({
+      zoneRoutes: [{ id: "r1", zoneId: "z-example", pattern: "*.example.com/*", script: "dropthis-main" }],
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
+
+    expect(row(result, "route_clear")?.status).toBe("pass");
+  });
+
+  it("route_clear says so when another Worker holds the exact route", async () => {
+    const cf = await fake({
+      zoneRoutes: [{ id: "r1", zoneId: "z-example", pattern: "drops.example.com/*", script: "notice" }],
+    });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
+
+    const route = row(result, "route_clear");
+    expect(route?.status).toBe("fail");
+    expect(route?.evidence).toContain("notice");
+    // Adding our own route cannot fix it, so the remediation must not say so.
+    expect(route?.remediation).toContain("drops.example.com/*");
+    expect(route?.remediation).toMatch(/repoint|delete|another hostname/);
+  });
+
+  it("route_clear skips when there is no custom domain to shadow", async () => {
+    const cf = await fake();
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main" });
+
+    expect(row(result, "route_clear")?.status).toBe("skip");
+  });
+
+  it("route_clear fails, naming the permission, when the zone's routes cannot be read", async () => {
+    const cf = await fake({ missingScopes: ["workers-routes"] });
+
+    const result = await runAccountChecks(cf.client, ACCOUNT, { name: "main", domain: "drops.example.com" });
+
+    expect(row(result, "route_clear")?.status).toBe("fail");
+    expect(row(result, "route_clear")?.remediation).toContain("Workers Routes");
+  });
+
   it("fails when the asked-for domain routes to another Worker", async () => {
     const cf = await fake();
     cf.state.workerDomains.push({

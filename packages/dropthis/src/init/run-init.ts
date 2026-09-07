@@ -14,6 +14,7 @@ import {
 } from "./preflight.js";
 import { pollHealth, runRemoteDoctor, type PollOptions } from "./probe.js";
 import { reconcileBucket, reconcileNamespace } from "./reconcile.js";
+import { reconcileRoute } from "./routes.js";
 import { getObjectJson } from "./r2-objects.js";
 import { rotateAdminKey } from "./rotate.js";
 import { normalizeInstanceName } from "./instance-name.js";
@@ -243,11 +244,19 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   push({ id: "kv_namespace", status: kvResult.status });
 
   if (options.dryRun) {
+    let dryOk = true;
     if (options.domain !== undefined) {
       push({ id: "domain", status: "would_create", detail: `${options.domain} in zone ${domainZone!.name}` });
+      // A preflight that cannot even READ the zone's routes cannot promise the
+      // hostname will answer, so a dry run says so instead of reporting green.
+      const route = await reconcileRoute(client, domainZone!.id, options.domain, worker, {
+        dryRun: true,
+      });
+      push({ id: "route", status: route.status, detail: route.detail });
+      if (route.status === "error") dryOk = false;
     }
     push({ id: "deploy", status: "skip", detail: "dry-run" });
-    return { ok: true, name: instanceName, worker, bucket, kvNamespace, steps };
+    return { ok: dryOk, name: instanceName, worker, bucket, kvNamespace, steps };
   }
 
   const rotate = options.rotateAdminKey === true;
@@ -317,6 +326,21 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     const attached = await attachDomain(client, accountId, worker, options.domain);
     if (attached.ok) {
       push({ id: "domain", status: attached.created ? "created" : "ok", detail: options.domain });
+      /**
+       * A matching Workers Route on the zone BEATS the Custom Domain that was
+       * just attached (issue #25), so the instance would be deployed, healthy
+       * and unreachable on its own hostname. Adding `<hostname>/*` for our own
+       * Worker is more specific and wins; the shadowing route is never touched.
+       *
+       * A refused write is reported and the run CONTINUES: the health poll is
+       * what tells the operator whether the hostname answers, and that record
+       * has to stay honest.
+       */
+      const route = await reconcileRoute(client, attached.zone.id, options.domain, worker, {
+        dryRun: false,
+      });
+      push({ id: "route", status: route.status, detail: route.detail });
+      if (route.status === "error") ok = false;
     } else {
       // The config already names this domain as canonical; put it back so the
       // instance never advertises a host it does not answer on — and put the
@@ -351,14 +375,7 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     });
   } else {
     report = await runRemoteDoctor(probeUrl, doctorKey);
-    const failed = report.checks.filter((check) => check.status === "fail");
-    push({
-      id: "doctor",
-      status: report.ok ? "ok" : "error",
-      detail: report.ok
-        ? `${report.checks.length} checks passed`
-        : failed.map((check) => `${check.id}: ${check.evidence}`).join("; "),
-    });
+    push({ id: "doctor", status: report.ok ? "ok" : "error", detail: doctorDetail(report) });
     if (!report.ok) ok = false;
   }
 
@@ -399,6 +416,29 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     ...(report === undefined ? {} : { doctor: report }),
     ...(instancesFile === undefined ? {} : { instancesFile }),
   };
+}
+
+/**
+ * The `doctor` step's one-line detail.
+ *
+ * A green run counts each outcome for what it is: `inconclusive` does not make
+ * `ok` false (decision #16 — a Worker cannot time its own CPU), but it is not
+ * a pass either, and "7 checks passed" over six passes and one inconclusive
+ * was the sentence issue #25 called out. A red run names what failed instead;
+ * a count would bury it.
+ */
+export function doctorDetail(report: DoctorReport): string {
+  const count = (status: string): number => report.checks.filter((check) => check.status === status).length;
+  if (!report.ok) {
+    return report.checks
+      .filter((check) => check.status === "fail")
+      .map((check) => `${check.id}: ${check.evidence}`)
+      .join("; ");
+  }
+  const parts = [`${count("pass")} passed`];
+  if (count("inconclusive") > 0) parts.push(`${count("inconclusive")} inconclusive`);
+  if (count("skip") > 0) parts.push(`${count("skip")} skipped`);
+  return parts.join(", ");
 }
 
 /**

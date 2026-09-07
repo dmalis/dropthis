@@ -297,6 +297,155 @@ describe("runInit — --domain", () => {
   });
 });
 
+/**
+ * Issue #25: a Workers Route on the zone takes precedence over the Custom
+ * Domain, so `init` adds the one route that wins over it — after the domain
+ * step, before the health poll.
+ */
+describe("runInit — the shadowing-route step", () => {
+  const SHADOW = { id: "r1", zoneId: "z-example", pattern: "*.example.com/*", script: "notice" };
+
+  it("adds <hostname>/* when a foreign route shadows the domain, and leaves the shadow alone", async () => {
+    const cf = await fake({ zoneRoutes: [{ ...SHADOW }] });
+    const { deploy } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(step(result.steps, "route")?.status).toBe("created");
+    expect(step(result.steps, "route")?.detail).toBe(
+      "drops.example.com/* \u2192 dropthis-main (shadowed by *.example.com/* \u2192 notice)",
+    );
+    expect(cf.state.zoneRoutes.map((r) => `${r.pattern} -> ${r.script}`)).toEqual([
+      "*.example.com/* -> notice",
+      "drops.example.com/* -> dropthis-main",
+    ]);
+    // Between the domain and the health poll, so a run's record reads in the
+    // order the account was actually changed.
+    const ids = result.steps.map((s) => s.id);
+    expect(ids.indexOf("route")).toBeGreaterThan(ids.indexOf("domain"));
+    expect(ids.indexOf("route")).toBeLessThan(ids.indexOf("health"));
+  });
+
+  it("reports `ok` and creates nothing when no route shadows the domain", async () => {
+    const cf = await fake({
+      zoneRoutes: [{ id: "r1", zoneId: "z-example", pattern: "blog.example.com/*", script: "notice" }],
+    });
+    const { deploy } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(step(result.steps, "route")?.status).toBe("ok");
+    expect(step(result.steps, "route")?.detail).toBe("no shadowing route");
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  });
+
+  it("has no route step at all without --domain", async () => {
+    const cf = await fake({ zoneRoutes: [{ ...SHADOW }] });
+    const { deploy } = stubDeploy(cf, teardown);
+
+    const result = await runInit({ creds: CREDS(cf), dryRun: false, deploy, poll: FAST_POLL });
+
+    expect(step(result.steps, "route")).toBeUndefined();
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  });
+
+  it("--dry-run reports would_create and creates nothing", async () => {
+    const cf = await fake({ zoneRoutes: [{ ...SHADOW }] });
+    const { deploy, calls } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: true,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(step(result.steps, "route")?.status).toBe("would_create");
+    expect(step(result.steps, "route")?.detail).toBe(
+      "drops.example.com/* \u2192 dropthis-main (shadowed by *.example.com/* \u2192 notice)",
+    );
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("--dry-run is not ok when it cannot even read the zone's routes", async () => {
+    const cf = await fake({ zoneRoutes: [{ ...SHADOW }], routeReadForbidden: true });
+    const { deploy } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: true,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    // A preflight that cannot read the routes cannot promise the hostname
+    // will answer, so it does not report green.
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "route")?.status).toBe("error");
+    expect(step(result.steps, "route")?.detail).toContain("Workers Routes:Edit");
+  });
+
+  it("names Workers Routes:Edit and CONTINUES when the route write is refused", async () => {
+    const cf = await fake({ zoneRoutes: [{ ...SHADOW }], routeWriteForbidden: true });
+    const { deploy } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(step(result.steps, "route")?.status).toBe("error");
+    expect(step(result.steps, "route")?.detail).toContain("Workers Routes:Edit");
+    expect(step(result.steps, "route")?.detail).toContain("drops.example.com/*");
+    // The run keeps going: the health poll is what tells the operator whether
+    // the instance is actually reachable, and that record has to stay honest.
+    expect(step(result.steps, "health")).toBeDefined();
+    expect(result.ok).toBe(false);
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  });
+
+  it("does not run when the domain attach failed", async () => {
+    const cf = await fake({ zoneRoutes: [{ ...SHADOW }] });
+    cf.state.workerDomains.push({
+      id: "d1",
+      hostname: "drops.example.com",
+      service: "someone-elses-worker",
+      zone_id: "z-example",
+    });
+    const { deploy } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: false,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    expect(step(result.steps, "domain")?.status).toBe("error");
+    expect(step(result.steps, "route")).toBeUndefined();
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  });
+});
+
 describe("runInit — --rotate-admin-key", () => {
   it("returns a new key once, stores it, and the old one stops working", async () => {
     const cf = await fake();

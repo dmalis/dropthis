@@ -11,7 +11,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { startFakeCloudflare } from "../../../test/fake-cloudflare/src/server.js";
 import { startFakeInstance } from "../../../test/fake-cloudflare/src/instance.js";
 import type { FakeInstance } from "../../../test/fake-cloudflare/src/instance.js";
@@ -28,6 +28,7 @@ let wranglerPath: string;
 beforeAll(async () => {
   instance = await startFakeInstance({});
   cf = await startFakeCloudflare({
+    zones: [{ id: "z-example", name: "example.com", account: { id: ACCOUNT } }],
     onDeploy: (script) => {
       const bucketName = String(
         script.bindings.find((binding) => binding.name === "BUCKET")?.bucket_name ?? "",
@@ -143,5 +144,117 @@ describe("connect and auth-header through the binary", () => {
     const header = await runCli(["auth-header", "--instance", "main"], { env });
     expect(header.code).toBe(0);
     expect(header.stdout).toBe(`Authorization: Bearer ${"c".repeat(64)}\n`);
+  }, 120_000);
+});
+
+/**
+ * Issue #25 through the binary: a Workers Route on the zone takes precedence
+ * over the Custom Domain, so `init --domain` adds the one route that wins and
+ * says so in its own step. Read the steps out of the one JSON document — that
+ * is the record an agent branches on.
+ */
+describe("init --domain and a shadowing Workers Route", () => {
+  const SHADOW = { id: "r1", zoneId: "z-example", pattern: "*.example.com/*", script: "notice" };
+
+  afterEach(() => {
+    cf.state.zoneRoutes.length = 0;
+    cf.state.workerDomains.length = 0;
+    cf.state.routeWriteForbidden = false;
+  });
+
+  // A step row is keyed `id`, the same field a `doctor` check row carries (#28).
+  const steps = (stdout: string): Array<{ id: string; status: string; detail?: string }> =>
+    (oneJsonDocument(stdout) as { steps: Array<{ id: string; status: string; detail?: string }> }).steps;
+
+  const routeStep = (stdout: string) => steps(stdout).find((s) => s.id === "route");
+
+  it("creates <hostname>/* when a foreign route shadows the domain", async () => {
+    cf.state.zoneRoutes.push({ ...SHADOW });
+    const env = await initEnv();
+
+    const result = await runCli(
+      ["init", "--name", "shadowed", "--domain", "shadowed.example.com", "--json"],
+      { env },
+    );
+
+    expect(routeStep(result.stdout)).toEqual({
+      id: "route",
+      status: "created",
+      detail:
+        "shadowed.example.com/* \u2192 dropthis-shadowed (shadowed by *.example.com/* \u2192 notice)",
+    });
+    expect(cf.state.zoneRoutes.map((r) => `${r.pattern} -> ${r.script}`)).toEqual([
+      "*.example.com/* -> notice",
+      "shadowed.example.com/* -> dropthis-shadowed",
+    ]);
+  }, 120_000);
+
+  it("reports ok and adds nothing when no route shadows the domain", async () => {
+    cf.state.zoneRoutes.push({ id: "r1", zoneId: "z-example", pattern: "blog.example.com/*", script: "notice" });
+    const env = await initEnv();
+
+    const result = await runCli(
+      ["init", "--name", "clear", "--domain", "clear.example.com", "--json"],
+      { env },
+    );
+
+    expect(routeStep(result.stdout)).toEqual({ id: "route", status: "ok", detail: "no shadowing route" });
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  }, 120_000);
+
+  it("--dry-run reports would_create and touches the zone not at all", async () => {
+    cf.state.zoneRoutes.push({ ...SHADOW });
+    const env = await initEnv();
+
+    const result = await runCli(
+      ["init", "--name", "dryroute", "--domain", "dryroute.example.com", "--dry-run", "--json"],
+      { env },
+    );
+
+    expect(result.code, result.stderr).toBe(0);
+    expect(routeStep(result.stdout)?.status).toBe("would_create");
+    expect(routeStep(result.stdout)?.detail).toContain("dryroute.example.com/*");
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  }, 120_000);
+
+  it("names Workers Routes:Edit and still runs the health poll when the write is refused", async () => {
+    cf.state.zoneRoutes.push({ ...SHADOW });
+    cf.state.routeWriteForbidden = true;
+    const env = await initEnv();
+
+    const result = await runCli(
+      ["init", "--name", "noperm", "--domain", "noperm.example.com", "--json"],
+      { env },
+    );
+
+    const route = routeStep(result.stdout);
+    expect(route?.status).toBe("error");
+    expect(route?.detail).toContain("Workers Routes:Edit");
+    expect(route?.detail).toContain("noperm.example.com/*");
+    // The record stays honest: the run went on to probe the instance.
+    expect(steps(result.stdout).map((s) => s.id)).toContain("health");
+    expect(result.code).toBe(1);
+    expect(cf.state.zoneRoutes).toHaveLength(1);
+  }, 120_000);
+
+  it("--check reports route_clear as a fail with the route to add by hand", async () => {
+    cf.state.zoneRoutes.push({ ...SHADOW });
+    const env = await initEnv();
+
+    const result = await runCli(
+      ["init", "--name", "shadowed", "--domain", "shadowed.example.com", "--check", "--json"],
+      { env },
+    );
+
+    const report = oneJsonDocument(result.stdout) as {
+      checks: Array<{ id: string; status: string; evidence: string; remediation?: string }>;
+    };
+    const route = report.checks.find((check) => check.id === "route_clear");
+    expect(route?.status).toBe("fail");
+    expect(route?.evidence).toContain("*.example.com/*");
+    expect(route?.remediation).toContain("shadowed.example.com/*");
+    expect(result.code).toBe(1);
+    // `--check` never mutates.
+    expect(cf.state.zoneRoutes).toHaveLength(1);
   }, 120_000);
 });
