@@ -147,7 +147,7 @@ export async function runCommand(invocation: Invocation, io: RunIo): Promise<voi
       files,
       settings,
     });
-    renderResult(io, mode, op.name, answer.value);
+    renderResult(io, mode, op, answer.value);
     return;
   }
 
@@ -155,13 +155,14 @@ export async function runCommand(invocation: Invocation, io: RunIo): Promise<voi
     const report = await followScan(client, op, input, (step) => {
       if (mode === "jsonl") io.stdout.write(jsonLine(step));
     });
-    renderResult(io, mode, op.name, report);
+    renderResult(io, mode, op, report);
     return;
   }
 
   const answer = await client.call(op, input);
-  const value = op.name === "delete" ? { slug: input.slug, deleted: true } : answer.value;
-  renderResult(io, mode, op.name, value);
+  // A `204` carries no body, so the entry says what the one document is.
+  const value = op.cli?.result === undefined ? answer.value : op.cli.result(input);
+  renderResult(io, mode, op, value);
 }
 
 function toSlug(target: string, canonicalUrl: string): string {

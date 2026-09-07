@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { instancesPath, resolveCredentials } from "../../src/cli/credentials.js";
+import { instancesPath, resolveCredentials, selectInstance } from "../../src/cli/credentials.js";
 import type { InstancesFile } from "../../src/cli/credentials.js";
 
 /**
@@ -35,10 +35,13 @@ describe("resolveCredentials", () => {
     expect(resolved).toEqual({ url: "https://env.example", key: "k-env", source: "env" });
   });
 
-  it("refuses half an env pair, naming the missing half", () => {
-    const half = codeOf(() => resolveCredentials({ env: { DROPTHIS_URL: "https://env.example" }, file }));
-    expect(half.code).toBe("INVALID_INPUT");
-    expect(half.message).toContain("DROPTHIS_KEY");
+  it("refuses half an env pair, naming the missing half — each half on its own", () => {
+    const noKey = codeOf(() => resolveCredentials({ env: { DROPTHIS_URL: "https://env.example" }, file }));
+    expect(noKey.code).toBe("INVALID_INPUT");
+    expect(noKey.message).toContain("DROPTHIS_KEY");
+    const noUrl = codeOf(() => resolveCredentials({ env: { DROPTHIS_KEY: "k-env" }, file }));
+    expect(noUrl.code).toBe("INVALID_INPUT");
+    expect(noUrl.message).toContain("DROPTHIS_URL");
   });
 
   it("selects --instance, then DROPTHIS_INSTANCE, then the file's default", () => {
@@ -80,5 +83,66 @@ describe("resolveCredentials", () => {
       "/x/cfg/dropthis/instances.json",
     );
     expect(instancesPath({ HOME: "/home/u" })).toBe("/home/u/.config/dropthis/instances.json");
+  });
+});
+
+/**
+ * `selectInstance` is the one precedence implementation (issue #32): "which
+ * instance would this run use, and why", with no key in the answer. Both the
+ * command path (through `resolveCredentials`) and `instance list` ask it, so
+ * a listing can never mark a default a command would refuse.
+ */
+describe("selectInstance", () => {
+  it("answers `env` with the trimmed url and no key", () => {
+    expect(selectInstance({ env: { DROPTHIS_URL: "https://env.example/", DROPTHIS_KEY: "k-env" }, file })).toEqual({
+      kind: "env",
+      url: "https://env.example",
+    });
+  });
+
+  it("refuses DROPTHIS_URL without DROPTHIS_KEY, naming the missing half", () => {
+    const half = codeOf(() => selectInstance({ env: { DROPTHIS_URL: "https://env.example" }, file }));
+    expect(half.code).toBe("INVALID_INPUT");
+    expect(half.message).toContain("DROPTHIS_KEY");
+  });
+
+  it("refuses DROPTHIS_KEY without DROPTHIS_URL, naming the missing half", () => {
+    const half = codeOf(() => selectInstance({ env: { DROPTHIS_KEY: "k-env" }, file }));
+    expect(half.code).toBe("INVALID_INPUT");
+    expect(half.message).toContain("DROPTHIS_URL");
+  });
+
+  it("answers the file's default, then its only instance, by name", () => {
+    expect(selectInstance({ env: {}, file })).toEqual({ kind: "file", name: "main" });
+    const one: InstancesFile = { instances: { solo: { url: "https://solo.example", key: "k" } } };
+    expect(selectInstance({ env: {}, file: one })).toEqual({ kind: "file", name: "solo" });
+  });
+
+  it("answers `none` with a reason: nothing configured, or several and no default", () => {
+    expect(selectInstance({ env: {}, file: null })).toEqual({ kind: "none", reason: "no-instances", known: [] });
+    const two: InstancesFile = { instances: file.instances };
+    expect(selectInstance({ env: {}, file: two })).toEqual({
+      kind: "none",
+      reason: "ambiguous",
+      known: ["client", "main"],
+    });
+  });
+
+  it("carries no key material in any answer", () => {
+    const answers = [
+      selectInstance({ env: { DROPTHIS_URL: "https://env.example", DROPTHIS_KEY: "k-env" }, file }),
+      selectInstance({ env: {}, file }),
+      selectInstance({ env: {}, file: null }),
+    ];
+    for (const answer of answers) {
+      expect(JSON.stringify(answer)).not.toContain("k-env");
+      expect(JSON.stringify(answer)).not.toContain("k-main");
+    }
+  });
+
+  it("names the known instances when an asked-for one does not exist", () => {
+    const unknown = codeOf(() => selectInstance({ env: {}, instance: "nope", file }));
+    expect(unknown.code).toBe("INVALID_INPUT");
+    expect(unknown.message).toContain("client, main");
   });
 });

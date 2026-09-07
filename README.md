@@ -90,6 +90,7 @@ export CLOUDFLARE_API_TOKEN=…  CLOUDFLARE_ACCOUNT_ID=…
 npx ./packages/dropthis init --domain drops.example.com --json   # omit --domain for *.workers.dev
 npm install -g ./packages/dropthis                                # `dropthis` on your PATH
 dropthis connect --client claude-code                            # or cursor | codex | claude-ai
+dropthis connect                                                 # no --client: just this instance's URLs
 dropthis publish ./report --title "Q3 report"                    # → https://drops.example.com/k7x2m9q4pz/
 ```
 
@@ -137,6 +138,7 @@ dropthis config get --json         # this instance's policy
 dropthis usage --json              # drops and bytes per state
 dropthis prune --json              # dry run; --no-dry-run deletes what is past grace
 dropthis doctor --json             # the instance proves itself
+dropthis instance list --json      # what is configured on this machine, with its URLs; never a key
 dropthis commands --json           # the whole surface, generated from the registry
 ```
 
@@ -149,7 +151,8 @@ The same operations are MCP tools (`dropthis_publish`, `dropthis_update`, `dropt
 
 Credentials: `CLOUDFLARE_API_TOKEN` for `init`; `DROPTHIS_URL` + `DROPTHIS_KEY` for
 everything else, or `--instance <name>` from `instances.json` (an only instance is the
-default). `--json` prints exactly one JSON document; on `publish` and `update` plain stdout
+default); `dropthis instance list` lists them with their URLs and the one a bare command uses.
+`--json` prints exactly one JSON document; on `publish` and `update` plain stdout
 is the URL. Exit codes: `0` ok, `1` failure, `2` cancelled, `4` auth required. Never a
 prompt when stdin is not a terminal. A chosen password arrives on stdin
 (`--password-stdin`), never as a flag.

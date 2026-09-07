@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { mcpRoutes } from "./api/mcp.js";
 import { apiRoutes } from "./api/router.js";
 import type { AppEnv, Env } from "./bindings.js";
-import { aliasRedirect } from "./canonical.js";
+import { aliasRedirect, createOriginsMemo } from "./canonical.js";
 import { renderConnectPage } from "./connect-page.js";
 import { PRODUCTION_HOOKS } from "./dev/hooks.js";
 import type { DevHooks } from "./dev/hooks.js";
@@ -37,6 +37,11 @@ const NOT_FOUND_PAGE = `<!doctype html>
  */
 export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
   const app = new Hono<AppEnv>();
+
+  // One memo per isolate for the instance's origins, so the viewer can move an
+  // alias request without an R2 GET per request (issue #26, decision #103).
+  // `/_connect` shares it: one code path, one read.
+  const origins = createOriginsMemo();
 
   // Drops are not for search engines, and neither is the control plane. The one
   // exception is a drop whose own `noindex` is off — the field would mean
@@ -78,12 +83,12 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
   // it holds no secret, and the `user add` message links a colleague straight
   // to it (issue #21). Same `connectFor()` payload as the agent gets.
   app.on(["GET", "HEAD"], "/_connect", async (c) => {
-    const config = await loadInstanceConfig(c.env.BUCKET, c.req.url);
-    const moved = aliasRedirect(c.req.raw, config);
+    const here = await origins(c.env.BUCKET, c.req.url, hooks.originsTtlMs(c.env));
+    const moved = aliasRedirect(c.req.raw, here);
     if (moved !== null) return moved;
     const connect = connectFor({
-      canonicalUrl: config.canonicalUrl,
-      instanceName: config.instanceName,
+      canonicalUrl: here.canonicalUrl,
+      instanceName: here.instanceName,
     });
     return c.html(renderConnectPage(connect), 200, {
       "cache-control": "no-cache, must-revalidate",
@@ -92,7 +97,7 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
 
   // The viewer is last: it owns every path that is not the control plane, and
   // `RESERVED_PREFIXES` plus the `_`-free slug alphabet keep the two apart.
-  app.route("/", viewerRoutes(hooks));
+  app.route("/", viewerRoutes(hooks, origins));
 
   // A path under a reserved prefix belongs to the control plane, so its 404 is
   // the machine-readable one; anything else is a viewer path and gets the page.

@@ -89,6 +89,7 @@ bucket `dropthis-<name>-drops`); without it a rerun reconciles `main`.
 ```sh
 npm install -g ./packages/dropthis
 dropthis connect --client claude-code --json   # claude-code | cursor | codex | claude-ai
+dropthis connect --json                        # no --client: the instance's four URLs, nothing applied
 ```
 
 - `claude-code` writes `.mcp.json` in the current directory with `type: http`, the
@@ -101,7 +102,9 @@ dropthis connect --client claude-code --json   # claude-code | cursor | codex | 
   custom connector → paste the URL → Connect → paste the key). On a Team or Enterprise plan
   only an Owner can add a custom connector.
 
-Add `--instance <name>` when the account holds several instances.
+Add `--instance <name>` when the account holds several instances; `dropthis instance list
+--json` lists what is configured on this machine, each row with its MCP, REST, skill and
+connect-page URL, and which one a bare command uses.
 
 ## 5. Prove it and hand over
 

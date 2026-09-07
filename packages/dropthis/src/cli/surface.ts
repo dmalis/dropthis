@@ -8,10 +8,11 @@
  * There is no per-command parser to drift from the REST body — a field added
  * to a registry schema is a flag the next build has.
  *
- * Three things are not operations and are mapped by name: `health` and the
- * raw download are not commands; the staged-upload path is how `publish` and
- * `update` move large files, never a command of its own; `doctor.checks` is
- * `doctor --list`.
+ * What the schema cannot say — which operations are not commands, which path
+ * parameter also takes a URL, which body field the grammar puts first, which
+ * operation pages — is the `cli` block on the operation entry itself
+ * (`registry/types.ts`, `CliSurface`), so adding an operation never means
+ * editing this file (#28).
  */
 import type { z } from "zod";
 import { OPERATIONS } from "../../../worker/src/registry/index.js";
@@ -63,17 +64,6 @@ export type CommandSpec = {
   /** The operation pages with a cursor: `--jsonl` streams one object per call. */
   steps: boolean;
 };
-
-/** Operations that are not commands, and why (in the module comment). */
-const NOT_COMMANDS = new Set(["health", "file_download", "upload.create", "upload.put", "upload.commit", "doctor.checks"]);
-
-/** Path parameters that take a slug OR a drop URL of this instance. */
-const TARGET_PARAMS = new Set(["slug"]);
-
-/** Body fields the grammar puts first: `user add <label>`. */
-const POSITIONAL_FIELDS = new Set(["label"]);
-
-const PAGED = new Set(["usage", "prune"]);
 
 type Def = {
   type: string;
@@ -139,19 +129,22 @@ function specFor(op: Operation<never>): CommandSpec {
   const args: ArgSpec[] = [];
   const flags: FlagSpec[] = [];
   const def = defOf(op.schema as unknown as z.ZodType);
+  const steps = op.cli?.paged === true;
+  const targets = new Set(op.cli?.target ?? []);
+  const positional = new Set(op.cli?.positional ?? []);
 
   if (def.type !== "object") {
     // A free-form input (`config set`'s policy patch) is one JSON argument.
     args.push({ field: "*", name: "json", kind: "json", variadic: false, required: true });
-    return { words, op, args, flags, steps: PAGED.has(op.name) };
+    return { words, op, args, flags, steps };
   }
 
   const params = new Set(op.params ?? []);
   for (const name of op.params ?? []) {
     args.push({
       field: name,
-      name: TARGET_PARAMS.has(name) ? "target" : name,
-      kind: TARGET_PARAMS.has(name) ? "target" : "string",
+      name: targets.has(name) ? "target" : name,
+      kind: targets.has(name) ? "target" : "string",
       variadic: false,
       required: true,
     });
@@ -159,7 +152,7 @@ function specFor(op: Operation<never>): CommandSpec {
 
   for (const [name, schema] of Object.entries(def.shape ?? {})) {
     if (params.has(name)) continue;
-    if (POSITIONAL_FIELDS.has(name)) {
+    if (positional.has(name)) {
       args.push({ field: name, name, kind: "string", variadic: false, required: true });
       continue;
     }
@@ -205,7 +198,7 @@ function specFor(op: Operation<never>): CommandSpec {
     });
   }
 
-  return { words, op, args, flags, steps: PAGED.has(op.name) };
+  return { words, op, args, flags, steps };
 }
 
 /**
@@ -236,7 +229,7 @@ function descriptionOf(schema: z.ZodType): string | undefined {
 let cached: CommandSpec[] | undefined;
 
 export function commandSurface(): CommandSpec[] {
-  cached ??= OPERATIONS.filter((op) => !NOT_COMMANDS.has(op.name)).map(specFor);
+  cached ??= OPERATIONS.filter((op) => op.cli?.command !== false).map(specFor);
   return cached;
 }
 

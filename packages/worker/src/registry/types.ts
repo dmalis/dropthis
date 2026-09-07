@@ -59,6 +59,43 @@ export type OperationContext = {
  */
 export type ResultLine = (input: Record<string, unknown>, value: unknown) => string;
 
+/**
+ * What an operation is on the command line (AGENTS.md, "CLI conventions").
+ *
+ * Everything the CLI cannot read off the zod schema lives here, on the entry,
+ * and not in a table keyed by operation name inside `cli/surface.ts`: a second
+ * table keyed by name is a second registry, and adding an operation would mean
+ * editing the CLI too — which is exactly what the registry exists to prevent
+ * (issue #28, the same finding `resultLine` answered for MCP in #24).
+ */
+export type CliSurface = {
+  /**
+   * Not a command. `health` and the raw download are not things a person
+   * types; the staged-upload path is how `publish` and `update` move large
+   * files, never a command of its own; `doctor.checks` is `doctor --list`.
+   */
+  command?: false;
+  /** Path parameters that take a slug OR a drop URL of this instance. */
+  target?: readonly string[];
+  /** Body fields the grammar puts first: `user add <label>`. */
+  positional?: readonly string[];
+  /** The operation pages with a cursor: `--jsonl` streams one object per call. */
+  paged?: true;
+  /**
+   * REST answers with no body (`204`), so the CLI has nothing to print and
+   * `--json` would print `null` — which is not the one deterministic document
+   * the output contract promises. This builds it from the input instead.
+   */
+  result?: (input: Record<string, unknown>) => unknown;
+  /**
+   * Plain mode: the one line to write instead of the pretty-printed JSON, and
+   * where it goes. `publish` writes its URL on stdout so it pipes; `delete`
+   * and `user remove` have nothing a pipe wants, so their note goes to stderr
+   * and stdout stays empty.
+   */
+  plain?: { line: (value: unknown) => string; stream: "stdout" | "stderr" };
+};
+
 export type Operation<I = never> = {
   /** The registry name: `publish`, `user.add`. MCP prefixes it `dropthis_`. */
   name: string;
@@ -104,6 +141,8 @@ export type Operation<I = never> = {
    * `mcp-results.test.ts` pins that.
    */
   resultLine?: ResultLine;
+  /** What this operation is on the command line; see `CliSurface`. */
+  cli?: CliSurface;
 };
 
 /**

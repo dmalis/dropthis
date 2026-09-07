@@ -59,6 +59,7 @@ function requireSlug(slug: string): string {
 
 export const health: Operation<Record<string, never>> = {
   name: "health",
+  cli: { command: false },
   method: "GET",
   path: "/health",
   scope: "public",
@@ -69,6 +70,7 @@ export const health: Operation<Record<string, never>> = {
 
 export const publishOp: Operation<PublishInput> = {
   name: "publish",
+  cli: { plain: { line: (value) => asDrop(value).url, stream: "stdout" } },
   method: "POST",
   path: "/drops",
   scope: "user",
@@ -91,6 +93,7 @@ export const publishOp: Operation<PublishInput> = {
 
 export const updateOp: Operation<UpdateRequest> = {
   name: "update",
+  cli: { target: ["slug"], plain: { line: (value) => asDrop(value).url, stream: "stdout" } },
   method: "PATCH",
   path: "/drops/:slug",
   scope: "user",
@@ -119,6 +122,7 @@ export const updateOp: Operation<UpdateRequest> = {
 
 export const getOp: Operation<z.infer<typeof getSchema>> = {
   name: "get",
+  cli: { target: ["slug"] },
   method: "GET",
   path: "/drops/:slug",
   scope: "user",
@@ -157,6 +161,11 @@ export const listOp: Operation<ListInput> = {
 
 export const deleteOp: Operation<z.infer<typeof deleteSchema>> = {
   name: "delete",
+  cli: {
+    target: ["slug"],
+    result: (input) => ({ slug: input.slug, deleted: true }),
+    plain: { line: (value) => `deleted ${(value as { slug: string }).slug}`, stream: "stderr" },
+  },
   method: "DELETE",
   path: "/drops/:slug",
   scope: "user",
@@ -177,6 +186,7 @@ export const deleteOp: Operation<z.infer<typeof deleteSchema>> = {
 
 export const fileDownload: Operation<z.infer<typeof downloadSchema>> = {
   name: "file_download",
+  cli: { command: false },
   method: "GET",
   path: "/drops/:slug/files/*",
   scope: "user",

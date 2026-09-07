@@ -34,6 +34,7 @@ export const doctorOp: Operation<z.infer<typeof empty>> = {
 
 export const doctorChecks: Operation<z.infer<typeof empty>> = {
   name: "doctor.checks",
+  cli: { command: false },
   method: "GET",
   path: "/doctor/checks",
   scope: "admin",

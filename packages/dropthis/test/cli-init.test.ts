@@ -162,10 +162,11 @@ describe("init --domain and a shadowing Workers Route", () => {
     cf.state.routeWriteForbidden = false;
   });
 
-  const steps = (stdout: string): Array<{ step: string; status: string; detail?: string }> =>
-    (oneJsonDocument(stdout) as { steps: Array<{ step: string; status: string; detail?: string }> }).steps;
+  // A step row is keyed `id`, the same field a `doctor` check row carries (#28).
+  const steps = (stdout: string): Array<{ id: string; status: string; detail?: string }> =>
+    (oneJsonDocument(stdout) as { steps: Array<{ id: string; status: string; detail?: string }> }).steps;
 
-  const routeStep = (stdout: string) => steps(stdout).find((s) => s.step === "route");
+  const routeStep = (stdout: string) => steps(stdout).find((s) => s.id === "route");
 
   it("creates <hostname>/* when a foreign route shadows the domain", async () => {
     cf.state.zoneRoutes.push({ ...SHADOW });
@@ -177,7 +178,7 @@ describe("init --domain and a shadowing Workers Route", () => {
     );
 
     expect(routeStep(result.stdout)).toEqual({
-      step: "route",
+      id: "route",
       status: "created",
       detail:
         "shadowed.example.com/* \u2192 dropthis-shadowed (shadowed by *.example.com/* \u2192 notice)",
@@ -197,7 +198,7 @@ describe("init --domain and a shadowing Workers Route", () => {
       { env },
     );
 
-    expect(routeStep(result.stdout)).toEqual({ step: "route", status: "ok", detail: "no shadowing route" });
+    expect(routeStep(result.stdout)).toEqual({ id: "route", status: "ok", detail: "no shadowing route" });
     expect(cf.state.zoneRoutes).toHaveLength(1);
   }, 120_000);
 
@@ -231,7 +232,7 @@ describe("init --domain and a shadowing Workers Route", () => {
     expect(route?.detail).toContain("Workers Routes:Edit");
     expect(route?.detail).toContain("noperm.example.com/*");
     // The record stays honest: the run went on to probe the instance.
-    expect(steps(result.stdout).map((s) => s.step)).toContain("health");
+    expect(steps(result.stdout).map((s) => s.id)).toContain("health");
     expect(result.code).toBe(1);
     expect(cf.state.zoneRoutes).toHaveLength(1);
   }, 120_000);

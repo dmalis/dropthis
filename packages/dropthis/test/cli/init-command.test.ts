@@ -137,7 +137,8 @@ describe("init --json", () => {
     expect(document.kv_namespace).toBe("dropthis-main-oauth");
     expect(document.admin_key_status).toBe("created");
     expect(document.admin_key).toMatch(/^[0-9a-f]{64}$/);
-    expect((document.steps as Array<{ step: string }>).map((s) => s.step)).toContain("doctor");
+    // The step's field is `id`, matching `doctor`'s check rows (#28 item 2).
+    expect((document.steps as Array<{ id: string }>).map((s) => s.id)).toContain("doctor");
     expect(document.instances_file).toMatch(/instances\.json$/);
 
     const stored = JSON.parse(await readFile(String(document.instances_file), "utf8")) as {
@@ -211,7 +212,7 @@ describe("init --json", () => {
 
     const lines = result.stdout.split("\n").filter((line) => line.length > 0).map((line) => JSON.parse(line));
     expect(lines.length).toBeGreaterThan(5);
-    expect(lines[0]).toEqual({ step: "token", status: "ok" });
+    expect(lines[0]).toEqual({ id: "token", status: "ok" });
     const final = lines[lines.length - 1] as Record<string, unknown>;
     expectProved(final, 0);
     expect(final.steps).toHaveLength(lines.length - 1);
