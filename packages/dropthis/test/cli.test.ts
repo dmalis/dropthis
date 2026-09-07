@@ -51,6 +51,8 @@ describe("dropthis commands --json", () => {
     expect(surface.map((entry) => entry.command)).toEqual([
       "publish", "update", "get", "list", "delete", "user add", "user list", "user remove",
       "config get", "config set", "usage", "prune", "doctor",
+      // The local commands come after the registry's, in one array (#30).
+      "instances",
     ]);
     const publish = surface[0]!;
     expect(publish.arguments).toEqual([{ name: "paths", kind: "files", required: true, variadic: true }]);
@@ -59,6 +61,19 @@ describe("dropthis commands --json", () => {
       "--password-stdin",
     ]);
     expect(surface.find((entry) => entry.command === "prune")!.steps).toBe(true);
+  });
+
+  /**
+   * The whole document, byte for byte. `commands --json` is what an agent
+   * reads to learn this CLI; a refactor that moves where the surface metadata
+   * lives (issue #28, the side registries in `cli/surface.ts`) must not move
+   * a single byte of it. A deliberate change updates this file in the same
+   * commit that makes it.
+   */
+  it("is byte-identical to the pinned surface document", async () => {
+    const run = await runCli(["commands", "--json"], { env });
+    expect(run.code, run.stderr).toBe(0);
+    await expect(run.stdout).toMatchFileSnapshot("./__snapshots__/commands.json");
   });
 
   it("no flag anywhere accepts a key", async () => {

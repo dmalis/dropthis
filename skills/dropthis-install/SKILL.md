@@ -100,7 +100,8 @@ dropthis connect --client claude-code --json   # claude-code | cursor | codex | 
   custom connector → paste the URL → Connect → paste the key). On a Team or Enterprise plan
   only an Owner can add a custom connector.
 
-Add `--instance <name>` when the account holds several instances.
+Add `--instance <name>` when the account holds several instances; `dropthis instances
+--json` lists what is configured on this machine and which one a bare command uses.
 
 ## 5. Prove it and hand over
 

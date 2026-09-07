@@ -85,6 +85,7 @@ export const userList: Operation<z.infer<typeof listSchema>> = {
 
 export const userAdd: Operation<UserAddInput> = {
   name: "user.add",
+  cli: { positional: ["label"] },
   method: "POST",
   path: "/users",
   scope: "admin",
@@ -107,6 +108,14 @@ export const userAdd: Operation<UserAddInput> = {
 
 export const userRemove: Operation<z.infer<typeof removeSchema>> = {
   name: "user.remove",
+  // REST answers 204 with no body, so the CLI builds its own one document:
+  // `--json` printed `null` before (#28), which is not a document an agent can
+  // branch on. The shape mirrors `delete`'s `{slug, deleted: true}`, and a
+  // rerun says the same thing because the operation is idempotent.
+  cli: {
+    result: (input) => ({ label: input.label, removed: true }),
+    plain: { line: (value) => `removed ${(value as { label: string }).label}`, stream: "stderr" },
+  },
   method: "DELETE",
   path: "/users/:label",
   scope: "admin",

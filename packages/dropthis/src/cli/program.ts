@@ -11,6 +11,18 @@ import type { ArgSpec, CommandSpec, FlagSpec } from "./surface.js";
 import type { Globals, Invocation } from "./run.js";
 import type { InitInput } from "./init-command.js";
 import { CLIENTS } from "./connect-command.js";
+import { INSTANCES_SUMMARY } from "./instances-command.js";
+
+/**
+ * Commands that are not registry operations because they read a local file
+ * rather than call an instance. One declaration: `buildProgram` mounts them
+ * and `dropthis commands` lists them from the same array.
+ *
+ * `init`, `connect` and `auth-header` are still declared by hand below —
+ * `init` takes a Cloudflare token and a flag set of its own, and #28 moved the
+ * registry-backed metadata, not those three.
+ */
+export const LOCAL_COMMANDS = [{ command: "instances", summary: INSTANCES_SUMMARY }] as const;
 
 export type ProgramIo = {
   stdin: Readable & { isTTY?: boolean };
@@ -24,6 +36,7 @@ export type Handlers = {
   /** Hand-mounted: these run before an instance exists, or read its file. */
   init(input: InitInput, globals: Globals): Promise<void>;
   connect(client: string, globals: Globals): Promise<void>;
+  instances(globals: Globals): Promise<void>;
   authHeader(globals: Globals): Promise<void>;
 };
 
@@ -167,6 +180,13 @@ function mountInstanceLifecycle(program: Command, handlers: Handlers): void {
   withGlobals(connect).action(async function (this: Command) {
     await handlers.connect(String(this.opts<Record<string, unknown>>().client), globalsOf(this));
   });
+
+  for (const local of LOCAL_COMMANDS) {
+    const command = program.command(local.command).description(local.summary);
+    withGlobals(command).action(async function (this: Command) {
+      await handlers.instances(globalsOf(this));
+    });
+  }
 
   const authHeader = program
     .command("auth-header")

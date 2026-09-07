@@ -26,6 +26,7 @@ const pruneSchema = z.strictObject({
 
 export const usageOp: Operation<z.infer<typeof usageSchema>> = {
   name: "usage",
+  cli: { paged: true },
   method: "GET",
   path: "/usage",
   scope: "admin",
@@ -46,6 +47,7 @@ export const usageOp: Operation<z.infer<typeof usageSchema>> = {
 
 export const pruneOp: Operation<z.infer<typeof pruneSchema>> = {
   name: "prune",
+  cli: { paged: true },
   method: "POST",
   path: "/prune",
   scope: "admin",

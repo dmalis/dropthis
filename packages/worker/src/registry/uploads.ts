@@ -111,6 +111,7 @@ function parseWith<T>(schema: z.ZodType<T>, fields: string): (raw: unknown) => T
 
 export const uploadCreate: Operation<SessionInput> = {
   name: "upload.create",
+  cli: { command: false },
   method: "POST",
   path: "/uploads",
   scope: "user",
@@ -133,6 +134,7 @@ export const uploadCreate: Operation<SessionInput> = {
 
 export const uploadPut: Operation<PutInput> = {
   name: "upload.put",
+  cli: { command: false },
   method: "PUT",
   path: "/uploads/:id/blobs/:sha256",
   scope: "signed",
@@ -151,6 +153,7 @@ type CommitRequest = CommitInput & { id: string };
 
 export const uploadCommit: Operation<CommitRequest> = {
   name: "upload.commit",
+  cli: { command: false },
   method: "POST",
   path: "/uploads/:id/commit",
   scope: "user",
