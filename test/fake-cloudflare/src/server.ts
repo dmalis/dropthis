@@ -41,6 +41,8 @@ export type FakeState = {
   zoneRoutes: FakeZoneRoute[];
   /** 403 the route WRITE only; mutable so one long-lived fake can test both. */
   routeWriteForbidden: boolean;
+  /** 403 the route READ. A token may see custom domains and not zone routes. */
+  routeReadForbidden: boolean;
   accounts: Array<{ id: string; name: string }>;
   /** Scopes the token does NOT have — used to test named-permission preflight. */
   missingScopes: FakeScope[];
@@ -69,6 +71,8 @@ export type FakeOptions = {
    * that scope also guards `GET /workers/domains`, which runs first.
    */
   routeWriteForbidden?: boolean;
+  /** 403 `GET /zones/:zone/workers/routes`, leaving every other call alone. */
+  routeReadForbidden?: boolean;
   /** Page size the fake enforces regardless of what the client asks for. */
   perPage?: number;
   /**
@@ -117,6 +121,7 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     workerDomains: [],
     zoneRoutes: [...(options.zoneRoutes ?? [])],
     routeWriteForbidden: options.routeWriteForbidden ?? false,
+    routeReadForbidden: options.routeReadForbidden ?? false,
     accounts: options.accounts ?? [{ id: options.accountId ?? "fake-account-id", name: "Fake Account" }],
     missingScopes: [...(options.missingScopes ?? [])],
     r2SubscriptionEnabled: options.r2SubscriptionEnabled ?? true,
@@ -398,6 +403,9 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
   app.get("/client/v4/zones/:zoneId/workers/routes", (c) => {
     const forbidden = requireScope("workers-routes");
     if (forbidden) return c.json(forbidden, 403);
+    if (state.routeReadForbidden) {
+      return c.json(fail(10000, "Authentication error: missing permission Workers Routes:Read"), 403);
+    }
     const zoneId = c.req.param("zoneId");
     const matching = state.zoneRoutes.filter((route) => route.zoneId === zoneId);
     return c.json(ok(matching.map(({ id, pattern, script }) => ({ id, pattern, script }))));

@@ -244,15 +244,19 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   push({ id: "kv_namespace", status: kvResult.status });
 
   if (options.dryRun) {
+    let dryOk = true;
     if (options.domain !== undefined) {
       push({ id: "domain", status: "would_create", detail: `${options.domain} in zone ${domainZone!.name}` });
+      // A preflight that cannot even READ the zone's routes cannot promise the
+      // hostname will answer, so a dry run says so instead of reporting green.
       const route = await reconcileRoute(client, domainZone!.id, options.domain, worker, {
         dryRun: true,
       });
       push({ id: "route", status: route.status, detail: route.detail });
+      if (route.status === "error") dryOk = false;
     }
     push({ id: "deploy", status: "skip", detail: "dry-run" });
-    return { ok: true, name: instanceName, worker, bucket, kvNamespace, steps };
+    return { ok: dryOk, name: instanceName, worker, bucket, kvNamespace, steps };
   }
 
   const rotate = options.rotateAdminKey === true;

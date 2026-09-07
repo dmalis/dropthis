@@ -381,6 +381,25 @@ describe("runInit — the shadowing-route step", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("--dry-run is not ok when it cannot even read the zone's routes", async () => {
+    const cf = await fake({ zoneRoutes: [{ ...SHADOW }], routeReadForbidden: true });
+    const { deploy } = stubDeploy(cf, teardown);
+
+    const result = await runInit({
+      creds: CREDS(cf),
+      dryRun: true,
+      deploy,
+      domain: "drops.example.com",
+      poll: FAST_POLL,
+    });
+
+    // A preflight that cannot read the routes cannot promise the hostname
+    // will answer, so it does not report green.
+    expect(result.ok).toBe(false);
+    expect(step(result.steps, "route")?.status).toBe("error");
+    expect(step(result.steps, "route")?.detail).toContain("Workers Routes:Edit");
+  });
+
   it("names Workers Routes:Edit and CONTINUES when the route write is refused", async () => {
     const cf = await fake({ zoneRoutes: [{ ...SHADOW }], routeWriteForbidden: true });
     const { deploy } = stubDeploy(cf, teardown);
