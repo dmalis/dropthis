@@ -60,7 +60,8 @@ step answers `ok` or `would_create` and nothing is created.
 What `init` does, in order: verifies the credential, pins the account, checks the four
 permissions and the R2 subscription, creates or repairs the bucket and the KV namespace by
 name, mints the admin key and writes its record into the bucket, deploys the Worker with its
-secret, adds the lifecycle rules, attaches the domain, polls `/_api/v1/health`, runs
+secret, adds the lifecycle rules, attaches the domain, adds the Workers Route that keeps a
+pre-existing route on the zone from shadowing it, polls `/_api/v1/health`, runs
 `doctor` (a real hello drop: publish, fetch, delete), saves the instance to
 `~/.config/dropthis/instances.json`, and prints the connect snippets.
 
@@ -73,9 +74,9 @@ Read the one JSON document it prints:
   it is shown once; `--rotate-admin-key` mints a new one and revokes the old.
 - `ok: false`: the failing step's `detail` names the fix. Exit code `4` with no token means
   no credential was found; the remediation names the token URL and the four permissions —
-  relay it. A `health` step that never answers over a working deploy is usually a
-  pre-existing Workers Route on the zone shadowing the Custom Domain; tell the human which
-  route, or fall back to `*.workers.dev`.
+  relay it. A `route` step that is `error` means the token cannot write Workers Routes: its
+  `detail` names the permission and the exact route to add by hand, and the hostname will
+  keep answering from another Worker until someone does.
 - **Rerunning is safe.** The same command repairs a broken run: `admin_key_status:
   "existing"`, no key re-revealed, `deploy` detail "HMAC_SECRET reused from the deployed
   Worker".
