@@ -1217,3 +1217,30 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     terminal steps, plus a cost table with each Cloudflare and competitor price cited and dated
     the day it was read. Everything in these files was run as written against a dev instance;
     `init` on the real account is #98's record and is quoted, not rerun.
+
+103. **The viewer moves an alias request, and reads the origins from a memo (issue #26,
+    2026-09-07).** AGENTS.md has always said a viewer request on an alias redirects to the
+    canonical origin, but `aliasRedirect()` was called only by `/_connect` and the OAuth
+    documents, so instance `damjan` answered the same drop 200 on both of its hostnames. The
+    viewer now calls it before it reads the slug pointer. The cost was the real decision: the
+    origins live in `system/config.json`, which the viewer never read, and a GET per request
+    would put a third R2 read on the hot path against principle 2. Rejected: (a) that plain
+    per-request read — the honest option, but a third of the viewer's R2 bill for a field that
+    changes at `init` time; (b) baking the origins into the deploy as a Worker var — zero
+    reads, but it goes stale the moment anything writes `canonical_url` without a redeploy,
+    and it puts identity in two places; (c) deleting the contract sentence — the workers.dev
+    hostname answering as well is a second URL for a product whose whole identity is that the
+    URL is the id. Chosen: a per-isolate memo of the three identity fields (`canonical_url`,
+    `alias_origins`, `instance_name`) with a 60 s TTL, 0 in the dev build so the contract
+    test's config swap is visible on the next request. This does not violate "the viewer never
+    trusts a cache for truth": those fields are instance identity, not drop truth; only `init`
+    writes them and `init` always redeploys, which drops every memo; and a stale origin for at
+    most a minute changes where a redirect points, never what a drop serves. `/_connect` shares
+    the memo, so there is one code path. `/<slug>` on an alias is ONE 301 (the trailing slash
+    is added by the move), not two. A request whose host is in neither field is served, not
+    redirected — a Route an operator added ahead of a config write must not lock a visitor out.
+    `/_api/*` and `/_skill.md` are not moved: an API client uses the origin it was given, and
+    the CLI already refuses a drop URL off its configured instance (`WRONG_INSTANCE`, #85). The
+    OAuth documents keep the redirect they have had since #12, because the issuer, resource and
+    discovery documents all name the canonical origin.
+

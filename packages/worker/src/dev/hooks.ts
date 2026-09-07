@@ -29,10 +29,18 @@ export type DevHooks = {
    * dev build answers: the refresh flow cannot be tested by waiting an hour.
    */
   accessTokenTtl(request: Request, env: Env): number | undefined;
+  /**
+   * How long the viewer may answer from its memo of the instance's origins
+   * (`canonical.ts`). Production memoises for a minute; the dev build answers
+   * 0, so a contract test that swaps `system/config.json` sees the swap on the
+   * very next request instead of waiting one out.
+   */
+  originsTtlMs(env: Env): number;
 };
 
 export const PRODUCTION_HOOKS: DevHooks = {
   now: () => new Date(),
   fault: () => undefined,
   accessTokenTtl: () => undefined,
+  originsTtlMs: () => 60_000,
 };

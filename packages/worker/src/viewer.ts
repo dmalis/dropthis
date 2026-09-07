@@ -20,6 +20,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppEnv } from "./bindings.js";
+import { aliasRedirect, canonicalOriginFor, movedTo } from "./canonical.js";
+import type { OriginsMemo } from "./canonical.js";
 import type { DevHooks } from "./dev/hooks.js";
 import { dropState } from "./domain/expiry.js";
 import type { DropMeta } from "./domain/meta.js";
@@ -45,16 +47,26 @@ import {
 /** A typed password is short; anything larger than this is not one. */
 const MAX_UNLOCK_BODY_BYTES = 4096;
 
-export function viewerRoutes(hooks: DevHooks) {
+export function viewerRoutes(hooks: DevHooks, origins: OriginsMemo) {
   const viewer = new Hono<AppEnv>();
 
-  viewer.get("/:slug", (c, next) => {
+  /**
+   * The instance's origins, memoised (`canonical.ts`): the viewer asks on
+   * every request and pays an R2 GET at most once a minute per isolate.
+   */
+  const originsFor = (c: Context<AppEnv>) =>
+    origins(c.env.BUCKET, c.req.url, hooks.originsTtlMs(c.env));
+
+  viewer.get("/:slug", async (c, next) => {
     // A drop is a directory: `/<slug>` redirects to `/<slug>/` so that relative
     // links inside a published page resolve against the drop, not the root.
     const slug = c.req.param("slug");
     if (!isSlug(slug)) return next();
     const url = new URL(c.req.url);
-    return c.redirect(`${url.pathname}/${url.search}`, 301);
+    // On an alias both moves are due. They are one 301, not two: a visitor
+    // should not pay a second round trip for an origin they never chose.
+    const base = canonicalOriginFor(await originsFor(c), url) ?? "";
+    return movedTo(`${base}${url.pathname}/${url.search}`);
   });
 
   /**
@@ -62,6 +74,14 @@ export function viewerRoutes(hooks: DevHooks) {
    * unlocking lands them where they were going rather than at the drop root.
    */
   viewer.post("/:slug/*", async (c, next) => {
+    // The same question every viewer handler asks first. A POST is answered on
+    // the alias — `aliasRedirect` is GET/HEAD only, because a 301 on a POST is
+    // a request a client may replay against the wrong origin — but the check
+    // runs here too, so no handler is the exempt one.
+    if (isSlug(c.req.param("slug") ?? "")) {
+      const moved = aliasRedirect(c.req.raw, await originsFor(c));
+      if (moved !== null) return moved;
+    }
     const gate = await openGate(c, hooks);
     if (gate.kind === "not_a_drop") return next();
     if (gate.kind === "response") return gate.response;
@@ -96,6 +116,12 @@ export function viewerRoutes(hooks: DevHooks) {
   });
 
   viewer.get("/:slug/*", async (c, next) => {
+    // Before the drop is read, not after: an alias must never serve a drop,
+    // and this answer is about the origin, not about the drop.
+    if (isSlug(c.req.param("slug") ?? "")) {
+      const moved = aliasRedirect(c.req.raw, await originsFor(c));
+      if (moved !== null) return moved;
+    }
     const gate = await openGate(c, hooks);
     if (gate.kind === "not_a_drop") return next();
     if (gate.kind === "response") return gate.response;
