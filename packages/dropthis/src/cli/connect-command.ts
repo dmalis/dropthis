@@ -1,5 +1,8 @@
 /**
- * `dropthis connect --client <client>` and `dropthis auth-header`.
+ * `dropthis connect [--client <client>]` and `dropthis auth-header`.
+ *
+ * With no `--client` it prints the instance's four URLs and nothing is
+ * applied; with one it registers that client.
  *
  * The payload is the instance's own (`worker/src/registry/connect.ts`), so the
  * snippet an operator gets from `user add` and the one this command applies
@@ -80,7 +83,25 @@ const STRATEGIES: Record<ClientName, ClientStrategy> = {
   },
 };
 
-export async function runConnectCommand(client: ClientName, globals: Globals, io: RunIo): Promise<number> {
+/**
+ * With no `--client` the command answers the question underneath the flag:
+ * where is this instance? It prints the four addresses and the name of the
+ * key's environment variable, applies nothing and writes no file (#31). The
+ * `--json` document is `connectFor()`'s object as it stands — the per-client
+ * snippets included, because an agent reading it can then apply one itself.
+ */
+const URL_LABELS: Array<[string, keyof Pick<Connect, "mcp_url" | "rest_url" | "skill_url" | "connect_page">]> = [
+  ["MCP", "mcp_url"],
+  ["REST", "rest_url"],
+  ["Skill", "skill_url"],
+  ["Connect page", "connect_page"],
+];
+
+export async function runConnectCommand(
+  client: ClientName | undefined,
+  globals: Globals,
+  io: RunIo,
+): Promise<number> {
   const credentials = resolveCredentials({
     env: io.env,
     instance: globals.instance,
@@ -89,6 +110,18 @@ export async function runConnectCommand(client: ClientName, globals: Globals, io
   const instanceName = credentials.instance ?? "main";
   const connect = connectFor({ canonicalUrl: credentials.url, instanceName });
   const mode = modeOf(globals);
+
+  if (client === undefined) {
+    if (mode !== "plain") {
+      io.stdout.write(jsonLine(connect));
+      return EXIT_OK;
+    }
+    const width = Math.max(...URL_LABELS.map(([label]) => label.length));
+    for (const [label, field] of URL_LABELS) io.stdout.write(`${label.padEnd(width)}  ${connect[field]}\n`);
+    io.stdout.write(`Key env var: ${connect.key_env_var}\n`);
+    return EXIT_OK;
+  }
+
   const strategy = STRATEGIES[client];
 
   const applied = await strategy.apply?.(io, connect);

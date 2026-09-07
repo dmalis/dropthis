@@ -14,7 +14,7 @@ import type { Globals } from "./run.js";
 import { commandSurface } from "./surface.js";
 import { isClientName, runAuthHeaderCommand, runConnectCommand, CLIENTS } from "./connect-command.js";
 import { runInitCommand } from "./init-command.js";
-import { runInstancesCommand } from "./instances-command.js";
+import { runInstanceListCommand } from "./instance-command.js";
 
 export type MainIo = {
   env: Record<string, string | undefined>;
@@ -63,7 +63,7 @@ export async function main(argv: string[], version: string, io: MainIo): Promise
     async connect(client, globals) {
       lastGlobals = globals;
       try {
-        if (!isClientName(client)) {
+        if (client !== undefined && !isClientName(client)) {
           throw new CliError(
             "INVALID_INPUT",
             `--client must be one of: ${CLIENTS.join(", ")}; got ${JSON.stringify(client)}.`,
@@ -75,10 +75,10 @@ export async function main(argv: string[], version: string, io: MainIo): Promise
         fail(error);
       }
     },
-    async instances(globals) {
+    async instanceList(globals) {
       lastGlobals = globals;
       try {
-        exitCode = await runInstancesCommand(globals, io);
+        exitCode = await runInstanceListCommand(globals, io);
       } catch (error) {
         fail(error);
       }

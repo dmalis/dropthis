@@ -11,7 +11,7 @@ import type { ArgSpec, CommandSpec, FlagSpec } from "./surface.js";
 import type { Globals, Invocation } from "./run.js";
 import type { InitInput } from "./init-command.js";
 import { CLIENTS } from "./connect-command.js";
-import { INSTANCES_SUMMARY } from "./instances-command.js";
+import { INSTANCE_LIST_SUMMARY } from "./instance-command.js";
 
 /**
  * Commands that are not registry operations because they read a local file
@@ -22,7 +22,7 @@ import { INSTANCES_SUMMARY } from "./instances-command.js";
  * `init` takes a Cloudflare token and a flag set of its own, and #28 moved the
  * registry-backed metadata, not those three.
  */
-export const LOCAL_COMMANDS = [{ command: "instances", summary: INSTANCES_SUMMARY }] as const;
+export const LOCAL_COMMANDS = [{ command: "instance list", summary: INSTANCE_LIST_SUMMARY }] as const;
 
 export type ProgramIo = {
   stdin: Readable & { isTTY?: boolean };
@@ -35,8 +35,8 @@ export type Handlers = {
   commands(globals: Globals): Promise<void>;
   /** Hand-mounted: these run before an instance exists, or read its file. */
   init(input: InitInput, globals: Globals): Promise<void>;
-  connect(client: string, globals: Globals): Promise<void>;
-  instances(globals: Globals): Promise<void>;
+  connect(client: string | undefined, globals: Globals): Promise<void>;
+  instanceList(globals: Globals): Promise<void>;
   authHeader(globals: Globals): Promise<void>;
 };
 
@@ -175,16 +175,26 @@ function mountInstanceLifecycle(program: Command, handlers: Handlers): void {
 
   const connect = program
     .command("connect")
-    .description("Register this instance with one MCP client, without putting the key in a file.")
-    .requiredOption(`--client <client>`, `One of: ${CLIENTS.join(", ")}.`);
+    .description("Print this instance's URLs, or register it with one MCP client without putting the key in a file.")
+    .option(`--client <client>`, `Register this client: ${CLIENTS.join(", ")}. Omitted, the URLs are printed.`);
   withGlobals(connect).action(async function (this: Command) {
-    await handlers.connect(String(this.opts<Record<string, unknown>>().client), globalsOf(this));
+    const client = this.opts<Record<string, unknown>>().client;
+    await handlers.connect(client === undefined ? undefined : String(client), globalsOf(this));
   });
 
+  // The local commands follow the same `noun verb` grammar as the registry's
+  // administration commands (AGENTS.md, "CLI conventions"), so they mount the
+  // same way: one parent per noun, reused if an operation already made it.
   for (const local of LOCAL_COMMANDS) {
-    const command = program.command(local.command).description(local.summary);
+    const [first, ...rest] = local.command.split(" ");
+    const parent =
+      rest.length === 0
+        ? program
+        : (program.commands.find((command) => command.name() === first) ??
+          program.command(first!).description(`${first} operations.`));
+    const command = parent.command(rest.length > 0 ? rest.join(" ") : first!).description(local.summary);
     withGlobals(command).action(async function (this: Command) {
-      await handlers.instances(globalsOf(this));
+      await handlers.instanceList(globalsOf(this));
     });
   }
 
