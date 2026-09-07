@@ -194,9 +194,13 @@ async function accountCheck(
   return report.ok ? EXIT_OK : EXIT_FAILURE;
 }
 
-/** snake_case on the wire, as every other surface (AGENTS.md, "Responses"). */
+/**
+ * snake_case on the wire, as every other surface (AGENTS.md, "Responses").
+ * The name of a row is `id`, the same field `doctor`'s check rows carry, so an
+ * agent reads both reports with one shape (#28 item 2).
+ */
 const stepEvent = (step: InitStep) => ({
-  step: step.id,
+  id: step.id,
   status: step.status,
   ...(step.detail === undefined ? {} : { detail: step.detail }),
 });
