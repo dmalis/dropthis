@@ -249,7 +249,14 @@ corrupts itself the first time two requests race. `usage` computes from `list()`
   `WRONG_INSTANCE`. Rename is a non-goal: a URL is permanent.
 - **One canonical origin.** `init` stores `canonical_url` (the custom domain, else the
   `*.workers.dev` URL) and `alias_origins`. Drop URLs, OAuth issuer/resource/discovery and
-  `/_skill.md` use the canonical origin; viewer requests on an alias redirect (301) to it.
+  `/_skill.md` use the canonical origin; viewer requests on an alias redirect (301) to it,
+  before the drop is read, keeping path and query. The origins come from a per-isolate memo
+  of `system/config.json` (60 s; 0 in the dev build), not an R2 GET per request: they are
+  instance identity, only `init` writes them, and `init` always redeploys — so this is not
+  the viewer trusting a cache for truth (#103). `/_api/*` and `/_skill.md` are answered on
+  whatever origin the client was given; the OAuth documents move, because they must agree
+  with the issuer they name. A hostname that is neither canonical nor an alias is served,
+  never redirected: config drift must not lock a visitor out of a drop.
 - **`title`** — short (≤ 200 bytes UTF-8), optional, human-readable. In `list`, on the
   auto-index page, on the password page. The skill tells agents to always set it.
 - **`meta`** — a JSON object the agent owns (≤ 16 KB): what the drop is, where the source
