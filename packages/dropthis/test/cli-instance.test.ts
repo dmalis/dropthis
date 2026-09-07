@@ -200,6 +200,39 @@ describe("dropthis instance list", () => {
     expect(document.instances.map((row) => row.name)).toEqual(["alpha", "env"]);
   });
 
+  /**
+   * A PARTIAL env pair (issue #32). Every bare command refuses it before it
+   * looks at the file, so a listing must refuse it too: marking the file's
+   * default here would name an instance the next command will not use. One
+   * rule, both halves, both modes.
+   */
+  it("half an env pair is the same error every other command gives: exit 1, empty stdout", async () => {
+    const base = await envWithFile({
+      default: "alpha",
+      instances: { alpha: { url: "https://alpha.example.workers.dev", key: KEY_A } },
+    });
+
+    for (const [half, missing] of [
+      [{ DROPTHIS_URL: "https://env.example.workers.dev" }, "DROPTHIS_KEY"],
+      [{ DROPTHIS_KEY: KEY_B }, "DROPTHIS_URL"],
+    ] as const) {
+      const env = { ...base, ...half };
+
+      const json = await runCli(["instance", "list", "--json"], { env });
+      expect(json.code, json.stderr).toBe(1);
+      expect(json.stdout).toBe("");
+      const error = oneJsonDocument(json.stderr) as { code: string; message: string };
+      expect(error.code).toBe("INVALID_INPUT");
+      expect(error.message).toContain(missing);
+
+      const plain = await runCli(["instance", "list"], { env });
+      expect(plain.code).toBe(1);
+      expect(plain.stdout).toBe("");
+      expect(plain.stderr).toContain(missing);
+      expect(plain.stdout + plain.stderr).not.toContain(KEY_B);
+    }
+  });
+
   it("is listed by `dropthis commands`", async () => {
     const env = await cleanEnv();
     const run = await runCli(["commands", "--json"], { env });
