@@ -20,7 +20,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppEnv } from "./bindings.js";
-import { aliasRedirect, movedTo } from "./canonical.js";
+import { aliasRedirect, canonicalOriginFor, movedTo } from "./canonical.js";
 import type { OriginsMemo } from "./canonical.js";
 import type { DevHooks } from "./dev/hooks.js";
 import { dropState } from "./domain/expiry.js";
@@ -65,8 +65,7 @@ export function viewerRoutes(hooks: DevHooks, origins: OriginsMemo) {
     const url = new URL(c.req.url);
     // On an alias both moves are due. They are one 301, not two: a visitor
     // should not pay a second round trip for an origin they never chose.
-    const here = await originsFor(c);
-    const base = here.aliasOrigins.includes(url.origin) ? here.canonicalUrl : "";
+    const base = canonicalOriginFor(await originsFor(c), url) ?? "";
     return movedTo(`${base}${url.pathname}/${url.search}`);
   });
 
@@ -75,6 +74,14 @@ export function viewerRoutes(hooks: DevHooks, origins: OriginsMemo) {
    * unlocking lands them where they were going rather than at the drop root.
    */
   viewer.post("/:slug/*", async (c, next) => {
+    // The same question every viewer handler asks first. A POST is answered on
+    // the alias — `aliasRedirect` is GET/HEAD only, because a 301 on a POST is
+    // a request a client may replay against the wrong origin — but the check
+    // runs here too, so no handler is the exempt one.
+    if (isSlug(c.req.param("slug") ?? "")) {
+      const moved = aliasRedirect(c.req.raw, await originsFor(c));
+      if (moved !== null) return moved;
+    }
     const gate = await openGate(c, hooks);
     if (gate.kind === "not_a_drop") return next();
     if (gate.kind === "response") return gate.response;

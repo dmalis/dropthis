@@ -89,6 +89,21 @@ describe("a viewer request on an alias origin", () => {
     const response = await on(ALIAS, `/${slug}/`, { method: "POST", body: "password=x" });
     expect(response.status).not.toBe(301);
   });
+
+  /**
+   * The POST answers on the alias, but it asks the same question first: no
+   * viewer handler is exempt from the check, so a handler added later cannot
+   * quietly become the one that serves a drop on the wrong origin.
+   */
+  it("asks the origins BEFORE the drop on a POST too, then answers on the alias", async () => {
+    const response = await on(ALIAS, `/${slug}/`, { method: "POST", body: "password=x" });
+    expect(response.status).not.toBe(301);
+    const config = h.bucket.log.indexOf(`get ${CONFIG_KEY}`);
+    const pointer = h.bucket.log.findIndex((entry) => entry.startsWith("get slugs/"));
+    expect(config).toBeGreaterThanOrEqual(0);
+    expect(pointer).toBeGreaterThanOrEqual(0);
+    expect(config).toBeLessThan(pointer);
+  });
 });
 
 describe("a viewer request that is already canonical", () => {
@@ -165,6 +180,41 @@ describe("createOriginsMemo", () => {
     });
     clock += 59_999;
     expect(await origins(bucket, `${ALIAS}/x/`, 60_000)).toEqual(first);
+    expect(reads(bucket)).toBe(1);
+  });
+
+  /**
+   * A cold isolate answering a burst — the shape of a drop that was just
+   * shared — must cost ONE read, not one per request in flight. The memo
+   * therefore remembers the PROMISE, not only the value it settles on.
+   */
+  it("costs one read when several cold requests are in flight at once", async () => {
+    const bucket = seeded();
+    const origins = createOriginsMemo(() => 1_000);
+    const all = await Promise.all(
+      Array.from({ length: 5 }, () => origins(bucket, `${ALIAS}/x/`, 60_000)),
+    );
+    expect(reads(bucket)).toBe(1);
+    for (const one of all) expect(one.canonicalUrl).toBe(CANONICAL);
+  });
+
+  /**
+   * A read that threw is not an answer, so it is not remembered: the next
+   * request tries again rather than inheriting a minute of the same failure.
+   */
+  it("does not remember a failed read", async () => {
+    const bucket = seeded();
+    const origins = createOriginsMemo(() => 1_000);
+    const broken = {
+      ...bucket,
+      get: async () => {
+        throw new Error("R2 said no");
+      },
+    };
+    await expect(origins(broken, `${ALIAS}/x/`, 60_000)).rejects.toThrow("R2 said no");
+    expect(await origins(bucket, `${ALIAS}/x/`, 60_000)).toMatchObject({
+      canonicalUrl: CANONICAL,
+    });
     expect(reads(bucket)).toBe(1);
   });
 

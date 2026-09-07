@@ -24,11 +24,25 @@ export type InstanceOrigins = {
   instanceName: string;
 };
 
+/**
+ * The origin this URL should be answered on, or `null` when it already is the
+ * right one. The ONE place that decides whether a hostname is an alias — the
+ * redirect and the viewer's trailing-slash move both ask it, so they cannot
+ * drift.
+ *
+ * A hostname in neither `canonical_url` nor `alias_origins` answers `null`: a
+ * Route an operator added ahead of a config write is served, never redirected.
+ */
+export function canonicalOriginFor(origins: InstanceOrigins, url: URL): string | null {
+  return origins.aliasOrigins.includes(url.origin) ? origins.canonicalUrl : null;
+}
+
 export function aliasRedirect(request: Request, origins: InstanceOrigins): Response | null {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
   const url = new URL(request.url);
-  if (!origins.aliasOrigins.includes(url.origin)) return null;
-  return movedTo(`${origins.canonicalUrl}${url.pathname}${url.search}`);
+  const canonical = canonicalOriginFor(origins, url);
+  if (canonical === null) return null;
+  return movedTo(`${canonical}${url.pathname}${url.search}`);
 }
 
 /**
@@ -59,7 +73,10 @@ export function movedTo(location: string): Response {
  * serves.
  */
 export function createOriginsMemo(now: () => number = Date.now) {
-  let cached: { value: InstanceOrigins; readAt: number } | null = null;
+  // The PENDING read, not only its result: a cold isolate answering a burst —
+  // the shape of a drop that was just shared — must cost one R2 GET, not one
+  // per request in flight.
+  let cached: { value: Promise<InstanceOrigins>; readAt: number } | null = null;
 
   return async function origins(
     bucket: Bucket,
@@ -69,14 +86,26 @@ export function createOriginsMemo(now: () => number = Date.now) {
     const at = now();
     if (cached !== null && ttlMs > 0 && at - cached.readAt < ttlMs) return cached.value;
 
-    const config = await loadInstanceConfig(bucket, requestUrl);
-    const value: InstanceOrigins = {
-      canonicalUrl: config.canonicalUrl,
-      aliasOrigins: config.aliasOrigins,
-      instanceName: config.instanceName,
-    };
-    cached = { value, readAt: at };
-    return value;
+    const pending = read(bucket, requestUrl);
+    const entry = { value: pending, readAt: at };
+    cached = entry;
+    try {
+      return await pending;
+    } catch (error) {
+      // A read that threw is not an answer, so it is not remembered: the next
+      // request tries again rather than inheriting a TTL of the same failure.
+      if (cached === entry) cached = null;
+      throw error;
+    }
+  };
+}
+
+async function read(bucket: Bucket, requestUrl: string): Promise<InstanceOrigins> {
+  const config = await loadInstanceConfig(bucket, requestUrl);
+  return {
+    canonicalUrl: config.canonicalUrl,
+    aliasOrigins: config.aliasOrigins,
+    instanceName: config.instanceName,
   };
 }
 
