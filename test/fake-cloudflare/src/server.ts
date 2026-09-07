@@ -21,6 +21,8 @@ export type FakeScript = {
 export type FakeZone = { id: string; name: string; account: { id: string } };
 export type FakeDnsRecord = { id: string; zoneId: string; name: string; type: string };
 export type FakeWorkerDomain = { id: string; hostname: string; service: string; zone_id: string };
+/** A Workers Route on a zone — the thing that takes precedence over a Custom Domain (#25). */
+export type FakeZoneRoute = { id: string; zoneId: string; pattern: string; script: string };
 
 export type FakeState = {
   token: string;
@@ -36,6 +38,7 @@ export type FakeState = {
   zones: FakeZone[];
   dnsRecords: FakeDnsRecord[];
   workerDomains: FakeWorkerDomain[];
+  zoneRoutes: FakeZoneRoute[];
   accounts: Array<{ id: string; name: string }>;
   /** Scopes the token does NOT have — used to test named-permission preflight. */
   missingScopes: FakeScope[];
@@ -56,6 +59,14 @@ export type FakeOptions = {
   r2SubscriptionEnabled?: boolean;
   zones?: FakeZone[];
   dnsRecords?: FakeDnsRecord[];
+  zoneRoutes?: FakeZoneRoute[];
+  /**
+   * 403 on the route WRITE only. A token that can read a zone's routes but not
+   * write them is the real shape of the missing `Workers Routes:Edit`
+   * permission, and `missingScopes: ["workers-routes"]` cannot express it —
+   * that scope also guards `GET /workers/domains`, which runs first.
+   */
+  routeWriteForbidden?: boolean;
   /** Page size the fake enforces regardless of what the client asks for. */
   perPage?: number;
   /**
@@ -102,6 +113,7 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
     zones: [...(options.zones ?? [])],
     dnsRecords: [...(options.dnsRecords ?? [])],
     workerDomains: [],
+    zoneRoutes: [...(options.zoneRoutes ?? [])],
     accounts: options.accounts ?? [{ id: options.accountId ?? "fake-account-id", name: "Fake Account" }],
     missingScopes: [...(options.missingScopes ?? [])],
     r2SubscriptionEnabled: options.r2SubscriptionEnabled ?? true,
@@ -376,6 +388,39 @@ export function createFakeCloudflare(options: FakeOptions = {}) {
         total_count: matching.length,
       }),
     );
+  });
+
+  // Workers Routes on a zone. Cloudflare gives a matching route precedence
+  // over a Custom Domain, which is the whole of issue #25.
+  app.get("/client/v4/zones/:zoneId/workers/routes", (c) => {
+    const forbidden = requireScope("workers-routes");
+    if (forbidden) return c.json(forbidden, 403);
+    const zoneId = c.req.param("zoneId");
+    const matching = state.zoneRoutes.filter((route) => route.zoneId === zoneId);
+    return c.json(ok(matching.map(({ id, pattern, script }) => ({ id, pattern, script }))));
+  });
+
+  app.post("/client/v4/zones/:zoneId/workers/routes", async (c) => {
+    const forbidden = requireScope("workers-routes");
+    if (forbidden) return c.json(forbidden, 403);
+    if (options.routeWriteForbidden === true) {
+      return c.json(fail(10000, "Authentication error: missing permission Workers Routes:Edit"), 403);
+    }
+    const zoneId = c.req.param("zoneId");
+    const body = (await c.req.json()) as { pattern?: string; script?: string };
+    const pattern = body.pattern ?? "";
+    if (pattern.length === 0) return c.json(fail(10020, "Invalid route pattern"), 400);
+    if (state.zoneRoutes.some((route) => route.zoneId === zoneId && route.pattern === pattern)) {
+      return c.json(fail(10020, "Your zone already has a route with that pattern"), 400);
+    }
+    const route = {
+      id: `route-${state.zoneRoutes.length + 1}`,
+      zoneId,
+      pattern,
+      script: body.script ?? "",
+    };
+    state.zoneRoutes.push(route);
+    return c.json(ok({ id: route.id, pattern: route.pattern, script: route.script }));
   });
 
   app.get("/client/v4/accounts/:accountId/workers/domains", (c) => {

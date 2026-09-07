@@ -14,6 +14,7 @@ import {
 } from "./preflight.js";
 import { pollHealth, runRemoteDoctor, type PollOptions } from "./probe.js";
 import { reconcileBucket, reconcileNamespace } from "./reconcile.js";
+import { reconcileRoute } from "./routes.js";
 import { getObjectJson } from "./r2-objects.js";
 import { rotateAdminKey } from "./rotate.js";
 import { normalizeInstanceName } from "./instance-name.js";
@@ -245,6 +246,10 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   if (options.dryRun) {
     if (options.domain !== undefined) {
       push({ id: "domain", status: "would_create", detail: `${options.domain} in zone ${domainZone!.name}` });
+      const route = await reconcileRoute(client, domainZone!.id, options.domain, worker, {
+        dryRun: true,
+      });
+      push({ id: "route", status: route.status, detail: route.detail });
     }
     push({ id: "deploy", status: "skip", detail: "dry-run" });
     return { ok: true, name: instanceName, worker, bucket, kvNamespace, steps };
@@ -317,6 +322,21 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
     const attached = await attachDomain(client, accountId, worker, options.domain);
     if (attached.ok) {
       push({ id: "domain", status: attached.created ? "created" : "ok", detail: options.domain });
+      /**
+       * A matching Workers Route on the zone BEATS the Custom Domain that was
+       * just attached (issue #25), so the instance would be deployed, healthy
+       * and unreachable on its own hostname. Adding `<hostname>/*` for our own
+       * Worker is more specific and wins; the shadowing route is never touched.
+       *
+       * A refused write is reported and the run CONTINUES: the health poll is
+       * what tells the operator whether the hostname answers, and that record
+       * has to stay honest.
+       */
+      const route = await reconcileRoute(client, attached.zone.id, options.domain, worker, {
+        dryRun: false,
+      });
+      push({ id: "route", status: route.status, detail: route.detail });
+      if (route.status === "error") ok = false;
     } else {
       // The config already names this domain as canonical; put it back so the
       // instance never advertises a host it does not answer on — and put the
