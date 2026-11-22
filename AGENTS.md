@@ -672,14 +672,16 @@ decision entry in the same commit.
   package: installer, CLI, stdio MCP, bundles the built Worker for `init`), `skills/`,
   `contract-tests/`, `test/fake-cloudflare/`. Every change is made in a worktree on its own
   branch; the main checkout receives merges and nothing else. In a Shepherdr task, its brief
-  and Settings decide the worktree, the review and the merge. Outside one, use
-  `.worktrees/<issue-or-name>/` and land on `main` by fast-forward merge.
+  and Settings decide the worktree, the review and the merge. Outside one, commit or branch
+  only when asked; then use `.worktrees/<issue-or-name>/` and land on `main` by fast-forward
+  merge.
 - Only destruction waits for the owner's yes: see `~/.agents/COMMS.md`, "Owner's yes —
   destruction only". An agent does everything else on its own.
-- Deploys: `npm run deploy:dev` deploys the `dev` Worker, the test seam; run it on your own.
-  A real instance (`init` on the owner's account) has a post-deploy check (`init` runs
-  `doctor`) but no one-command rollback. A real-instance deploy needs the owner's go until a
-  one-command rollback exists.
+- Deploys: `npm run deploy:dev` deploys the `dev` Worker. It is test seam (1), not an instance
+  people use, so run it on your own. A real instance (`init` on the owner's account) has
+  `doctor`, which proves the deploy works but not which revision runs, and no one-command
+  rollback. A real-instance deploy needs the owner's go until a deployed-revision check and a
+  one-command rollback exist.
 - Need another project? File an `agent-request` issue on its repo (COMMS.md "Asking another
   project").
 - `wrangler.jsonc`, never TOML. The repo file has bindings by name and no IDs (button path);
