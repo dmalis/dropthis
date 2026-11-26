@@ -1,6 +1,6 @@
 /**
  * The Worker's environment: one bucket, one KV namespace, one secret
- * (AGENTS.md, "Architecture"). The bucket type is the subset of the R2 binding
+ * (docs/architecture.md, "Architecture"). The bucket type is the subset of the R2 binding
  * dropthis actually uses — the write surface lives in `storage/r2.ts`, and this
  * adds the reads and deletes the rest of the product needs.
  */

@@ -5,7 +5,7 @@
  * `user remove` tolerates, what `config set` refuses — not to prove anything
  * about R2. R2's own behaviour (conditional writes, per-key contention, digest
  * verification) is proven only against remote R2 in `contract-tests/`, because
- * emulators have shipped reversed condition logic (AGENTS.md, "R2 facts").
+ * emulators have shipped reversed condition logic (docs/architecture.md, "R2 facts").
  *
  * The conditional semantics below are therefore a convenience, deliberately
  * simple: `etagDoesNotMatch: "*"` means "must not exist", `etagMatches` means

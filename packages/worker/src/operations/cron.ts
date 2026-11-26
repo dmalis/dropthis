@@ -1,5 +1,5 @@
 /**
- * The hourly cron: expire, then prune (AGENTS.md, "Pruning").
+ * The hourly cron: expire, then prune (docs/architecture.md, "Pruning").
  *
  * Three properties are the whole design, and each one is a thing that has gone
  * wrong in other people's cleanup jobs:
@@ -17,7 +17,7 @@
  *   past a day that is over in UTC. A drop expiring at 23:00 must not be
  *   skipped because a 09:00 run found nothing due yet.
  *
- * The budget is counted in R2 CALLS, deletes included. AGENTS.md notes that a
+ * The budget is counted in R2 CALLS, deletes included. docs/architecture.md notes that a
  * delete costs no money, but the Free plan's ceiling is 50 subrequests per
  * invocation and a delete is one of them — so the number that has to stay
  * under `cron_ops_budget` is the number of round trips, not the bill.
@@ -41,7 +41,7 @@ import { listKeyOf } from "./projections.js";
 
 export { PRUNE_STATE_KEY };
 
-/** How often the reconcile runs, in days (AGENTS.md, "every 7th day"). */
+/** How often the reconcile runs, in days (docs/architecture.md, "every 7th day"). */
 export const RECONCILE_EVERY_DAYS = 7;
 
 export type CronState = {

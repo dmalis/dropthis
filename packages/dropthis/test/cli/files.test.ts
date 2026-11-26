@@ -7,7 +7,7 @@ import { collectFiles } from "../../src/cli/files.js";
 
 /**
  * What the CLI sends is what is on disk: every file's sha256 is computed
- * locally (AGENTS.md: "the CLI always sends digests"), a directory becomes its
+ * locally (docs/architecture.md: "the CLI always sends digests"), a directory becomes its
  * relative paths, and two arguments that would land on one drop path are a
  * refusal, never a silent overwrite.
  */

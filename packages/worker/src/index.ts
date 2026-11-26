@@ -112,7 +112,7 @@ export function createApp(hooks: DevHooks = PRODUCTION_HOOKS) {
 }
 
 /**
- * The hourly cron (AGENTS.md, "Pruning"). It is deliberately thin: everything
+ * The hourly cron (docs/architecture.md, "Pruning"). It is deliberately thin: everything
  * it decides lives in `operations/cron.ts`, so the contract tests can drive
  * the same function through a dev route instead of waiting an hour.
  *

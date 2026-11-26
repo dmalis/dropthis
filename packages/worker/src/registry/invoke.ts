@@ -68,7 +68,7 @@ export function requireSecret(env: Env): string {
 
 /**
  * The body, refused before it is parsed when it is over the instance's
- * `max_request_bytes` (AGENTS.md: "the single-call ceiling is policy
+ * `max_request_bytes` (docs/architecture.md: "the single-call ceiling is policy
  * `max_request_bytes`").
  *
  * The declared length is checked first, so an oversized call that announces

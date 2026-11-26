@@ -599,7 +599,7 @@ describe("the inline content budget of get(files:true)", () => {
 /**
  * The charset the product assumes, declared where a browser can act on it.
  *
- * dropthis does not detect encodings (AGENTS.md, "Non-goals"): every file is
+ * dropthis does not detect encodings (docs/architecture.md, "Non-goals"): every file is
  * UTF-8. A `text/html` response with no `charset` makes the browser fall back
  * to a legacy encoding, and a middle dot renders as `Â·` — observed on a real
  * drop. Every route that emits a type from the frozen table is swept here.

@@ -27,7 +27,7 @@ describe("dropthis --version", () => {
 });
 
 describe("dropthis --help", () => {
-  it("lists the AGENTS.md grammar and exits 0", async () => {
+  it("lists the docs/architecture.md CLI grammar and exits 0", async () => {
     const run = await runCli(["--help"], { env });
     expect(run.code).toBe(0);
     for (const word of ["publish", "update", "get", "list", "delete", "user", "config", "usage", "prune", "doctor", "commands"]) {

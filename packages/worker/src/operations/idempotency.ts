@@ -1,6 +1,6 @@
 /**
  * The idempotency claim — the record that makes a retry converge instead of
- * racing (AGENTS.md, "Idempotency is explicit"; Stripe's pattern).
+ * racing (docs/architecture.md, "Idempotency is explicit"; Stripe's pattern).
  *
  * Two keys, each written exactly once. The CLAIM is put before any side effect
  * and fixes the identity of the call; the RESULT is put at the end, sealed, so

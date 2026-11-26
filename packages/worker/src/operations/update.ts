@@ -1,5 +1,5 @@
 /**
- * `update` — the generation flip, in the write order AGENTS.md states.
+ * `update` — the generation flip, in the write order docs/architecture.md states.
  *
  *   0  resolve content, write the blobs the drop does not already hold
  *   1  put the idempotency claim, which FIXES what this call is trying to reach
@@ -231,7 +231,7 @@ export async function updateDrop(
     // `meta.json` that is no longer current, and the writer that won owns it.
     await writeProjections(bucket, committed.meta, current.expires_at);
     const twin = toDrop(committed.meta, { canonicalUrl: config.canonicalUrl, now });
-    // Still this call, so it is still owed the password once (AGENTS.md,
+    // Still this call, so it is still owed the password once (docs/architecture.md,
     // "A generated password is returned once").
     if (password !== undefined) twin.password = password;
     if (hash !== undefined) await putResult(bucket, hash, ctx.secret, twin);

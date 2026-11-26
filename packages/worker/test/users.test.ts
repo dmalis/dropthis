@@ -9,7 +9,7 @@ import { memoryBucket } from "./memory-bucket.js";
 import type { MemoryBucket } from "./memory-bucket.js";
 
 /**
- * `user add|list|remove` (AGENTS.md, "Team model").
+ * `user add|list|remove` (docs/architecture.md, "Team model").
  *
  * A label is a person: `users/<normalized-label>` is CLAIMED, not checked, so
  * two agents adding "Anna" at once end with one key, not two. Removal deletes

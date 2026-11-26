@@ -1,5 +1,5 @@
 /**
- * `usage` and `prune` — one scan, one result shape (AGENTS.md, "Pruning").
+ * `usage` and `prune` — one scan, one result shape (docs/architecture.md, "Pruning").
  *
  * Both answer the same question: what is in this bucket, and how much of it is
  * garbage. So they share a report — counts and bytes per state — and `prune`

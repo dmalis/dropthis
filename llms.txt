@@ -16,7 +16,7 @@ Every deployed instance serves its own agent skill at `<canonical_url>/_skill.md
 
 ## Reference
 
-- [AGENTS.md](https://raw.githubusercontent.com/dmalis/dropthis/main/AGENTS.md): the product truth — principles, storage layout, the drop model, responses and errors, auth, policy, operation registry, CLI conventions
+- [Architecture](https://raw.githubusercontent.com/dmalis/dropthis/main/docs/architecture.md): the product truth — principles, storage layout, the drop model, responses and errors, auth, policy, operation registry, CLI conventions
 - [Decisions](https://raw.githubusercontent.com/dmalis/dropthis/main/docs/decisions.md): every design choice with its date and reason
 - [Research](https://github.com/dmalis/dropthis/tree/main/docs/research): dated evidence — Cloudflare limits and pricing, measurements on the Free plan, CLI conventions, competitors
 

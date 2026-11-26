@@ -173,7 +173,7 @@ describe("init --json", () => {
   it("pins the account init resolved into wrangler's environment, token-only", async () => {
     // No CLOUDFLARE_ACCOUNT_ID and no --account-id: preflight resolves the
     // one account the token sees, and THAT is what the deploy must be pinned
-    // to (AGENTS.md: "a deploy cannot land in the wrong account"). An empty
+    // to (docs/architecture.md: "a deploy cannot land in the wrong account"). An empty
     // CLOUDFLARE_ACCOUNT_ID leaves wrangler to pick one for itself.
     const cf = await fake();
     const wrangler = await stubWrangler(cf.origin);

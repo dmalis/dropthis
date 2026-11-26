@@ -1,7 +1,7 @@
 import type Cloudflare from "cloudflare";
 
 /**
- * Account preflight (AGENTS.md "Installer principles" / spec-v1.md
+ * Account preflight (docs/architecture.md "Installer principles" / spec-v1.md
  * "Installer"): named permissions instead of raw HTTP codes, refuse to
  * guess between several accounts, the exact dashboard URL when R2 was
  * never enabled. Lives inside `init`, never in `doctor` (decision #44 /
@@ -64,7 +64,7 @@ export async function checkR2Subscription(client: Cloudflare, accountId: string)
 export type MissingPermission = { permission: string };
 export type PermissionsCheck = { ok: boolean; missing: MissingPermission[] };
 
-/** One cheap read per permission, named as the dashboard would (AGENTS.md). */
+/** One cheap read per permission, named as the dashboard would (docs/architecture.md). */
 export async function checkPermissions(client: Cloudflare, accountId: string): Promise<PermissionsCheck> {
   const probes: Array<{ permission: string; run: () => Promise<unknown> }> = [
     {

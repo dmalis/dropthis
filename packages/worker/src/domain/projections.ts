@@ -1,6 +1,6 @@
 /**
  * The `list/` and `expiring/` projections: what they carry, and how a listing
- * row is rebuilt from one without touching `meta.json` (AGENTS.md, "Key
+ * row is rebuilt from one without touching `meta.json` (docs/architecture.md, "Key
  * layout").
  *
  * `list` is the one operation that cannot compute its keys, so it pays for an

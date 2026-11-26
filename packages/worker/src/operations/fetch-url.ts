@@ -1,6 +1,6 @@
 /**
  * Fetching a `url` file entry — the only outbound request dropthis ever makes
- * on a caller's behalf (AGENTS.md, "One call uploads a drop").
+ * on a caller's behalf (docs/architecture.md, "One call uploads a drop").
  *
  * An agent that already knows where an image lives should not spend its own
  * output tokens re-typing the bytes: one base64 byte is roughly one generated

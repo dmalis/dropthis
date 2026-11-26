@@ -1,5 +1,5 @@
 /**
- * "A newer Worker serves an older drop unchanged" (AGENTS.md, "Data
+ * "A newer Worker serves an older drop unchanged" (docs/architecture.md, "Data
  * durability"), at the seam that matters: a stored `meta.json` that is not
  * today's shape, read through every path an agent and a visitor use.
  *

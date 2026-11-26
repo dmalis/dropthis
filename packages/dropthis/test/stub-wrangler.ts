@@ -14,7 +14,7 @@ export async function stubWranglerBinary(cfOrigin: string): Promise<string> {
 /**
  * The same stub, plus the file it records its argv and environment into — so
  * a test can assert WHICH account a deploy was pinned to, which is the only
- * place that pin is observable (AGENTS.md, "Installer principles": the active
+ * place that pin is observable (docs/architecture.md, "Installer principles": the active
  * credential is pinned into wrangler's environment).
  */
 export async function stubWrangler(cfOrigin: string): Promise<{ path: string; recordPath: string }> {

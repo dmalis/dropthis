@@ -106,7 +106,7 @@ async function sha256Hex(text: string): Promise<string> {
 
 describe("the per-key write rate", () => {
   /**
-   * The product's claim (AGENTS.md, "R2 write rate") is that R2 refuses
+   * The product's claim (docs/architecture.md, "R2 write rate") is that R2 refuses
    * writes that pile up on one key and that dropthis surfaces the refusal as a
    * retryable `R2_RATE_LIMIT` instead of retrying inside the Worker. The
    * refusal remote R2 sends is `(10058) Reduce your concurrent request rate for

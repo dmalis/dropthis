@@ -1,6 +1,6 @@
 /**
  * The staged-upload path — the way past `max_request_bytes` for the CLI and
- * for any MCP agent whose environment can run `curl` (AGENTS.md, "One call
+ * for any MCP agent whose environment can run `curl` (docs/architecture.md, "One call
  * uploads a drop"; docs/spec-v1.md, "Staged upload path"; decision #93).
  *
  *   session   allocate the drop (id, slug claimed now) or fix the update target

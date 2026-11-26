@@ -3,7 +3,7 @@ import { instancesPath, resolveCredentials, selectInstance } from "../../src/cli
 import type { InstancesFile } from "../../src/cli/credentials.js";
 
 /**
- * "Two credentials, two env names, env beats file" (AGENTS.md, CLI
+ * "Two credentials, two env names, env beats file" (docs/architecture.md, CLI
  * conventions): `DROPTHIS_URL` + `DROPTHIS_KEY` win over everything;
  * otherwise `--instance` > `DROPTHIS_INSTANCE` > the file's default.
  */

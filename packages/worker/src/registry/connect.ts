@@ -1,6 +1,6 @@
 /**
  * "How this person connects", built by the instance that knows its own URL
- * (docs/spec-v1.md, story 50; AGENTS.md, "CLI conventions").
+ * (docs/spec-v1.md, story 50; docs/architecture.md, "CLI conventions").
  *
  * `user add` returns a key once. On its own a key is not onboarding: the
  * operator's agent still has to know which of four clients the person uses and
@@ -93,7 +93,7 @@ export function connectFor(input: ConnectInput): Connect {
         ].join("\n"),
       },
       // The browser clients cannot send a header, so they log in through the
-      // one OAuth page and paste the key there (AGENTS.md, "Auth").
+      // one OAuth page and paste the key there (docs/architecture.md, "Auth").
       claude_ai: {
         connector_url: mcpUrl,
         steps: [

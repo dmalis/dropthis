@@ -1,12 +1,12 @@
 /**
- * What one `list` page costs (AGENTS.md, "Key layout": a page "costs ONE
+ * What one `list` page costs (docs/architecture.md, "Key layout": a page "costs ONE
  * `list()` and no `meta.json` reads"; issue #24, finding 13).
  *
  * The listing pointer's `customMetadata` carries every field of the row, so
  * the page needs nothing else. Verifying each row against the truth would put
  * one R2 operation per row back — measured at ~10 s for a 100-row page — and
  * that is the exact cost the projection exists to remove. Orphans are the
- * reconcile's, which is the component AGENTS.md gives them to.
+ * reconcile's, which is the component docs/architecture.md gives them to.
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Drop } from "../src/domain/meta.js";

@@ -181,7 +181,7 @@ describe("tools/call", () => {
       updated.structuredContent,
     );
 
-    // `q` filters WITHIN the page (AGENTS.md, "Responses and errors"), so a
+    // `q` filters WITHIN the page (docs/architecture.md, "Responses and errors"), so a
     // small page proves nothing: `expiry.test.ts` and `cron.test.ts` publish
     // with a future `DEV-Clock`, and a drop created in 2032 keeps the top of
     // this newest-first listing for the whole run. One full page, as every

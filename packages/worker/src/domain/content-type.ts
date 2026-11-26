@@ -95,7 +95,7 @@ export function textEntryContentType(path: string): string | null {
  *
  * The manifest holds the bare type from the frozen table, because that value is
  * hashed into the drop's state and handed back in `Drop.files[]`. The charset
- * is a serving decision and lives here: dropthis assumes UTF-8 (AGENTS.md,
+ * is a serving decision and lives here: dropthis assumes UTF-8 (docs/architecture.md,
  * "Non-goals" — no charset detection), and a browser given `text/html` with no
  * charset falls back to a legacy encoding and renders `·` as `Â·`.
  *

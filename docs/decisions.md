@@ -1291,3 +1291,19 @@ See `docs/research/2026-09-01-competitors.md` (dated snapshot; not maintained he
     OAuth documents keep the redirect they have had since #12, because the issuer, resource and
     discovery documents all name the canonical origin.
 
+104. **The product truth moves from `AGENTS.md` to `docs/architecture.md` (2026-11-26).**
+    `AGENTS.md` had grown to 708 lines: the whole design plus a few working rules, with no
+    section that said how to install, test or deploy. An agent new to the repo loaded the
+    design on every turn and still had to dig the commands out of `package.json` and
+    `vitest.config.ts`. Now `AGENTS.md` holds only what an agent working on the repo needs
+    every time (what it is, the commands, the layout, the repo's rules, where to read more),
+    and every other section moved unchanged to `docs/architecture.md`, which keeps its role:
+    the product truth that beats every other document on conflict. Code comments, tests,
+    `README.md`, `SECURITY.md`, `llms.txt` and `llms-full.txt` cite the new file. Entries in
+    this log and in `docs/research/` that say "AGENTS.md" before this date mean the text now
+    in `docs/architecture.md`; they are history and are not rewritten. `docs/architecture.md`
+    joins the short list of hand-written prose. Two working rules were rewritten so they hold
+    on any machine: "other worktrees may run tests, kill only your own PID" became "two people
+    running the corpus at once each deploy their own `--instance`" (the real hazard: each run
+    empties its bucket), and "every change in a git worktree under `.worktrees/`" became
+    "changes land on `main` by fast-forward from a branch".

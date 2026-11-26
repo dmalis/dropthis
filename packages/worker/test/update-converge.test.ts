@@ -1,5 +1,5 @@
 /**
- * Two rules of the write order that only a retry can show (AGENTS.md,
+ * Two rules of the write order that only a retry can show (docs/architecture.md,
  * "Writes and idempotency"; issue #24, findings 9 and 10):
  *
  *   - "A generated password is returned once … to identical retries under the

@@ -1,5 +1,5 @@
 /**
- * Every bucket key dropthis writes, computed in one place (AGENTS.md, "Key
+ * Every bucket key dropthis writes, computed in one place (docs/architecture.md, "Key
  * layout"). The layout is frozen: these strings are the schema, and renaming
  * one would strand every drop already published.
  *

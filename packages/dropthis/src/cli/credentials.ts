@@ -1,5 +1,5 @@
 /**
- * Which instance, and with which key (AGENTS.md, "CLI conventions"):
+ * Which instance, and with which key (docs/architecture.md, "CLI conventions"):
  *
  *   DROPTHIS_URL + DROPTHIS_KEY      the env pair, beats everything (CI, n8n)
  *   --instance <name>                selects from ~/.config/dropthis/instances.json

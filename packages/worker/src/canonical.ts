@@ -1,5 +1,5 @@
 /**
- * One canonical origin (AGENTS.md, "The drop model"). An instance may answer
+ * One canonical origin (docs/architecture.md, "The drop model"). An instance may answer
  * on several hostnames, but only one of them is the instance's name on the
  * web: OAuth issuer, resource and discovery say it, `/_skill.md` and
  * `/_connect` print it, and drop URLs are built from it.

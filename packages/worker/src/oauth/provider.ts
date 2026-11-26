@@ -1,5 +1,5 @@
 /**
- * The OAuth provider, configured (AGENTS.md, "Auth"; decisions #53, #72).
+ * The OAuth provider, configured (docs/architecture.md, "Auth"; decisions #53, #72).
  *
  * `@cloudflare/workers-oauth-provider` does the protocol: discovery documents,
  * dynamic client registration, Client ID Metadata Documents (how claude.ai

@@ -1,6 +1,6 @@
 /**
  * Moving a file set to the instance: inline when it fits, staged when it does
- * not (AGENTS.md, "One call uploads a drop").
+ * not (docs/architecture.md, "One call uploads a drop").
  *
  * Inline is one `publish`/`update` with base64 entries, each carrying its
  * digest. Staged is session → one PUT per missing blob → commit, and the

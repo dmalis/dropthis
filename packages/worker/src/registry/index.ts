@@ -1,5 +1,5 @@
 /**
- * The operation registry (AGENTS.md, "Operation registry").
+ * The operation registry (docs/architecture.md, "Operation registry").
  *
  * One array, in the order of the frozen REST route table in
  * docs/spec-v1.md. The router is generated from it; `mcp/tools.ts` generates

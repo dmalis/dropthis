@@ -13,7 +13,7 @@ import { memoryKv } from "./memory-kv.js";
 import type { MemoryKv } from "./memory-kv.js";
 
 /**
- * The OAuth half of "one key, two presentations" (AGENTS.md, "Auth"), driven
+ * The OAuth half of "one key, two presentations" (docs/architecture.md, "Auth"), driven
  * end to end in memory: the provider runs under Node against a fake KV, the
  * real MCP surface answers behind it, and every assertion is about
  * the CONTRACT — one paste-key form, a token that is an alias for a key, a

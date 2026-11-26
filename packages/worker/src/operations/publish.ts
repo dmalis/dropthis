@@ -1,5 +1,5 @@
 /**
- * `publish` — the write order, exactly as AGENTS.md states it.
+ * `publish` — the write order, exactly as docs/architecture.md states it.
  *
  *   0  resolve content, write every blob under `drops/<id>/blobs/<sha256>`
  *   1  put the idempotency claim, which FIXES the identity of this call

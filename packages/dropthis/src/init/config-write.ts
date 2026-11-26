@@ -48,7 +48,7 @@ export async function claimBucketForInstance(
  * with, and `doctor`'s `policy_readable` would still call it green.
  *
  * On a RERUN the stored policy wins. Policy is the operator's: `config set`
- * changes what future calls resolve to (AGENTS.md, "Instance policy"), and an
+ * changes what future calls resolve to (docs/architecture.md, "Instance policy"), and an
  * `init` rerun is a reconcile of resources, not an operator changing their
  * mind. Only the identity — name, canonical origin, aliases — is rewritten,
  * because only this run knows it. A field the stored config is missing is

@@ -1,5 +1,5 @@
 /**
- * The CLI surface, generated from the operation registry (AGENTS.md,
+ * The CLI surface, generated from the operation registry (docs/architecture.md,
  * "Operation registry" and "CLI conventions").
  *
  * Every operation's zod schema is read once and turned into a command spec:
@@ -31,7 +31,7 @@ export type FlagSpec = {
   /**
    * The field's value can be a secret, so the flag takes only the spellings
    * that are not one (`generate`); the secret itself arrives on stdin through
-   * the `--<flag>-stdin` companion. AGENTS.md, "CLI conventions": secrets via
+   * the `--<flag>-stdin` companion. docs/architecture.md, "CLI conventions": secrets via
    * env or stdin, never flags — a password on argv is in the shell history and
    * in `ps` for every user on the machine.
    */

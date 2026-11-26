@@ -1,5 +1,5 @@
 /**
- * Inline or staged? (AGENTS.md, "One call uploads a drop"; decision #73.)
+ * Inline or staged? (docs/architecture.md, "One call uploads a drop"; decision #73.)
  *
  * The CLI publishes inline when the encoded request body fits the ceiling it
  * knows — the packaged default `max_request_bytes`, 4 MiB — and stages above

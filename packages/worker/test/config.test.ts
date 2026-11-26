@@ -8,7 +8,7 @@ import { memoryBucket } from "./memory-bucket.js";
 import type { MemoryBucket } from "./memory-bucket.js";
 
 /**
- * `config get|set` (AGENTS.md, "Instance policy").
+ * `config get|set` (docs/architecture.md, "Instance policy").
  *
  * Two layers: DEFAULTS fill in what a caller omits, RULES are enforced
  * whatever the caller sends. `config set` is prospective — it changes what

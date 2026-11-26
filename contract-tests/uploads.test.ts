@@ -6,7 +6,7 @@ import type { Json } from "./client.js";
 
 /**
  * The staged-upload path against the deployed dev Worker and REAL R2
- * (AGENTS.md, "One call uploads a drop"; docs/spec-v1.md, "Staged upload
+ * (docs/architecture.md, "One call uploads a drop"; docs/spec-v1.md, "Staged upload
  * path"). What only this seam can prove: R2 refuses a blob whose bytes do not
  * hash to the key and leaves the key absent; every session key is written
  * once; a retry after an abort at each step converges on one drop.

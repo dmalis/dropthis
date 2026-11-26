@@ -65,7 +65,7 @@ that must not see each other's drops get two instances.
   interrupted removal is finished by a rerun.
 - A `user` key reaches the five drop operations; the admin operations (`user`, `config`,
   `usage`, `prune`, `doctor`) answer `403 FORBIDDEN_SCOPE` to it. There is no per-drop
-  ownership inside an instance: instance = team (see AGENTS.md, "Team model").
+  ownership inside an instance: instance = team (see docs/architecture.md, "Team model").
 - `files: [{path, url}]` makes the Worker fetch a URL. Only `http`/`https` on ports 80/443;
   loopback, link-local, private, cloud-metadata and redirect-to-private targets are
   rejected; redirects are followed manually (≤ 3) and re-checked; ≤ 20 URL files and ≤ 45

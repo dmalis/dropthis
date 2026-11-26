@@ -1,5 +1,5 @@
 /**
- * `POST /_api/mcp` — MCP over Streamable HTTP, bearer (AGENTS.md, "Auth").
+ * `POST /_api/mcp` — MCP over Streamable HTTP, bearer (docs/architecture.md, "Auth").
  *
  * The route does four things and nothing else: read the instance config;
  * authenticate before the body is read (a stranger's payload costs nothing)

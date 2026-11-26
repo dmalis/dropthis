@@ -1,5 +1,5 @@
 /**
- * The registry entries for `user add|list|remove` (AGENTS.md, "Team model").
+ * The registry entries for `user add|list|remove` (docs/architecture.md, "Team model").
  *
  * A label is a person. `users/<normalized-label>` is claimed with a
  * conditional write, so the claim itself — not a check-then-write — is what

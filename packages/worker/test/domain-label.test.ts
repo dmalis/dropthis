@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { LabelError, normalizeLabel } from "../src/domain/label.js";
 
 /**
- * The one normalization every surface uses (AGENTS.md, "Team model"):
+ * The one normalization every surface uses (docs/architecture.md, "Team model"):
  * NFKC → case fold → trim → whitespace to `-`, then
  * `^[a-z0-9][a-z0-9._-]{0,62}$`. Two labels that normalize alike are ONE
  * person, which is what makes `users/<label>` a uniqueness claim.

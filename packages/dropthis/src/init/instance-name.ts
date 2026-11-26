@@ -1,5 +1,5 @@
 /**
- * The instance-name normalization, in one function (AGENTS.md, "Multi-client
+ * The instance-name normalization, in one function (docs/architecture.md, "Multi-client
  * hosting": `init --name <name>` derives every resource from the NORMALISED
  * name, `[a-z0-9-]`, 3–30).
  *

@@ -329,7 +329,7 @@ async function helloDrop(ctx: DoctorContext): Promise<CheckResult> {
 /**
  * `initialize` and `tools/list` against this Worker's own `/_api/mcp`, in
  * process, with the credential the `doctor` call carried. A version-correct
- * deploy with a dead MCP endpoint is a broken deploy (AGENTS.md, "Installer
+ * deploy with a dead MCP endpoint is a broken deploy (docs/architecture.md, "Installer
  * principles"), and this is the check that says so. In-process rather than
  * over the network: a Worker cannot reliably fetch its own hostname, and a
  * service binding to itself would be one more thing `init` has to render.

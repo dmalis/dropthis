@@ -217,7 +217,7 @@ cron    ── hourly, resumable expiry and prune
 ```
 
 No Postgres, no D1, no queue, no build step. The bucket is plain files: `rclone sync`
-copies an instance. Design and decisions: `AGENTS.md`, `docs/decisions.md`,
+copies an instance. Design and decisions: `docs/architecture.md`, `docs/decisions.md`,
 `docs/research/`. Machine-readable index: `llms.txt`.
 
 ## Licence

@@ -3,7 +3,7 @@
  *
  * Each entry is the whole definition of an operation: where it sits on the
  * wire, the scope it needs, the schema its input must satisfy and the handler
- * that does the work. The five drop operations of AGENTS.md's operation table
+ * that does the work. The five drop operations of docs/architecture.md's operation table
  * are all here; the router mounts them and nothing else.
  *
  * A path parameter is folded into the same input object as the body, so the

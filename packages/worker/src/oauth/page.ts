@@ -1,5 +1,5 @@
 /**
- * The one page dropthis renders for a human: paste your key (AGENTS.md,
+ * The one page dropthis renders for a human: paste your key (docs/architecture.md,
  * "Auth"). One form, one password field, one button. No account, no consent
  * checkboxes, no external resource — the page must work inside a connector's
  * popup with nothing else loaded.
