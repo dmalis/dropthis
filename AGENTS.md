@@ -657,9 +657,9 @@ decision entry in the same commit.
 ## Working rules for this repo
 
 - The dev credential: contract tests and `init` read `CLOUDFLARE_API_TOKEN` and
-  `CLOUDFLARE_ACCOUNT_ID` from the environment; on the maintainer's machine they live in
-  `~/.config/dropthis/dev.env` (mode 600, outside the repo) — `source` it before any slice
-  work. The file never enters the repo.
+  `CLOUDFLARE_ACCOUNT_ID` from the environment. Keep them in `~/.config/dropthis/dev.env`
+  (mode 600, outside the repo) and `source` it before any slice work; the error messages of
+  `deploy:dev` and the contract tests name that file. It never enters the repo.
 - Test-first for every behaviour. Four seams: (1) a golden HTTP corpus against a real
   deployed `dev` Worker on the developer's own account, bucket reset through the R2 API
   before every run, expiry driven by a clock override that exists only in the `dev` build;
@@ -670,20 +670,17 @@ decision entry in the same commit.
   the claude.ai spike and the two milestone runs. There is no CI: run the seams yourself.
 - One monorepo: `packages/worker` (the deployed Worker), `packages/dropthis` (the one npm
   package: installer, CLI, stdio MCP, bundles the built Worker for `init`), `skills/`,
-  `contract-tests/`, `test/fake-cloudflare/`. Every change is made in a worktree on its own
-  branch; the main checkout receives merges and nothing else. In a Shepherdr task, its brief
-  and Settings decide the worktree, the review and the merge. Outside one, commit or branch
-  only when asked; then use `.worktrees/<issue-or-name>/` and land on `main` by fast-forward
-  merge.
-- Only destruction waits for the owner's yes: see `~/.agents/COMMS.md`, "Owner's yes —
-  destruction only". An agent does everything else on its own.
+  `contract-tests/`, `test/fake-cloudflare/`. Every change is made on its own branch in a git
+  worktree (`.worktrees/<issue-or-name>/`, ignored by git); the main checkout receives merges
+  and nothing else, landed on `main` by fast-forward.
+- Destruction waits for the owner's yes: deleting or overwriting a real instance's data (its
+  bucket, drops or keys) or any Cloudflare resource outside the `dev` Worker. An agent does
+  everything else on its own.
 - Deploys: `npm run deploy:dev` deploys the `dev` Worker. It is test seam (1), not an instance
   people use, so run it on your own. A real instance (`init` on the owner's account) has
   `doctor`, which proves the deploy works but not which revision runs, and no one-command
   rollback. A real-instance deploy needs the owner's go until a deployed-revision check and a
   one-command rollback exist.
-- Need another project? File an `agent-request` issue on its repo (COMMS.md "Asking another
-  project").
 - `wrangler.jsonc`, never TOML. The repo file has bindings by name and no IDs (button path);
   `init` renders the per-instance config with the reconciled ids and deploys from that.
 - Secrets are never printed to logs and never re-revealed by a rerun. A missing key file
@@ -691,21 +688,21 @@ decision entry in the same commit.
 - Docs are generated from the operation registry wherever possible. Hand-written prose is
   limited to README, this file, `SECURITY.md`, `docs/decisions.md` and `docs/spec-v1.md`
   (the v1 spec, committed by owner decision #65; code beats it on conflict).
-- Several worktrees share this machine. Never kill a test process by name (`pkill vitest`,
-  `killall node`); kill only the PID of the run you started.
+- Other worktrees may run tests at the same time. Kill only the PID of the run you started,
+  never a process by name (`pkill vitest`, `killall node`).
 - No plan files or status notes in the repo. Decisions go in `docs/decisions.md` with a date
   and a reason; superseded entries are marked, not deleted.
 
-## Agent skills
+## Issues and decisions
 
-### Issue tracker
-
-Issues live in GitHub Issues for `dmalis/dropthis`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The five canonical roles use their default names (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: the glossary is in `AGENTS.md`, decisions in `docs/decisions.md`. See `docs/agents/domain.md`.
+- Issues live in GitHub Issues for `dmalis/dropthis`. External pull requests are not a request
+  surface: a wish arrives as an issue.
+- Triage labels: `needs-triage` (the maintainer has not evaluated it), `needs-info` (waiting on
+  the reporter), `ready-for-agent` (fully specified, an agent can take it unattended),
+  `ready-for-human` (needs a person), `wontfix` (will not be actioned).
+- Name domain concepts in issue titles, test names and proposals with the Glossary's words. A
+  concept the Glossary lacks is either invented language or a real gap; propose a gap as a new
+  Glossary entry here.
+- An output that contradicts an entry in `docs/decisions.md` says so by number and why it is
+  worth reopening (_contradicts #54, access is an object, because…_). A new decision lands in
+  the same commit as the code that made it.
