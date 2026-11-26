@@ -1,7 +1,7 @@
 /**
  * Writing, repairing and removing the `list/` and `expiring/` pointers.
  *
- * Both are projections of `meta.json`, never truth (AGENTS.md, "Writes and
+ * Both are projections of `meta.json`, never truth (docs/architecture.md, "Writes and
  * idempotency"). That is what makes them safe to write LAST: losing one costs a
  * listing row for a while, and never a drop. It is also why each one is
  * repairable, and by whom:
@@ -81,7 +81,7 @@ export async function repairListEntry(bucket: Bucket, meta: DropMeta): Promise<v
 /**
  * Both projections of a drop a read path just loaded — "`list/` and `expiring/`
  * … a missing or stale entry is repaired by the next `get`/`update`"
- * (AGENTS.md, "Key layout").
+ * (docs/architecture.md, "Key layout").
  *
  * A MISSING marker is the only kind a reader can repair: a stale one sits at a
  * date only the drop's PREVIOUS `expires_at` names, and a read has no way to

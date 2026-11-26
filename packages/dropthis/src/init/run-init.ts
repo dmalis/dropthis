@@ -30,7 +30,7 @@ export type InitStep = { id: string; status: InitStepStatus; detail?: string };
  * What a deploy tells the installer. A real deploy knows nothing wrangler did
  * not already put in the account, so it returns nothing and the URL comes from
  * the account's own workers.dev subdomain — wrangler's stdout is never parsed
- * (AGENTS.md, "Installer principles"). A test's deploy returns the localhost
+ * (docs/architecture.md, "Installer principles"). A test's deploy returns the localhost
  * URL of the instance it started, so health and doctor probe the real Worker.
  */
 export type DeployOutcome = { url?: string } | void;
@@ -40,7 +40,7 @@ export type DeployOutcome = { url?: string } | void;
  * preflight PINNED, not the one the caller happened to have: with a token that
  * sees exactly one account the caller has none, and a deploy that inherits an
  * empty `CLOUDFLARE_ACCOUNT_ID` lets wrangler choose an account for itself —
- * the one thing AGENTS.md's "never guess the account" rule forbids.
+ * the one thing docs/architecture.md's "never guess the account" rule forbids.
  */
 export type DeployContext = { accountId: string };
 
@@ -173,7 +173,7 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
    * two permissions the account-level probes never touch, and both of those
    * reads need a zone id. One `permissions` step then covers every permission
    * this run will use — the alternative is provisioning and deploying for a
-   * token that could never have finished (AGENTS.md, "Preflight names the
+   * token that could never have finished (docs/architecture.md, "Preflight names the
    * dashboard permission, not the HTTP code").
    */
   let domainZone: { id: string; name: string } | undefined;
@@ -270,7 +270,7 @@ export async function runInit(options: RunInitOptions): Promise<RunInitResult> {
   } else {
     const bootstrap = await bootstrapAdminKey(client, accountId, bucket);
     // A chain that cannot open the instance is a broken deploy, and no key
-    // here can be re-derived: AGENTS.md, "A missing key file fails loudly;
+    // here can be re-derived: docs/architecture.md, "A missing key file fails loudly;
     // rotation is explicit." So the run stops, before wrangler is called.
     if (bootstrap.status === "broken") {
       push({ id: "admin_key", status: "error", detail: `${bootstrap.detail} ${bootstrap.remediation}` });

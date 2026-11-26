@@ -1,5 +1,5 @@
 /**
- * Idempotency results are encrypted at rest (AGENTS.md, "Key layout").
+ * Idempotency results are encrypted at rest (docs/architecture.md, "Key layout").
  *
  * The reason is one field: a generated password is returned once, and a retry
  * under the same `idempotency_key` must return it again — so the response has

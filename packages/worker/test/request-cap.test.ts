@@ -1,5 +1,5 @@
 /**
- * The single-call ceiling (AGENTS.md: "the single-call ceiling is policy
+ * The single-call ceiling (docs/architecture.md: "the single-call ceiling is policy
  * `max_request_bytes`"; issue #24, finding 15).
  *
  * It is a ceiling in BYTES, and it must hold for a client that sends no

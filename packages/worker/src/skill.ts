@@ -1,6 +1,6 @@
 /**
  * `/_skill.md` — this instance's agent skill, served live (docs/spec-v1.md,
- * story 77; AGENTS.md, "Serve the agent skill from the instance").
+ * story 77; docs/architecture.md, "Serve the agent skill from the instance").
  *
  * The prose is `skills/instance-skill.md`, one template in the repo; the
  * values are the instance's own — its canonical URL and the policy it holds

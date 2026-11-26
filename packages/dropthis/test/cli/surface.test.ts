@@ -19,7 +19,7 @@ const argsOf = (spec: CommandSpec) =>
   spec.args.map((a) => `${a.name}${a.variadic ? "..." : ""}${a.required ? "" : "?"}:${a.kind}`);
 
 describe("commandSurface", () => {
-  it("lists exactly the AGENTS.md grammar, in registry order", () => {
+  it("lists exactly the docs/architecture.md CLI grammar, in registry order", () => {
     expect(commandSurface().map((spec) => spec.words.join(" "))).toEqual([
       "publish",
       "update",

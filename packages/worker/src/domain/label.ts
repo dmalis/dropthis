@@ -1,5 +1,5 @@
 /**
- * The label normalization, in one function (AGENTS.md, "Team model").
+ * The label normalization, in one function (docs/architecture.md, "Team model").
  *
  * A label is how a person is named in `user add`, `user remove` and
  * `created_by`. Uniqueness is claimed on `users/<normalized-label>` with a

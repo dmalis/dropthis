@@ -2,7 +2,7 @@
  * The real deploy: `wrangler deploy -c <rendered> [--secrets-file <file>]`,
  * the same invocation `scripts/deploy-dev.mjs` makes.
  *
- * Three rules, all from AGENTS.md ("Installer principles"):
+ * Three rules, all from docs/architecture.md ("Installer principles"):
  *
  *   - wrangler is never reimplemented and its stdout is never parsed. It gets
  *     a config file and exits; ids and URLs come from the Cloudflare API.

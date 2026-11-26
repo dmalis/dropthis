@@ -1,7 +1,7 @@
 /**
  * The storage seam: every conditional write dropthis relies on, in one place.
  *
- * The R2 binding is the storage API (AGENTS.md, "Stack") — there is no ORM and
+ * The R2 binding is the storage API (docs/architecture.md, "Stack") — there is no ORM and
  * no wrapper object. These are pure functions over the binding that map its two
  * ways of saying "no" onto the frozen error catalogue:
  *

@@ -6,7 +6,7 @@ import { keyHashKey, keyRecordKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
 
 /**
- * An OAuth token is an alias for a key, never a second identity (AGENTS.md,
+ * An OAuth token is an alias for a key, never a second identity (docs/architecture.md,
  * "Auth"). The grant stores the key ID and nothing else; every request that
  * bears a token re-reads the key record and its `keyhash/` pointer, so a
  * revoked key stops every session behind it on the very next request — the

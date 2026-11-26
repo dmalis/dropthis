@@ -56,7 +56,7 @@ describe("admin commands", () => {
 
   /**
    * REST answers `204` with no body. `--json` is one deterministic JSON
-   * document (AGENTS.md, "CLI conventions"), and `null` is not one an agent
+   * document (docs/architecture.md, "CLI conventions"), and `null` is not one an agent
    * can branch on (#28). The shape mirrors `delete`'s `{slug, deleted: true}`,
    * and a rerun says the same thing because the operation is idempotent.
    */

@@ -1,6 +1,6 @@
 /**
  * Step 0 of the write order: turn the caller's entries into bytes, a digest
- * per file, and the manifest (AGENTS.md, "Writes and idempotency").
+ * per file, and the manifest (docs/architecture.md, "Writes and idempotency").
  *
  * Content is resolved BEFORE anything reachable is written, so a payload that
  * cannot be decoded — or a URL that cannot be fetched — costs no `meta.json`

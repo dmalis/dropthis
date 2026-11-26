@@ -4,7 +4,7 @@
  *
  * "wrangler exited 0" is not "the instance works" — the deploy still has to
  * propagate, and a version-correct deploy with a dead MCP endpoint is a broken
- * deploy (AGENTS.md, "Installer principles"). So the poll is on `/_api/v1/health`,
+ * deploy (docs/architecture.md, "Installer principles"). So the poll is on `/_api/v1/health`,
  * the one unauthenticated route, and the proof is the instance's own `doctor`.
  *
  * Neither ever throws: an installer that dies on a network blip has told the

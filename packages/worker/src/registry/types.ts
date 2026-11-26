@@ -1,5 +1,5 @@
 /**
- * What an operation IS (AGENTS.md, "Operation registry").
+ * What an operation IS (docs/architecture.md, "Operation registry").
  *
  * One entry per operation: its name, its place on the wire, the scope it
  * needs, one zod schema for its input and one handler. The REST router is
@@ -60,7 +60,7 @@ export type OperationContext = {
 export type ResultLine = (input: Record<string, unknown>, value: unknown) => string;
 
 /**
- * What an operation is on the command line (AGENTS.md, "CLI conventions").
+ * What an operation is on the command line (docs/architecture.md, "CLI conventions").
  *
  * Everything the CLI cannot read off the zod schema lives here, on the entry,
  * and not in a table keyed by operation name inside `cli/surface.ts`: a second

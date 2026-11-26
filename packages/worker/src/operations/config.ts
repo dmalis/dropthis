@@ -1,5 +1,5 @@
 /**
- * `config get` and `config set` (AGENTS.md, "Instance policy").
+ * `config get` and `config set` (docs/architecture.md, "Instance policy").
  *
  * The policy has two layers. DEFAULTS fill in a field the caller omitted;
  * RULES are enforced on every field a call does provide. `config set` changes

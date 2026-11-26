@@ -1,6 +1,6 @@
 /**
  * `meta.json` — the only truth about a drop — and the one `Drop` shape every
- * surface returns (AGENTS.md, "Key layout" and "Responses").
+ * surface returns (docs/architecture.md, "Key layout" and "Responses").
  *
  * Two hashes are computed here and nowhere else:
  *
@@ -149,7 +149,7 @@ export async function newDropMeta(input: NewDropInput): Promise<DropMeta> {
 
 /**
  * THE reader of `meta.json` — the one place a stored record becomes a
- * `DropMeta` (AGENTS.md, "Data durability").
+ * `DropMeta` (docs/architecture.md, "Data durability").
  *
  * `JSON.parse(...) as DropMeta` was a promise the type system cannot keep: a
  * record written by another version of this Worker has no reason to carry

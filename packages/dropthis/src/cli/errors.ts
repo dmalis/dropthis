@@ -1,6 +1,6 @@
 /**
  * The one error shape the CLI ever prints: the frozen catalogue object
- * `{code, message, remediation, retryable}` (AGENTS.md, "Responses and
+ * `{code, message, remediation, retryable}` (docs/architecture.md, "Responses and
  * errors"), whether the failure came back over the wire or happened before a
  * request was made. A wire error keeps the instance's own remediation; a local
  * one carries the CLI's, because the fix for "no credentials" is an

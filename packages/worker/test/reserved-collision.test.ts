@@ -8,7 +8,7 @@ import { CONFIG_KEY, metaKey, slugKey } from "../src/storage/keys.js";
 import { memoryBucket } from "./memory-bucket.js";
 
 /**
- * A slug can never shadow the control plane (AGENTS.md, "Reserved paths").
+ * A slug can never shadow the control plane (docs/architecture.md, "Reserved paths").
  * Three lines of defence, all pinned here: the slug alphabet cannot spell a
  * reserved prefix, a slug the CALLER chose is refused before it is ever
  * claimed (issue #18), and even a pointer planted by hand under one is never

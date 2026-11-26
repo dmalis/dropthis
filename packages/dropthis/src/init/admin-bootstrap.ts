@@ -4,7 +4,7 @@ import { getObjectJson, putObjectJson } from "./r2-objects.js";
 
 /**
  * Mints the admin key and writes its three records into the bucket, BEFORE
- * any deploy (AGENTS.md "Bootstrap invariants" / "Credential before deploy").
+ * any deploy (docs/architecture.md "Bootstrap invariants" / "Credential before deploy").
  * The admin key uses the deterministic id "admin" — there is only ever one —
  * so a crashed prior run is detectable and repairable without a scan.
  *
@@ -24,7 +24,7 @@ import { getObjectJson, putObjectJson } from "./r2-objects.js";
  *                            changes hands  ->  `repaired`
  *   - key record missing,    nothing here can re-derive a key from a hash that
  *     or naming another id,  is gone, and minting one silently would be a
- *     or not admin scope     rotation nobody asked for. AGENTS.md: "A missing
+ *     or not admin scope     rotation nobody asked for. docs/architecture.md: "A missing
  *                            key file fails loudly; rotation is explicit."
  *                            ->  `broken`, and `init` stops before the deploy
  */

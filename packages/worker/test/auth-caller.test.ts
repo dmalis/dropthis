@@ -9,7 +9,7 @@ import type { MemoryBucket } from "./memory-bucket.js";
 /**
  * Bearer auth is two computed GETs and one constant-time compare: the header's
  * key hashes to `keyhash/<hash>`, which names a key id, whose record carries
- * the label and the scope (AGENTS.md, "Auth"). No `list()`, no index, and no
+ * the label and the scope (docs/architecture.md, "Auth"). No `list()`, no index, and no
  * way to enumerate keys from outside.
  */
 async function withKey(scope: "admin" | "user", label: string): Promise<{

@@ -11,7 +11,7 @@
  */
 import { sha256Hex } from "../domain/meta.js";
 
-/** The scopes, and the only two there will be (AGENTS.md, "Team model"). */
+/** The scopes, and the only two there will be (docs/architecture.md, "Team model"). */
 export type Scope = "admin" | "user";
 
 /** `keys/<id>.json` — the record every credential, admin included, has. */

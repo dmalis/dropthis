@@ -1,6 +1,6 @@
 /**
  * `user add` — mint a key, name a person, hand back everything needed to
- * onboard them (AGENTS.md, "Team model"; docs/spec-v1.md, story 50).
+ * onboard them (docs/architecture.md, "Team model"; docs/spec-v1.md, story 50).
  *
  * Write order, and why it is this one:
  *

@@ -2,7 +2,7 @@
  * The files a `publish` or `update` sends, as they are on disk.
  *
  * Every file gets a sha256 computed here, streaming, before anything is sent
- * — the CLI always sends digests (AGENTS.md, "One call uploads a drop"), so
+ * — the CLI always sends digests (docs/architecture.md, "One call uploads a drop"), so
  * the instance verifies the bytes it stores and an inline entry and a staged
  * PUT carry the same proof. A directory becomes its files with paths relative
  * to it; a single file is its basename. The result is sorted by drop path so

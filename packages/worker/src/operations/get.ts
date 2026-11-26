@@ -65,7 +65,7 @@ export async function getDrop(slug: string, options: GetOptions): Promise<Drop> 
   }
 
   // "`list/` and `expiring/` … a missing or stale entry is repaired by the next
-  // `get`/`update`" (AGENTS.md). Two `head`s, and a write only when one of the
+  // `get`/`update`" (docs/architecture.md). Two `head`s, and a write only when one of the
   // two projections is actually wrong. The listing row is the reason `list` can
   // be answered from pointers alone; the marker is the reason the cron ever
   // looks at this drop.

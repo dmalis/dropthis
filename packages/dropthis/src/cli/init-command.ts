@@ -5,7 +5,7 @@
  * It is hand-mounted rather than generated: every other command is an
  * operation on an instance and comes from the registry, while this one runs
  * BEFORE an instance exists and speaks to Cloudflare with the operator's own
- * token (AGENTS.md, "Operation registry": instance lifecycle lives in the CLI
+ * token (docs/architecture.md, "Operation registry": instance lifecycle lives in the CLI
  * only).
  *
  * This module owns credentials, interactivity and output. `init/run-init.ts`
@@ -195,7 +195,7 @@ async function accountCheck(
 }
 
 /**
- * snake_case on the wire, as every other surface (AGENTS.md, "Responses").
+ * snake_case on the wire, as every other surface (docs/architecture.md, "Responses").
  * The name of a row is `id`, the same field `doctor`'s check rows carry, so an
  * agent reads both reports with one shape (#28 item 2).
  */

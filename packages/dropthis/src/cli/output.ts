@@ -1,5 +1,5 @@
 /**
- * The output contract (AGENTS.md, "CLI conventions"): stdout carries the
+ * The output contract (docs/architecture.md, "CLI conventions"): stdout carries the
  * result and nothing else; `--json` is exactly one JSON document; on
  * `publish` and `update` the plain result is the URL alone, so it pipes.
  * Errors are the frozen object on stderr — as JSON under `--json`, as one

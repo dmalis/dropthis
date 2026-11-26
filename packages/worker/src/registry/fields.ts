@@ -2,7 +2,7 @@
  * The field rules `publish` and `update` share.
  *
  * They live in one file because the operation registry's promise is that REST,
- * the CLI and the MCP tools cannot drift (AGENTS.md, "Operation registry"). Two
+ * the CLI and the MCP tools cannot drift (docs/architecture.md, "Operation registry"). Two
  * operations that take `title` and disagree about its limit would be the same
  * drift one layer down.
  */

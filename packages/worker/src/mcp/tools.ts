@@ -1,5 +1,5 @@
 /**
- * The MCP tool surface, generated from the operation registry (AGENTS.md,
+ * The MCP tool surface, generated from the operation registry (docs/architecture.md,
  * "Operation registry"): one tool per operation, its input schema rendered
  * from the operation's own zod schema, its words from `registry/tools.ts`.
  *

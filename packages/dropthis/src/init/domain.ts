@@ -1,7 +1,7 @@
 /**
  * `init --domain <hostname>` — the custom domain the instance is reached at.
  *
- * Three rules, all from AGENTS.md ("Installer principles", "Zone matching"):
+ * Three rules, all from docs/architecture.md ("Installer principles", "Zone matching"):
  * the longest zone name that is a suffix of the hostname wins; the zone must
  * be in the SAME account the deploy is pinned to (a Workers custom domain
  * cannot cross accounts, decision #68); and an existing DNS record at that

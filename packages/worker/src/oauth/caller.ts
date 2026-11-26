@@ -1,5 +1,5 @@
 /**
- * Who is behind an OAuth token (AGENTS.md, "Auth" — the OAuth half of "one
+ * Who is behind an OAuth token (docs/architecture.md, "Auth" — the OAuth half of "one
  * key, two presentations").
  *
  * A token is an alias for a key, never a second identity. The grant the
@@ -56,7 +56,7 @@ export async function resolveOAuthCaller(bucket: Bucket, props: unknown): Promis
 }
 
 /**
- * The caller of `/_api/mcp` — the ONE function the MCP route asks (AGENTS.md
+ * The caller of `/_api/mcp` — the ONE function the MCP route asks (docs/architecture.md
  * "Auth": header if present, else OAuth).
  *
  * The bearer value is tried as a raw key first (one `keyhash/` GET); anything

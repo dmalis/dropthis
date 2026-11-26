@@ -48,7 +48,7 @@ export default async function setup(project: TestProject) {
 
   // The admin key, exactly as `init` mints it: a key record, its `keyhash/`
   // pointer and the `users/admin` claim, all before the Worker is asked for
-  // anything (AGENTS.md, "Credential before deploy").
+  // anything (docs/architecture.md, "Credential before deploy").
   const adminKey = randomBytes(32).toString("hex");
   const adminHash = createHash("sha256").update(adminKey).digest("hex");
   const created = new Date().toISOString();

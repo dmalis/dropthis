@@ -1,5 +1,5 @@
 /**
- * The MCP server for one request (AGENTS.md, "Operation registry"; "Auth").
+ * The MCP server for one request (docs/architecture.md, "Operation registry"; "Auth").
  *
  * It is built per request, for one caller, because the tool list depends on
  * the caller's scope and the transport is stateless: a Worker holds nothing

@@ -1,6 +1,6 @@
 /**
  * `init --check` — the checks that need the CLOUDFLARE token, not an instance
- * key (decision #29, AGENTS.md "Operation registry").
+ * key (decision #29, docs/architecture.md "Operation registry").
  *
  * `doctor` proves the instance from the inside and is answerable with the
  * instance key alone, which is what an operator running it against a client's

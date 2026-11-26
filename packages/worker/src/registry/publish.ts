@@ -1,7 +1,7 @@
 /**
  * `publish` — the operation registry's first entry. One zod schema defines the
  * input, and REST validation, the MCP tool schema and the CLI parser all read
- * it, so the three surfaces cannot drift (AGENTS.md, "Operation registry").
+ * it, so the three surfaces cannot drift (docs/architecture.md, "Operation registry").
  *
  * The schema is the contract in the strict sense: an unknown field is
  * `INVALID_INPUT`, never ignored. An agent that sends `password` today gets

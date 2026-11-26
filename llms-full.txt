@@ -1,6 +1,6 @@
 # dropthis — long-form overview for agents
 
-This file is the companion to llms.txt (https://raw.githubusercontent.com/dmalis/dropthis/main/llms.txt). It describes every surface of dropthis in prose so an agent can decide what to read next. It is not a copy of the documentation: the instance skill at `<canonical_url>/_skill.md` is the operating manual, AGENTS.md is the product truth, and this file only points.
+This file is the companion to llms.txt (https://raw.githubusercontent.com/dmalis/dropthis/main/llms.txt). It describes every surface of dropthis in prose so an agent can decide what to read next. It is not a copy of the documentation: the instance skill at `<canonical_url>/_skill.md` is the operating manual, docs/architecture.md is the product truth, and this file only points.
 
 ## What dropthis is
 
@@ -34,4 +34,4 @@ A personal instance runs on Cloudflare's Free plan (100,000 Worker requests a da
 
 ## Where the truth lives
 
-AGENTS.md (https://raw.githubusercontent.com/dmalis/dropthis/main/AGENTS.md) is the product truth and beats every other document on conflict. docs/decisions.md records every choice with a date and a reason. docs/research/ holds the dated evidence. SECURITY.md says what dropthis does not protect against: a drop is arbitrary HTML on a shared origin, so serve drops from a dedicated domain.
+The architecture (https://raw.githubusercontent.com/dmalis/dropthis/main/docs/architecture.md) is the product truth and beats every other document on conflict. docs/decisions.md records every choice with a date and a reason. docs/research/ holds the dated evidence. SECURITY.md says what dropthis does not protect against: a drop is arbitrary HTML on a shared origin, so serve drops from a dedicated domain.

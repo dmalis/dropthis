@@ -28,7 +28,7 @@ describe("checkPublicUrl", () => {
     expect(checkPublicUrl("https://example.com:443/a.jpg").href).toBe("https://example.com/a.jpg");
   });
 
-  /** Each row is a class AGENTS.md names as forbidden; all answer FETCH_FAILED. */
+  /** Each row is a class docs/architecture.md names as forbidden; all answer FETCH_FAILED. */
   const forbidden: Array<[string, string]> = [
     ["a scheme that is not http(s)", "ftp://example.com/a.jpg"],
     ["a data URL", "data:text/plain;base64,aGk="],
@@ -184,7 +184,7 @@ describe("fetchPublicUrl", () => {
     expect(FETCH_TIMEOUT_MS).toBe(20_000);
   });
 
-  it("keeps the per-call ceilings AGENTS.md states", () => {
+  it("keeps the per-call ceilings docs/architecture.md states", () => {
     expect(MAX_URL_ENTRIES).toBe(20);
     expect(MAX_FETCHES_PER_CALL).toBe(45);
     expect(MAX_REDIRECTS).toBe(3);

@@ -1,5 +1,5 @@
 /**
- * The registry entries for the staged-upload path (AGENTS.md, "One call
+ * The registry entries for the staged-upload path (docs/architecture.md, "One call
  * uploads a drop"; decision #93).
  *
  * The session and the commit are tools as well as routes — `dropthis_upload`

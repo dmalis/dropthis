@@ -1,6 +1,6 @@
 /**
  * `system/config.json` — the instance's policy and its identity on the web
- * (AGENTS.md, "Instance policy").
+ * (docs/architecture.md, "Instance policy").
  *
  * The reader is deliberately tolerant, for the same reason `meta.json`'s is:
  * an instance installed by an older `init` must keep working. Missing keys fall

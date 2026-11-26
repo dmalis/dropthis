@@ -12,7 +12,7 @@ import type { MemoryBucket } from "./memory-bucket.js";
 
 /**
  * The staged-upload path at the route level: session → signed PUTs → commit
- * (AGENTS.md, "One call uploads a drop"; docs/spec-v1.md, "Staged upload
+ * (docs/architecture.md, "One call uploads a drop"; docs/spec-v1.md, "Staged upload
  * path"). These pin OUR wiring — what each route takes and answers, the fence
  * on commit, the write-once session keys. Whether R2 refuses a wrong digest is
  * proven in `contract-tests/uploads.test.ts`, never here.

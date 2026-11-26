@@ -2,7 +2,7 @@
  * `list` — one R2 `list()` over `list/` per page, and no `meta.json` reads.
  *
  * This is the one operation that cannot compute its keys, so it is the one
- * operation that pays for a `list()` (AGENTS.md, "Files are the database").
+ * operation that pays for a `list()` (docs/architecture.md, "Files are the database").
  * Everything else about it is arranged to keep that the ONLY cost:
  *
  *   - the pointer key is the inverted creation time, so R2's lexicographic key
@@ -13,7 +13,7 @@
  * Nothing else is read. Verifying each row against `drops/<id>/meta.json` would
  * put one R2 operation per row back — measured at ~10 s for a 100-row page —
  * which is the exact cost the projection exists to remove, so an orphaned row
- * is the RECONCILE's (AGENTS.md, "Pruning": orphan pointers and stale
+ * is the RECONCILE's (docs/architecture.md, "Pruning": orphan pointers and stale
  * projections). `delete` writes the projections away BEFORE `meta.json`, so a
  * crashed delete leaves a live drop missing its row — which the next
  * `get`/`update` repairs — and never a row with nothing behind it (#100).

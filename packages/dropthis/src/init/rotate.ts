@@ -1,7 +1,7 @@
 /**
  * `init --rotate-admin-key` — replace the admin credential without ever
  * leaving the instance without one, and without ever leaving a usable key
- * nothing knows about (AGENTS.md, "Installer principles").
+ * nothing knows about (docs/architecture.md, "Installer principles").
  *
  * There is no transaction across four objects and, unlike the Worker's R2
  * binding, the Cloudflare R2 management API this installer writes through has
@@ -25,7 +25,7 @@
  * minting before the intent (a usable key nothing names) and deleting before
  * writing (a window in which nobody can administer the instance).
  *
- * Steps 1, 3 and 6 write one key three times in a run. AGENTS.md's measured
+ * Steps 1, 3 and 6 write one key three times in a run. docs/architecture.md's measured
  * R2 rule is about writes IN FLIGHT at once ("five writes issued one after
  * another at full speed all succeed"), and these are strictly sequential; if
  * one is refused anyway, the marker simply stays and the next run clears it,

@@ -145,7 +145,7 @@ export function buildProgram(version: string, io: ProgramIo, handlers: Handlers)
 /**
  * `init`, `connect` and `auth-header` are not registry operations: `init` runs
  * before an instance exists and speaks to Cloudflare with the operator's own
- * token, and the other two read the instances file. AGENTS.md keeps instance
+ * token, and the other two read the instances file. docs/architecture.md keeps instance
  * lifecycle in the CLI only, so they are declared here by hand.
  */
 function mountInstanceLifecycle(program: Command, handlers: Handlers): void {
@@ -183,7 +183,7 @@ function mountInstanceLifecycle(program: Command, handlers: Handlers): void {
   });
 
   // The local commands follow the same `noun verb` grammar as the registry's
-  // administration commands (AGENTS.md, "CLI conventions"), so they mount the
+  // administration commands (docs/architecture.md, "CLI conventions"), so they mount the
   // same way: one parent per noun, reused if an operation already made it.
   for (const local of LOCAL_COMMANDS) {
     const [first, ...rest] = local.command.split(" ");

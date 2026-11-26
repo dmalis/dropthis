@@ -1,5 +1,5 @@
 /**
- * Who is calling (AGENTS.md, "Auth" — the bearer half of "one key, two
+ * Who is calling (docs/architecture.md, "Auth" — the bearer half of "one key, two
  * presentations").
  *
  * Two computed reads and one constant-time compare:

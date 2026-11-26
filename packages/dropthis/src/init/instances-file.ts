@@ -23,7 +23,7 @@ export async function saveInstance(env: Env, name: string, entry: InstanceEntry)
 
   const instances = { ...existing.instances, [name]: entry };
   // The first instance an operator installs is the one every later command
-  // uses when nothing selects one (AGENTS.md, "CLI conventions"). A later
+  // uses when nothing selects one (docs/architecture.md, "CLI conventions"). A later
   // instance never takes that over: which one is default is the operator's.
   const defaultName = existing.default ?? name;
   const file: InstancesFile = { default: defaultName, instances };

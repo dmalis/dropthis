@@ -1,5 +1,5 @@
 /**
- * The tolerant `meta.json` reader (AGENTS.md, "Data durability": "readers
+ * The tolerant `meta.json` reader (docs/architecture.md, "Data durability": "readers
  * ignore unknown fields and default missing ones, so a newer Worker serves an
  * older drop unchanged"; issue #24, finding 18).
  *

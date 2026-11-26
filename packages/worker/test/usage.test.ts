@@ -6,7 +6,7 @@ import { memoryBucket } from "./memory-bucket.js";
 import type { MemoryBucket } from "./memory-bucket.js";
 
 /**
- * `usage` and `prune` (AGENTS.md, "Pruning").
+ * `usage` and `prune` (docs/architecture.md, "Pruning").
  *
  * One scan answers both. The states are the four of the expiry table plus
  * `staging` (a half-finished upload) and `orphan` (blobs whose `meta.json` is
